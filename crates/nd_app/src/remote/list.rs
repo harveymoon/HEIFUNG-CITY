@@ -52,7 +52,7 @@ fn lazy_rows<'a>(w: &'a World, what: &str) -> Result<Vec<Row<'a>>, String> {
                         "staffing": r3(b.staffing()), "workers": b.workers.len(), "jobs": b.jobs, "money": round(z.money),
                         "revenue_today": round(z.revenue_today), "spend_today": round(z.spend_today), "profit_today": round(z.revenue_today - z.spend_today),
                         "deals": z.deals, "broke_days": z.broke_days, "closed": z.closed, "under_construction": b.construction.is_some(),
-                        "powered": round(b.powered), "derelict": b.is_derelict(), "stock": stock, "inputs_short": short, "pos": pos(b),
+                        "powered": round(b.powered), "dilapidated": b.is_derelict(), "stock": stock, "inputs_short": short, "pos": pos(b),
                         // [tenants] the building it rents units in
                         "tenant_of": b.unit_of.map(key_str), "rent_per_day": round(z.rent_day), "area_m2": round(w.business_area(id)),
                     })
@@ -73,7 +73,7 @@ fn lazy_rows<'a>(w: &'a World, what: &str) -> Result<Vec<Row<'a>>, String> {
                         "unpowered": b.powered < UNPOWERED_BELOW && nd_sim::power::demand_mw(b) > 0.0, "under_construction": b.construction.is_some(),
                         "business": b.business.as_ref().map(|z| z.kind.label()), "closed": b.business.as_ref().is_some_and(|z| z.closed),
                         "plant": b.plant.map(plant_name), "depot": b.depot, "rail": b.rail.as_ref().map(|r| rail_name(r.kind)),
-                        "derelict": b.is_derelict(), "built_day": b.built_tick / 1440 + 1, "lot": key_str(b.lot), "pos": pos(b),
+                        "dilapidated": b.is_derelict(), "built_day": b.built_tick / 1440 + 1, "lot": key_str(b.lot), "pos": pos(b),
                         "tenants": w.tenants_of(id).len(), "units_vacant": b.vacant_units(),
                     })
                 })
@@ -142,7 +142,7 @@ fn lazy_rows<'a>(w: &'a World, what: &str) -> Result<Vec<Row<'a>>, String> {
                     let avail = if b.is_derelict() { 0.0 } else { w.plant_capacity_mw(b) * w.plant_availability(b) };
                     json!({
                         "id": key_str(id), "name": b.name, "kind": plant_name(k), "capacity_mw": round(w.plant_capacity_mw(b)), "available_mw": round(avail),
-                        "upkeep_per_day": round(w.plant_upkeep(b)), "workers": b.workers.len(), "jobs": b.jobs, "derelict": b.is_derelict(), "pos": pos(b),
+                        "upkeep_per_day": round(w.plant_upkeep(b)), "workers": b.workers.len(), "jobs": b.jobs, "dilapidated": b.is_derelict(), "pos": pos(b),
                         "area_m2": round(w.lots.get(b.lot).map_or(0.0, |l| l.area())), "group": w.plant_group_of(id).map(|g| g.name),
                     })
                 })
@@ -157,7 +157,7 @@ fn lazy_rows<'a>(w: &'a World, what: &str) -> Result<Vec<Row<'a>>, String> {
                     json!({
                         "id": key_str(id), "name": b.name, "kind": rail_name(l.kind), "rail_connected": l.rail_connected, "road_connected": l.road_connected,
                         "works": l.works() && !b.is_derelict(), "inbound_units": round(w.rail.orders_for(id).1), "aboard_units": round(w.rail.aboard_for(id)),
-                        "outbound_units": round(b.rail_outbound), "workers": b.workers.len(), "jobs": b.jobs, "derelict": b.is_derelict(), "pos": pos(b),
+                        "outbound_units": round(b.rail_outbound), "workers": b.workers.len(), "jobs": b.jobs, "dilapidated": b.is_derelict(), "pos": pos(b),
                     })
                 })
             })

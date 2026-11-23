@@ -828,7 +828,7 @@ fn hud(mut contexts: bevy_egui::EguiContexts, sim: Res<Sim>, drive: Res<Drive>, 
                     ui.label(egui::RichText::new(format!("{kmh:>3.0}")).font(crate::ui::theme::display(34.0)).color(col));
                     ui.label(egui::RichText::new(if car.v < -0.3 { "km/h  reverse" } else { "km/h" }).color(crate::ui::theme::IVORY));
                     if let Some(l) = drive.limit {
-                        ui.label(egui::RichText::new(format!("limit {:.0}", l * 3.6)).color(if over { Color32::from_rgb(255, 90, 90) } else { crate::ui::theme::IVORY }));
+                        ui.label(egui::RichText::new(format!("limit {:.0}", nd_sim::road_traffic::posted_kmh(l))).color(if over { Color32::from_rgb(255, 90, 90) } else { crate::ui::theme::IVORY }));
                     }
                     let b = bearing(car.heading);
                     ui.label(egui::RichText::new(format!("heading {} {:03.0}°", compass_point(b), b)).color(gold));

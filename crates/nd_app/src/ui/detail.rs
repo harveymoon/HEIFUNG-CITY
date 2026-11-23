@@ -277,7 +277,7 @@ fn plant_table(ui: &mut egui::Ui, w: &nd_sim::World, rows: &[nd_sim::PlantRow]) 
                 nd_sim::GridAsset::Battery(k) => (BATTERY, k.label().to_string()),
                 nd_sim::GridAsset::Incinerator => (INCINERATOR, "Incinerator (waste to energy)".to_string()),
             };
-            let status = if r.pending { " (not yet working)" } else if r.derelict { " (derelict)" } else { "" };
+            let status = if r.pending { " (not yet working)" } else if r.derelict { " (dilapidated)" } else { "" };
             let name = ui.label(egui::RichText::new(&r.name).color(color));
             // [plant-groups] A Sunfield or Wind Park: its lots.
             let lots = if r.members.len() > 1 { format!(", {} lots, {:.0} m²", r.members.len(), r.area_m2) } else if r.area_m2 > 0.0 && matches!(r.asset, nd_sim::GridAsset::Plant(k) if k.reference_area().is_some()) { format!(", {:.0} m²", r.area_m2) } else { String::new() };

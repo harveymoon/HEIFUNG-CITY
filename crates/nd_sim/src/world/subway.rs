@@ -118,7 +118,7 @@ impl World {
             return metro::DraftStep::Refused("that is not a metro station".into());
         };
         if b.is_derelict() {
-            return metro::DraftStep::Refused(format!("{} is derelict", b.name));
+            return metro::DraftStep::Refused(format!("{} is dilapidated", b.name));
         }
         let mut next = draft.clone();
         let step = next.push(station, |s| self.buildings.get(s).map_or_else(|| "that station".to_string(), |b| b.name.clone()));

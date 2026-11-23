@@ -31,6 +31,19 @@ impl Default for Lighting {
         Self { follow_clock: true, hour: 14.0, heat: false, quality: QualitySetting::from_env(), show_weather: true, weathering: super::weathering::env_allows() && crate::ui::theme::saved_weathering().unwrap_or(true) }
     }
 }
+impl Lighting {
+    /// [r15-polish] The hour the view shows, 0..24: the sim clock's when
+    /// following it, else the pinned hour (F14: `status.lighting.hour`
+    /// read the pinned 14.0 at night while following the clock).
+    pub fn shown_hour(&self, clock: &nd_sim::SimClock) -> f32 {
+        if self.follow_clock {
+            clock.day_fraction() * 24.0
+        } else {
+            self.hour
+        }
+    }
+}
+
 /// Near shadow cascade bounds (m): the defaults, kept while the orbit
 /// camera is close enough for them to cover what it sees.
 pub(super) const SHADOW_FAR: f32 = 650.0;
@@ -206,5 +219,24 @@ pub(super) fn update_daylight(
         if let Some(mut m) = materials.get_mut(&mats.surface(Surface::Paint)) {
             m.base_color = Color::linear_rgb(paint_k, paint_k, paint_k);
         }
+        // [r15-polish] Night ground (F17): terrain and bare lots away from
+        // the lamps went pitch black and read as holes in the map. A faint
+        // cold fill (moonlight and the city's glow off the clouds) on the
+        // ground only; buildings and the neon keep the dark.
+        let fill = night_ground_fill() * (1.0 - daylight);
+        if let Some(mut m) = materials.get_mut(&mats.surface(Surface::Dirt)) {
+            m.emissive = LinearRgba::rgb(NIGHT_GROUND_TINT[0] * fill, NIGHT_GROUND_TINT[1] * fill, NIGHT_GROUND_TINT[2] * fill);
+        }
     }
+}
+
+/// [r15-polish] The night ground fill's colour (moonlit blue-grey, a touch
+/// of the haze's violet) and strength (linear, added before tone mapping).
+const NIGHT_GROUND_TINT: [f32; 3] = [0.62, 0.66, 1.0];
+const NIGHT_GROUND_FILL: f32 = 0.012;
+
+/// The fill, `ND_NIGHT_GROUND=<k>` scaling it for a run (0 turns it off).
+fn night_ground_fill() -> f32 {
+    static K: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    NIGHT_GROUND_FILL * *K.get_or_init(|| std::env::var("ND_NIGHT_GROUND").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0).clamp(0.0, 10.0))
 }

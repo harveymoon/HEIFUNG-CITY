@@ -137,7 +137,8 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, sid: nd
             _ => GOOD,
         };
         ui.horizontal_wrapped(|ui| {
-            ui.label(format!("Moving at {:.0} km/h of {:.0} ·", n.mean_speed * 3.6, n.limit * 3.6));
+            // [r15-polish] Against the posted limit (the m/s "of 47" read oddly beside a 50 sign).
+            ui.label(format!("Moving at {:.0} km/h, limit {:.0} ·", n.mean_speed * 3.6, nd_sim::road_traffic::posted_kmh(card.limit)));
             ui.label(egui::RichText::new(cong).color(col).strong()).on_hover_text("By the mean speed against what the road allows (the limit, less what a rough surface takes off): free-flowing over 75%, busy over 45%, slow under, jammed when most are standing in a queue as well.");
         });
         if n.queued > 0 {
@@ -359,7 +360,7 @@ fn identity_line(c: &Card) -> String {
         _ => parts.push(format!("{} + {} lanes", c.lanes_fwd, c.lanes_bwd)),
     }
     if c.limit > 0.0 {
-        parts.push(format!("{:.0} km/h", c.limit * 3.6));
+        parts.push(format!("{:.0} km/h", nd_sim::road_traffic::posted_kmh(c.limit)));
     }
     parts.push(format!("{:.0} m", c.length));
     parts.push(c.level.to_string());

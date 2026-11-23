@@ -44,7 +44,7 @@ pub fn road_detail(w: &World, sid: SegmentId) -> Option<Value> {
     Some(json!({
         "kind": "road", "id": sid.0, "segment": sid.0, "name": c.name, "road_kind": c.kind, "level": c.level,
         "lanes_fwd": c.lanes_fwd, "lanes_bwd": c.lanes_bwd, "one_way": c.one_way,
-        "speed_limit_kmh": round(c.limit * 3.6), "length_m": round(c.length), "from": v2(a), "to": v2(b),
+        "speed_limit_kmh": nd_sim::road_traffic::posted_kmh(c.limit), "limit_m_s": round(c.limit), "length_m": round(c.length), "from": v2(a), "to": v2(b),
         "run": { "pieces": c.run.iter().map(|s| s.0).collect::<Vec<_>>(), "index": c.run_index, "length_m": round(c.run_length) },
         "now": {
             "vehicles": n.vehicles(), "cars": n.cars, "lorries": n.lorries, "buses": n.buses, "emergency_or_city": n.sirens,
