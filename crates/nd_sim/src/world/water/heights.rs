@@ -200,8 +200,15 @@ impl World {
             let s = roads.segment(sid);
             z[s.a.0 as usize] + (z[s.b.0 as usize] - z[s.a.0 as usize]) * t
         };
+        // [r14-cliffs] How far each node may be cut into the land or
+        // raised above it (`node_earthwork_band`); none on the flat map.
+        let band: Vec<(f32, f32)> = if flat {
+            Vec::new()
+        } else {
+            roads.nodes.iter().enumerate().map(|(k, nd)| node_earthwork_band(roads, k, land.height(nd.pos.clamp(Vec2::splat(-edge), Vec2::splat(edge))).max(floor))).collect()
+        };
         for _ in 0..6 {
-            ease_heights(&mut z, &fixed, &least, &segs);
+            ease_heights(&mut z, &fixed, &least, &segs, &band);
             let mut lifted = false;
             for c in &crossings {
                 let (zu, zl) = (seg_z(&z, c.upper), seg_z(&z, c.lower));

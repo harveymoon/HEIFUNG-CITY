@@ -262,8 +262,15 @@ pub fn walled_terrace(land: &Landscape, lot: &Lot, pad: f32) -> bool {
     }
     pts.push(lot.center);
     let off = pts.iter().map(|p| (land.height(*p).max(BANK_HEIGHT) - pad).abs()).fold(0.0f32, f32::max);
-    off >= TERRACE_WALL_FROM && land.slope_over(&pts) >= BENCH_CROSS_SLOPE
+    off >= TERRACE_DEEP || (off >= TERRACE_WALL_FROM && land.slope_over(&pts) >= BENCH_CROSS_SLOPE)
 }
+
+/// [r14-cliffs] A lot whose pad stands this far off its natural ground
+/// anywhere is a walled terrace whatever the slope. Graded with 1-in-2.5
+/// banks, a lot cut 17 m into a gentle hillside (its street at the foot of
+/// it) spread its bank 40 m over the lots behind, and one standing as high
+/// over a hollow buried the lots below.
+pub const TERRACE_DEEP: f32 = 6.0;
 
 #[derive(Clone, Debug)]
 pub(super) struct Terrace {
@@ -656,7 +663,15 @@ impl Ground {
         let mut steps = std::collections::HashMap::new();
         for (id, lot) in lots.iter() {
             let (pad, step) = match pad_at.get(&id) {
-                Some(&z) => (z, None),
+                // [r14-cliffs] A pad held through the works (`PAD_HOLD`)
+                // keeps its step too: dropped, every stepped lot lost its
+                // back pad on the second ground rebuild (one runs on every
+                // load) and its back half stood at the front pad, up to
+                // 25 m over the hillside on a 12 m wall.
+                Some(&z) => {
+                    let (now, step) = lot_pads(roads, node_z, inner, lot, land);
+                    (z, step.filter(|_| (now - z).abs() <= 1.0))
+                }
                 None => lot_pads(roads, node_z, inner, lot, land),
             };
             pads.insert(id, pad);
@@ -1372,7 +1387,7 @@ pub const BENCH_DEPTH: f32 = 1.5;
 /// `BENCH_DEPTH` into or above the land at two of them.
 pub fn hillside_bench(land: &Landscape, roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], sid: crate::roads::SegmentId) -> bool {
     let seg = roads.segment(sid);
-    if land.is_flat() || !seg.alive || seg.bridge || seg.viaduct || seg.tunnel || seg.ring || seg.is_rail() || seg.is_motorway() {
+    if land.is_flat() || !seg.alive || seg.bridge || seg.viaduct || seg.tunnel || roads.is_compact_ring(seg) || seg.is_rail() || seg.is_motorway() {
         return false;
     }
     if roads.node(seg.a).level != 0.0 || roads.node(seg.b).level != 0.0 {

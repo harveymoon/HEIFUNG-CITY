@@ -126,11 +126,14 @@ fn local_streets_climb_steeper_than_avenues_and_highways() {
             }
         }
         let limit = land_grade(RoadKind::Street, lanes, lanes);
-        assert!(steepest <= limit + 0.01, "{lanes}+{lanes}: climbs {steepest} past its {limit}");
         if follows {
+            assert!(steepest <= limit + 0.01, "{lanes}+{lanes}: climbs {steepest} past its {limit}");
             assert!(worst < 0.5, "a local street lies on a 20% hill ({worst:.1} m off it)");
         } else {
+            // [r14-cliffs] Eased onto cuttings and fills up to the cap
+            // (`STREET_EARTHWORK_MAX`), steeper than its grade past it.
             assert!(worst > 2.0, "an avenue is eased onto cuttings and fills on a 20% hill ({worst:.1} m)");
+            assert!(worst <= super::water::STREET_EARTHWORK_MAX + 0.6, "but no deeper than the cap ({worst:.1} m)");
         }
     }
 }
@@ -300,8 +303,22 @@ fn bench_walls_are_never_taller_than_the_cap() {
     let mut deepest = 0.0f32;
     for sid in laid(&w, a, b) {
         let seg = w.roads.segment(sid);
-        assert_eq!(earthwork_hold(&w.landscape, &w.roads, &w.road_z, &w.road_inner, sid), Some(Hold::Bench));
         let (p, q) = w.roads.segment_points(sid);
+        // [r14-cliffs] A street straight up the hill now lies on it (past
+        // its grade) wherever it can; a piece that needs no bench must lie
+        // within the earthwork cap of the land.
+        match earthwork_hold(&w.landscape, &w.roads, &w.road_z, &w.road_inner, sid) {
+            Some(Hold::Bench) => {}
+            None => {
+                for k in 1..10 {
+                    let t = k as f32 / 10.0;
+                    let off = (w.road_height(sid, t) - natural(&w, p.lerp(q, t))).abs();
+                    assert!(off <= super::water::STREET_EARTHWORK_MAX + 0.6, "unbenched piece {off:.1} m off the land");
+                }
+                continue;
+            }
+            other => panic!("a town street held as {other:?}"),
+        }
         let (_, back) = held_band(seg, Hold::Bench);
         for k in 1..10 {
             let t = k as f32 / 10.0;
@@ -317,7 +334,10 @@ fn bench_walls_are_never_taller_than_the_cap() {
             }
         }
     }
-    assert!(deepest > BENCH_WALL_MAX + 2.0, "a cut deeper than the cap to test ({deepest:.1} m)");
+    // [r14-cliffs] A town street is cut at most `STREET_EARTHWORK_MAX`
+    // into the hill now (it used to be eased 20 m and more into it), so the
+    // rock face past the cap is left for the hill rising across the way.
+    assert!(deepest <= super::water::STREET_EARTHWORK_MAX + 0.6, "cut {deepest:.1} m");
 }
 
 /// [r4-hillside] No terrace wall is taller than a bench's cap either.
@@ -386,4 +406,120 @@ fn deep_plots_on_a_steep_hillside_step_onto_two_pads() {
         assert_eq!(lot_edges(&l.polygon, Some(&st)).len(), n + 2);
     }
     let _ = down;
+}
+
+/// [r14-cliffs] Harvey's Neon Market (day-81 city): a 240 m roundabout laid
+/// round a hill was held to a structure's 7% from its lowest point, so it,
+/// the lots on it and the streets off it were dug up to 64 m into the hill.
+/// A ring road follows the land like any street of its lanes; a compact
+/// roundabout keeps the gentle grade.
+#[test]
+fn a_ring_road_round_a_hill_follows_it() {
+    let mut w = hilly_world();
+    let at = dry_spot(&w);
+    plane(&mut w, at, 0.2);
+    w.add_road(&[at - Vec2::new(200.0, 0.0), at + Vec2::new(200.0, 0.0)], 1, 1);
+    w.add_roundabout(at, 100.0, 2).expect("ring");
+    w.implement();
+    let ring: Vec<SegmentId> = w.roads.alive_segments().filter(|(_, s)| s.ring).map(|(id, _)| id).collect();
+    assert!(ring.len() >= 8, "the ring's pieces ({})", ring.len());
+    let mut worst = 0.0f32;
+    for sid in ring {
+        assert!(w.roads.is_ring_road(w.roads.segment(sid)));
+        let (a, b) = w.roads.segment_points(sid);
+        for t in [0.0f32, 0.5, 1.0] {
+            worst = worst.max((w.road_height(sid, t) - natural(&w, a.lerp(b, t))).abs());
+        }
+    }
+    // The land climbs 40 m across the ring: at 7% from its foot the far
+    // side stood 20 m and more under the hill.
+    assert!(worst < 1.0, "the ring road lies on the hill ({worst:.1} m off it)");
+    // A compact roundabout is still a roundabout.
+    let mut v = hilly_world();
+    let at = dry_spot(&v);
+    v.add_road(&[at - Vec2::new(200.0, 0.0), at + Vec2::new(200.0, 0.0)], 1, 1);
+    v.add_roundabout(at, 20.0, 1).expect("ring");
+    v.implement();
+    assert!(v.roads.alive_segments().filter(|(_, s)| s.ring).all(|(_, s)| v.roads.is_compact_ring(s) && super::water::segment_grade(&v.roads, s) == STREET_GRADE));
+}
+
+/// [r14-cliffs] A town street up ground steeper than it may climb is cut
+/// into the land (or raised over it) at most `STREET_EARTHWORK_MAX`; past
+/// that it climbs steeper than its grade. Its heights used to be eased
+/// from its foot up with no limit: 320 m up a 50% hill cut 70 m deep.
+#[test]
+fn a_street_up_a_hill_steeper_than_its_grade_cuts_no_deeper_than_the_cap() {
+    use super::water::STREET_EARTHWORK_MAX;
+    for lanes in [1u8, 2] {
+        let mut w = hilly_world();
+        let at = dry_spot(&w);
+        plane(&mut w, at, 0.5);
+        let (a, b) = (at - Vec2::new(0.0, 160.0), at + Vec2::new(0.0, 160.0));
+        w.add_road(&[a, b], lanes, lanes);
+        // A street across its foot, so the climb starts from a junction.
+        w.add_road(&[a - Vec2::new(100.0, 0.0), a + Vec2::new(100.0, 0.0)], 1, 1);
+        let segs = laid(&w, a, b);
+        assert!(!segs.is_empty());
+        let mut worst = 0.0f32;
+        for sid in segs {
+            let (p, q) = w.roads.segment_points(sid);
+            for k in 0..=20 {
+                let t = k as f32 / 20.0;
+                worst = worst.max((w.road_height(sid, t) - natural(&w, p.lerp(q, t))).abs());
+            }
+        }
+        assert!(worst <= STREET_EARTHWORK_MAX + 0.6, "{lanes}+{lanes}: {worst:.1} m into (or over) the hill");
+        // And the ground beside it is not dug away either.
+        let side = at + Vec2::new(30.0, 0.0);
+        assert!((w.ground_height(side) - natural(&w, side)).abs() <= STREET_EARTHWORK_MAX + 0.6, "the hillside beside it moved {:.1} m", (w.ground_height(side) - natural(&w, side)).abs());
+    }
+}
+
+/// [r14-cliffs] Every lot's floor sits on its ground: a lot whose pad is
+/// `TERRACE_DEEP` or more off its natural ground anywhere is a walled
+/// terrace (graded, its 1-in-2.5 bank buried the lots behind), its pad
+/// within a wall's height of every part of its ground, and wherever its
+/// edge stands well over (or under) the ground beyond, a wall is there.
+#[test]
+fn lot_floors_sit_on_their_ground() {
+    use crate::landscape::{walled_terrace, BENCH_WALL_MAX, TERRACE_DEEP};
+    let mut w = hilly_world();
+    let at = dry_spot(&w);
+    // Gentler than a bench's slope: before, lots here were graded, not walled.
+    plane(&mut w, at, 0.2);
+    // A street across the slope with deep plots up and down the hill.
+    w.add_road(&[at - Vec2::new(150.0, 0.0), at + Vec2::new(150.0, 0.0)], 1, 1);
+    let ids: Vec<usize> = w.parcels.in_circle(at, 90.0).into_iter().filter(|&i| w.parcels.parcels[i].street_frontage && w.parcel_refusal(i, Some(LandUse::Residential)).is_none()).collect();
+    assert!(ids.len() >= 4, "parcels to zone ({})", ids.len());
+    w.paint_parcels(&ids, Some(LandUse::Residential), None);
+    w.implement();
+    let mut deep = 0;
+    for (id, l) in w.lots.iter() {
+        let Some(&pad) = w.ground.pads.get(&id) else { continue };
+        let n = l.polygon.len();
+        let step = w.ground.steps.get(&id).copied();
+        let off = l.polygon.iter().map(|p| (natural(&w, *p) - step.map_or(pad, |s| s.pad_at(*p, pad))).abs()).fold(0.0f32, f32::max);
+        if off >= TERRACE_DEEP {
+            deep += 1;
+            assert!(walled_terrace(&w.landscape, l, pad), "lot at {} stands {off:.1} m off its ground and is not walled", l.center);
+        }
+        assert!(off <= BENCH_WALL_MAX + 0.5, "lot at {} stands {off:.1} m off its ground", l.center);
+        // No edge hangs over (or sinks under) the ground beyond it unwalled.
+        for k in 0..n {
+            let (a, b) = (l.polygon[k], l.polygon[(k + 1) % n]);
+            if a.distance(b) < 4.0 {
+                continue;
+            }
+            let q = a.lerp(b, 0.5);
+            let out = q + (q - l.center).normalize_or_zero() * 3.0;
+            if w.roads.segments_near(out, 14.0).len() > 0 {
+                continue;
+            }
+            let z = step.map_or(pad, |s| s.pad_at(q, pad));
+            let gap = (z - w.ground_height(out)).abs();
+            let walled = w.ground.retaining.iter().any(|r| crate::geom::project_on_segment(q, r.a, r.b).1.distance(q) < 1.5);
+            assert!(gap < TERRACE_DEEP || walled, "lot at {}: its edge at {q} stands {gap:.1} m off the ground beyond, with no wall", l.center);
+        }
+    }
+    assert!(deep >= 1, "a lot standing deep off its ground to test");
 }
