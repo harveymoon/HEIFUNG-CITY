@@ -1014,10 +1014,12 @@ impl Building {
         }
     }
 
-    /// Daily wage for a job here. [r15-money] A civic job pays 90, as a
-    /// shop does (it was 125 while nobody paid it: the treasury pays its
-    /// staff now, and at 125 Harvey's day-80 city spent ~$300k a day on
-    /// them against a surplus of ~$240k before).
+    /// Daily wage for a job here. [r15-money] A civic job pays 75 (it was
+    /// 125 while nobody paid it): the treasury pays its staff now, and at
+    /// 125 Harvey's day-80 city would spend ~$400k a day on them (1,500
+    /// staff once the shut shops stopped hiring) against a surplus of
+    /// ~$240k before; at 75 the treasury about breaks even at the
+    /// standard taxes.
     pub fn wage(&self) -> f32 {
         if self.construction.is_some() {
             return Self::SITE_WAGE;
@@ -1026,7 +1028,7 @@ impl Building {
             LandUse::Industrial => 65.0,
             LandUse::Commercial => 90.0,
             LandUse::Entertainment => 80.0,
-            LandUse::Civic => 90.0,
+            LandUse::Civic => 75.0,
             LandUse::Park => 50.0,
             LandUse::Residential => 0.0,
         };

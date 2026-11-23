@@ -1010,7 +1010,7 @@ mod tests {
 /// the town edge"); `ledger_tests::a_days_money_is_conserved_and_only_named_flows_cross_the_edge`
 /// holds a day of the sim to it.
 pub const EDGE_KINDS: &[(Kind, &str)] = &[
-    (Kind::Wages, "pensions and gig work paid from away; the crews an out-of-town builder hires here; crews of a bank-financed build"),
+    (Kind::Wages, "pensions and gig work paid from away; the crews an out-of-town builder hires here; crews of an out-of-town developer or a bank-financed build"),
     (Kind::Flow(Flow::IncomeTax), "the income tax held back from that pay from away"),
     (Kind::Services, "clients out of town paying the town's offices for their work (out of which the offices pay their staff)"),
     (Kind::Exports, "goods sold out of town"),

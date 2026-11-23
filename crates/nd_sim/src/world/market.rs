@@ -20,6 +20,11 @@ const SHOP_RENT_PROFIT_CAP: f32 = 0.5;
 /// town's own shops, eateries and places (`World::spend_in_town`); the rest
 /// (power, phone, insurance, things bought from away) goes out of town.
 pub const LIVING_LOCAL: f32 = 0.5;
+/// [r15-money] Share of what a household's day's pay leaves over rent and
+/// living costs that it spends at the town's shops and places (while it
+/// has a few days' living in the purse). With the wage now paid in full by
+/// the employer, this is where the shops' takings to pay it come from.
+pub const SPARE_SPEND: f32 = 0.15;
 /// [r15-money] Passers-by remembered per lot an hour, to pay for walk-in
 /// sales (the rest of the footfall shops through them).
 pub const PASSERS_KEPT: usize = 8;
@@ -248,7 +253,12 @@ impl World {
             if c.contract.as_ref().is_some_and(|k| k.local().is_none()) {
                 return Payer::Outside;
             }
-            return Payer::Site(self.site_payer(bid));
+            // An out-of-town developer keeps only a float here: its crews
+            // are paid by its backers away, as its profit goes back to them.
+            return match self.site_payer(bid) {
+                Account::Owner(o) if self.estate.owners.get(o).is_some_and(|x| matches!(x.kind, crate::estate::OwnerKind::Developer)) => Payer::Outside,
+                a => Payer::Site(a),
+            };
         }
         match &b.business {
             Some(z) if z.closed => Payer::Outside,
@@ -445,7 +455,7 @@ impl World {
                     payers.push(self.purse_of(c));
                 }
             }
-            payers.retain(|a| self.economy.bank.balance(*a) > 1.0);
+            payers.retain(|a| self.mirror(*a).is_some_and(|m| m.units() > crate::bank::PER_DOLLAR as i64));
             payers.dedup();
             if payers.is_empty() {
                 continue;

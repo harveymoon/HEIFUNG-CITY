@@ -83,7 +83,7 @@ impl World {
 
     /// The field the rest of the sim reads an account's money from, or
     /// `None` when its holder is gone.
-    fn mirror(&self, a: Account) -> Option<Mirror> {
+    pub(in crate::world) fn mirror(&self, a: Account) -> Option<Mirror> {
         Some(match a {
             Account::Outside | Account::Landlords => Mirror::None,
             Account::Treasury => Mirror::F32(self.economy.treasury),

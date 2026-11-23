@@ -122,15 +122,16 @@ mod tests {
         let wealth = |w: &World| w.households[hid].money + w.households[hid].members.iter().map(|m| w.citizens[*m].savings).sum::<f32>();
         let lost = wealth(&w) - wealth(&taxed);
         assert!((lost - income * (0.30 - INCOME_TAX)).abs() < 0.05 * income + 0.01, "lost {lost}, expected {} (purse diff {diff})", income * (0.30 - INCOME_TAX));
-        // The city's take follows the rate.
+        // The city's take follows the rate: [r15-money] held back from the
+        // pay by whoever pays it.
         let cid = w.households[hid].members[0];
-        let before = (w.economy.treasury, taxed.economy.treasury);
-        w.daily_citizen(cid);
-        taxed.daily_citizen(cid);
+        let before = (w.economy.taxes.today_of(cat), taxed.economy.taxes.today_of(cat));
+        let purse = crate::bank::Account::Household(hid);
+        w.pay_earnings(cid, purse);
+        taxed.pay_earnings(cid, purse);
         let inc = w.citizens[cid].income;
-        assert!((w.economy.treasury - before.0 - inc * INCOME_TAX).abs() < 1e-2);
-        assert!((taxed.economy.treasury - before.1 - inc * 0.30).abs() < 1e-2);
-        assert!((taxed.economy.taxes.today_of(cat) - inc * 0.30).abs() < 1e-2, "booked under its line");
+        assert!((w.economy.taxes.today_of(cat) - before.0 - inc * INCOME_TAX).abs() < 1e-2);
+        assert!((taxed.economy.taxes.today_of(cat) - before.1 - inc * 0.30).abs() < 1e-2, "booked under its line");
     }
 
     #[test]

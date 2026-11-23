@@ -104,8 +104,9 @@ impl World {
         // treasury; the rent goes to the home's owner (`collect_rent`),
         // living costs part to the town's shops, part out of town.
         let purse = Account::Household(hid);
+        let mut pay = 0.0;
         for &m in &members {
-            self.pay_earnings(m, purse);
+            pay += self.pay_earnings(m, purse);
         }
         if let Some(h) = home {
             self.collect_rent(purse, h, rent, Kind::Rent);
@@ -120,6 +121,13 @@ impl World {
         let local = living * super::market::LIVING_LOCAL;
         self.spend_in_town(purse, local, slotmap::Key::data(&hid).as_ffi(), Kind::Living);
         self.transfer(purse, Account::Outside, living - local, Kind::Living);
+        // [r15-money] Out and about: a share of what the day's pay leaves
+        // after rent and living costs goes at the town's shops and places,
+        // while the purse holds a few days of living costs.
+        let spare = (pay - rent - living).max(0.0) * super::market::SPARE_SPEND;
+        if spare > 0.0 && self.households[hid].money > living * 3.0 + spare {
+            self.spend_in_town(purse, spare, slotmap::Key::data(&hid).as_ffi() ^ 0x5BE7D, Kind::Shopping);
+        }
         // Pockets come back to the shared purse (with any debts run up on
         // them), then the grown-ups draw pocket money again if there is some.
         for &m in &members {
