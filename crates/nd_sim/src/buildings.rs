@@ -1094,6 +1094,11 @@ impl Building {
 
     /// Run down past use. Never a park: how a park is kept is its own
     /// measure (`ParkState::kept`), not the building's wear.
+    /// [r15-polish] A condition, not emptiness: shown to the player and the
+    /// API as "dilapidated". Nobody new moves in, opens or shops here, but
+    /// households already living here stay (F11: 5,916 people lived in
+    /// Harvey's "derelict" towers); the cheap worn blocks are the homes the
+    /// poor can afford, so emptying them would only make them homeless.
     pub fn is_derelict(&self) -> bool {
         self.land_use != LandUse::Park && self.condition < 0.3
     }

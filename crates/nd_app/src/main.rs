@@ -22,6 +22,10 @@ mod city_reset;
 mod committee;
 /// [sweep-sim] Crash logs beside the saves: panics and failed allocations.
 mod crash;
+/// [r15-polish] Gamepads through gilrs with its panics contained.
+mod gamepad;
+/// [r15-polish] Drop the window cameras' views before the swapchain is remade.
+mod swapchain;
 /// [directory] Every business and person as sortable rows (City Data's Directory).
 mod directory;
 mod district_tool;
@@ -92,7 +96,9 @@ fn main() {
         .insert_resource(ClearColor(Color::linear_rgb(0.02, 0.018, 0.028)))
         // [sound] Bevy's own audio is not used (`nd_audio` synthesises
         // everything); left in, it would hold a second, idle output stream.
-        .add_plugins(DefaultPlugins.build().disable::<bevy::audio::AudioPlugin>().set(WindowPlugin {
+        // [r15-polish] Bevy's gilrs plugin is replaced by `gamepad`'s, which
+        // contains gilrs' panics (they crashed the game with no pad attached).
+        .add_plugins(DefaultPlugins.build().disable::<bevy::audio::AudioPlugin>().disable::<bevy::gilrs::GilrsPlugin>().set(WindowPlugin {
             primary_window: Some(Window {
                 title: "HEIFUNG://CITY".into(),
                 // `ND_WINDOW=1268x900` for another starting size (UI layout checks).
@@ -103,6 +109,7 @@ fn main() {
             }),
             ..default()
         }))
+        .add_plugins((gamepad::SafeGamepadPlugin, swapchain::SwapchainGuardPlugin))
         .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
         .add_plugins(frame_stats::FrameStatsPlugin)
         .add_systems(Update, window_icon)

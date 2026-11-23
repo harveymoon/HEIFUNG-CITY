@@ -53,7 +53,7 @@ pub(super) fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let f_plant = bool_filter(filter, "plant");
             let f_rail = bool_filter(filter, "rail");
             let f_depot = bool_filter(filter, "depot");
-            let f_derelict = bool_filter(filter, "derelict");
+            let f_derelict = bool_filter(filter, "dilapidated").or(bool_filter(filter, "derelict"));
             for (id, b) in w.buildings.iter() {
                 if !contains(b.land_use.label(), &f_lu) || !contains(b.tier.label(), &f_tier) || !contains(&b.name, &f_name) {
                     continue;
