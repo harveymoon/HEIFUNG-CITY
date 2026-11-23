@@ -2320,7 +2320,9 @@ three-wheelers. At 05:02 each plans its day from the town's crowds (`crowd_spots
 beach-goers by yesterday's visitor-hours, the stadiums playing today, gigs and tonight's rave, the
 streets of late bars and clubs, the office districts), one or two stints of 2-6 hours, spread so no
 spot gets them all; at 15:02 the evening is planned again (a gig booked since the morning). Ice
-cream only when warm (15 °C+) and dry. Before the first stint the household buys the day's
+cream only when warm (15 °C+) and dry (the plan reads the climate's day curve moved by how far today already is
+from it, so a `set_weather` warm day carries into the plan); a household plans no stint for hours
+when all its grown-ups are at a job's shift. Before the first stint the household buys the day's
 ingredients from businesses in town holding them (nearest first), the rest wholesale from out of
 town at a higher price; a grown-up of the household drives it out (a traffic vehicle,
 `Errand::FoodTruck`), parks it in a free legal kerb slot by the spot (else a trading pitch on a

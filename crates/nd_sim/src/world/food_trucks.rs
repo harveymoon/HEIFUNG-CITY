@@ -160,8 +160,12 @@ impl World {
         let spots = self.crowd_spots();
         let day = self.clock.day();
         let wet = crate::yards::wet(&self.weather);
+        // The climate's curve for the day, moved by how far today already
+        // is from it (a warm spell, or a sky set by hand, carries on).
         let weather = self.weather.clone();
-        let temp_at = move |h: u8| weather.temp_at(h as f32);
+        let now = self.clock.minute_of_day() as f32 / 60.0;
+        let offset = weather.temp_c - weather.temp_at(now);
+        let temp_at = move |h: u8| weather.temp_at(h as f32) + offset;
         let mut taken: BTreeMap<usize, u32> = BTreeMap::new();
         let ids: Vec<TruckId> = self.food_trucks.trucks.keys().collect();
         for id in ids {
