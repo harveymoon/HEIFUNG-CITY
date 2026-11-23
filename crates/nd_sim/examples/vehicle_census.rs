@@ -24,6 +24,7 @@ fn errand_key(e: &Errand) -> &'static str {
         Errand::Taxi(_) => "taxi",
         Errand::Through => "through",
         Errand::Out => "out",
+        Errand::FoodTruck(_) => "food_truck",
     }
 }
 

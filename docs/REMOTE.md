@@ -107,7 +107,7 @@ the replies back. So:
 Every example is the POST body; the reply always carries `"ok"`.
 
 **Other names.** Some commands answer to other names as well (`help` lists them under `aliases`):
-`add_interchange` (`interchange`); `airlift` (`chinook`); `audio` (`sound`); `building_notes` (`notes`); `cable` (`cable_car`, `gondola`, `cablecar`); `campus` (`university`); `city_name` (`city_identity`); `cleanup` (`clean_up`); `committee_meeting` (`meeting`); `connectivity` (`stranded`, `no_route`); `containers` (`boxes`); `corps` (`corp`, `megacorp`); `dirt_at` (`contamination_at`); `district` (`districts`); `estate` (`land_market`); `favourite` (`favorite`); `foot_wear` (`worn_paths`); `frame_stats` (`frames`); `get` (`dump`); `graphics` (`quality`); `grounds_junctions` (`park_junctions`); `heat_vision` (`heat`); `islands` (`ferry_islands`); `ledger` (`money`, `books`); `level_crossings` (`level_crossing`, `crossings`, `rail_crossings`); `lot_memory` (`what_stood_here`, `lot_history`); `megablock` (`megablocks`, `arcology`); `photo_mode` (`photo`); `pressure` (`pressures`); `pressure_where` (`show_where`); `replay` (`trip_replay`); `road_use` (`set_road`, `road_edit`); `roads` (`road_condition`, `road_budget`); `shore` (`waterfront`); `skyline` (`towers`, `height_limit`); `stadium_game` (`game_day`); `street_events` (`nights`); `subway` (`metro`); `talk` (`chat`); `taxes` (`tax`); `tiles` (`land_tiles`); `timetable` (`timetables`, `schedule`); `tolls` (`toll`); `tourism` (`tourists`); `tow_car` (`tow`, `boot`); `under_decks` (`undercroft`, `bays`); `walk_crossings` (`crossing_use`); `walk_networks` (`walknets`, `pedestrian_networks`); `yards` (`out_front`, `yard_props`); `zoom_to` (`zoom`).
+`add_interchange` (`interchange`); `airlift` (`chinook`); `audio` (`sound`); `building_notes` (`notes`); `cable` (`cable_car`, `gondola`, `cablecar`); `campus` (`university`); `city_name` (`city_identity`); `cleanup` (`clean_up`); `committee_meeting` (`meeting`); `connectivity` (`stranded`, `no_route`); `containers` (`boxes`); `corps` (`corp`, `megacorp`); `dirt_at` (`contamination_at`); `district` (`districts`); `estate` (`land_market`); `favourite` (`favorite`); `foot_wear` (`worn_paths`); `frame_stats` (`frames`); `get` (`dump`); `graphics` (`quality`); `grounds_junctions` (`park_junctions`); `heat_vision` (`heat`); `islands` (`ferry_islands`); `ledger` (`money`, `books`); `level_crossings` (`level_crossing`, `crossings`, `rail_crossings`); `lot_memory` (`what_stood_here`, `lot_history`); `megablock` (`megablocks`, `arcology`); `photo_mode` (`photo`); `pressure` (`pressures`); `pressure_where` (`show_where`); `replay` (`trip_replay`); `road_use` (`set_road`, `road_edit`); `roads` (`road_condition`, `road_budget`); `shore` (`waterfront`); `skyline` (`towers`, `height_limit`); `stadium_game` (`game_day`); `street_events` (`nights`); `subway` (`metro`); `talk` (`chat`); `taxes` (`tax`); `tiles` (`land_tiles`); `timetable` (`timetables`, `schedule`); `tolls` (`toll`); `tourism` (`tourists`); `tow_car` (`tow`, `boot`); `food_trucks` (`trucks`, `street_vendors`); `under_decks` (`undercroft`, `bays`); `walk_crossings` (`crossing_use`); `walk_networks` (`walknets`, `pedestrian_networks`); `yards` (`out_front`, `yard_props`); `zoom_to` (`zoom`).
 
 `help` is checked against the dispatcher by a unit test (`remote::dispatch_tests`): every command
 it runs is documented in `help` or named as an alias, and nothing else is.
@@ -2310,6 +2310,43 @@ tall feature there.
 `park`, `open`, `since_day`, `holders`, `people_here`, `on_the_way`, visits and takings today and
 yesterday, `visits_total`). `under_decks {action: "set", bay, use}` gives a bay a use now (a trade
 takes stallholders from nearby). The road inspector of a raised road has an "Under the deck" line.
+
+### Food trucks and street vendors [r14-foodtrucks]
+
+Households run food trucks (`nd_sim::food_trucks`, `world/food_trucks.rs`; the types' menus,
+prices, ingredients, hours and the crowds they like are the catalogue's `FOOD_TRUCKS`):
+ice-cream vans, taco, noodle and kebab trucks, and coffee, hot-dog and fruit carts on
+three-wheelers. At 05:02 each plans its day from the town's crowds (`crowd_spots`: park visitors and
+beach-goers by yesterday's visitor-hours, the stadiums playing today, gigs and tonight's rave, the
+streets of late bars and clubs, the office districts), one or two stints of 2-6 hours, spread so no
+spot gets them all; at 15:02 the evening is planned again (a gig booked since the morning). Ice
+cream only when warm (15 °C+) and dry (the plan reads the climate's day curve moved by how far today already is
+from it, so a `set_weather` warm day carries into the plan); a household plans no stint for hours
+when all its grown-ups are at a job's shift. Before the first stint the household buys the day's
+ingredients from businesses in town holding them (nearest first), the rest wholesale from out of
+town at a higher price; a grown-up of the household drives it out (a traffic vehicle,
+`Errand::FoodTruck`), parks it in a free legal kerb slot by the spot (else a trading pitch on a
+shopping or nightlife street, never a clearway), and the slot is held for it. Open, people within
+220 m (in the park, at the game, on a night out, on a lunch break), strollers and people set on a
+meal out within 420 m may walk up, queue at the hatch, pay (to the household) and eat (it counts as
+eating out and feeds them). At the end of the stint (or sold out) it moves on or drives home.
+Midnight: a lease and a street-trading permit (to the city) come out of the takings; a week of
+losses, or the household leaving, sells it. New trucks start at night (up to 3, one per 1,400
+people) of the type the crowds want most, by a household with savings (someone out of work first).
+
+`food_trucks {found?, household?, plan?, enabled?, spots?}` (also `trucks`, `street_vendors`):
+`summary` (trucks, by type, open now, on the road, at home, customers queuing, meals and takings
+today and yesterday, hungry customers fed, `open_by_hour` (24 hours, today and yesterday),
+`meals_by_spot`, ice-cream stints given up for the cold, founded/sold totals, the town's hungry),
+`list` (each truck: id, name, type, menu, price, household and its money, base, crew, `place`
+home|parked|open|road, what it is doing, pos, `pitch` {segment, side, slot, legal_kerb}, car,
+queue, stock, meals/takings/costs today and yesterday, ingredients bought in town and wholesale,
+`plan` [{from, to, spot, kind, at, crowd, state}], `visits_today`/`visits_yesterday` [{spot, kind,
+opened, closed, meals, takings}]) and `crowd_spots` (kind park|beach|stadium|nightlife|offices|event,
+name, at, crowd, hours). Dev levers: `found: "taco"` (a type, optionally with `household`) or
+`found: 3` starts trucks now; `plan: true` plans the rest of today again; `enabled: false` stops new
+trucks and sales (to compare a town without them). `inspect {food_truck: id}` gives one truck;
+`select {food_truck: id}` opens its card in the inspector.
 
 ## Business pressure, the waterfront and the art scene
 

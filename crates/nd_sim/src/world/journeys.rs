@@ -446,6 +446,15 @@ impl World {
             Errand::Sale(d) => Some(("being sold".to_string(), Some(if self.buildings.contains_key(d) { self.place_of_building(d) } else { Place::text("out of town") }))),
             Errand::Leave | Errand::Out => Some(("leaving the city".to_string(), Some(Place::text("out of town")))),
             Errand::Haul { base } => Some(("on a job".to_string(), base.map(|b| self.place_of_building(b)))),
+            // [r14-foodtrucks] A food truck out to its spot or home.
+            Errand::FoodTruck(t) => self.food_trucks.trucks.get(t).map(|t| match t.job {
+                crate::food_trucks::TruckJob::ToPitch { stint, pitch } => {
+                    let spot = t.plan.get(stint as usize).map_or("its spot".to_string(), |s| s.name.clone());
+                    (format!("{} driving out to sell at {spot}", t.name), Some(Place { label: spot, building: None, car: None, pos: Some(pitch.pos) }))
+                }
+                crate::food_trucks::TruckJob::Leaving => (format!("{}, sold, leaving town", t.name), Some(Place::text("out of town"))),
+                _ => (format!("{} driving home", t.name), Some(self.place_of_building(t.base))),
+            }),
             _ => None,
         };
         // A city resident's own car with nobody known at the wheel (its

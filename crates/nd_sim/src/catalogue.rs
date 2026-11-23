@@ -23,6 +23,7 @@ use crate::market::{BusinessKind, Resource};
 use crate::rail::BoxKind;
 use crate::vehicle::BodyType;
 use crate::zoning::LandUse;
+use crate::food_trucks::{SpotKind, TruckKind};
 
 use BusinessKind as K;
 use Resource as R;
@@ -1642,7 +1643,203 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         about: Some("A builders' merchant and hardware store: timber, bricks, steel and parts by the pallet for the builders and the trades over the trade counter, delivered by its own lorries; paint, tools and garden things for everyone else."),
         ..BASE
     },
+    // [r14-foodtrucks] A household's truck, van, cart or stand: no lot, no
+    // building; its menu, prices and ingredients by type are in
+    // `FOOD_TRUCKS` below, its days in `crate::food_trucks`.
+    BusinessRow {
+        kind: K::FoodTruck,
+        label: "food truck",
+        inputs: &[(R::Meat, 0.2), (R::Produce, 0.3), (R::Flour, 0.2), (R::Dairy, 0.2)],
+        outputs: &[(R::BakedGoods, 2.0)],
+        hours: Hours::new(7, 3),
+        customers_per_job: Some(10),
+        max_floors: Some(1),
+        stock_hours: 12.0,
+        needs_site: true,
+        tab: 0.6,
+        loudness: 0.3,
+        trash: 1.5,
+        sign: Some(b"EATS"),
+        about: Some("A food truck run by a household: buys its ingredients from the town's grocers and farms each morning, drives out to where the crowds are (parks and beaches on warm days, offices at lunch, the stadium on game nights, the bars late), parks at the kerb, opens the hatch and sells meals to whoever queues."),
+        ..BASE
+    },
 ];
+
+// ── food trucks ────────────────────────────────────────────────────────────
+
+/// [r14-foodtrucks] One type of food truck (`crate::food_trucks`): its
+/// menu, what a meal costs and fills, what goes into one, when it trades,
+/// and how much it likes each kind of crowd.
+#[derive(Clone, Copy, Debug)]
+pub struct TruckRow {
+    pub kind: TruckKind,
+    /// Its name in the UI.
+    pub label: &'static str,
+    /// The remote API's key.
+    pub key: &'static str,
+    pub menu: &'static str,
+    /// What one serving costs a customer (before their means: the rich pay
+    /// a little more for the extras).
+    pub price: f32,
+    /// What one serving fills (`Citizen::satiety`).
+    pub satiety: f32,
+    /// What goes into one serving, bought each morning.
+    pub ingredients: &'static [(Resource, f32)],
+    /// When it trades: from, to (past midnight as 24..).
+    pub hours: (u8, u8),
+    /// The longest stint (hours) it stands at one spot.
+    pub max_len: u8,
+    /// How much it likes each kind of crowd, in `SpotKind` order: park,
+    /// beach, stadium, nightlife, offices, event.
+    pub affinity: [f32; SpotKind::COUNT],
+    /// Only when warm and dry (ice cream: not in the snow).
+    pub warm_only: bool,
+    /// Busier in the cold (hot coffee).
+    pub cold_lift: bool,
+    /// Servings it loads for a day, at most.
+    pub stock: f32,
+    /// A three-wheeler cart with an umbrella and stools, not a step van.
+    pub cart: bool,
+    /// The word on its sign board.
+    pub sign: &'static [u8],
+    /// Plays a jingle as it drives (the ice-cream van).
+    pub jingle: bool,
+}
+
+/// Every type of food truck, in `TruckKind` order.
+pub const FOOD_TRUCKS: [TruckRow; TruckKind::COUNT] = [
+    TruckRow {
+        kind: TruckKind::IceCream,
+        label: "ice-cream van",
+        key: "ice_cream",
+        menu: "soft-serve cones, lollies, sundaes",
+        price: 4.0,
+        satiety: 0.15,
+        ingredients: &[(R::Dairy, 0.12), (R::Produce, 0.03), (R::Flour, 0.02)],
+        hours: (11, 20),
+        max_len: 6,
+        affinity: [1.0, 1.4, 0.6, 0.1, 0.3, 0.8],
+        warm_only: true,
+        cold_lift: false,
+        stock: 120.0,
+        cart: false,
+        sign: b"ICE CREAM",
+        jingle: true,
+    },
+    TruckRow {
+        kind: TruckKind::Taco,
+        label: "taco truck",
+        key: "taco",
+        menu: "tacos al pastor, burritos, horchata",
+        price: 8.0,
+        satiety: 0.5,
+        ingredients: &[(R::Meat, 0.1), (R::Produce, 0.1), (R::Flour, 0.08)],
+        hours: (11, 24),
+        max_len: 5,
+        affinity: [0.6, 0.5, 1.3, 1.0, 1.0, 1.0],
+        warm_only: false,
+        cold_lift: false,
+        stock: 90.0,
+        cart: false,
+        sign: b"TACOS",
+        jingle: false,
+    },
+    TruckRow {
+        kind: TruckKind::Noodle,
+        label: "noodle truck",
+        key: "noodle",
+        menu: "wok-fried noodles, dumplings, bubble tea",
+        price: 7.0,
+        satiety: 0.55,
+        ingredients: &[(R::Flour, 0.1), (R::Meat, 0.06), (R::Produce, 0.08)],
+        hours: (11, 26),
+        max_len: 5,
+        affinity: [0.3, 0.2, 0.8, 1.3, 1.1, 0.9],
+        warm_only: false,
+        cold_lift: false,
+        stock: 90.0,
+        cart: false,
+        sign: b"NOODLES",
+        jingle: false,
+    },
+    TruckRow {
+        kind: TruckKind::Kebab,
+        label: "kebab van",
+        key: "kebab",
+        menu: "doner wraps, chips, garlic sauce",
+        price: 8.0,
+        satiety: 0.55,
+        ingredients: &[(R::Meat, 0.14), (R::Produce, 0.06), (R::Flour, 0.06)],
+        hours: (17, 27),
+        max_len: 6,
+        affinity: [0.2, 0.3, 1.2, 1.5, 0.4, 1.0],
+        warm_only: false,
+        cold_lift: false,
+        stock: 80.0,
+        cart: false,
+        sign: b"KEBAB",
+        jingle: false,
+    },
+    TruckRow {
+        kind: TruckKind::Coffee,
+        label: "coffee cart",
+        key: "coffee",
+        menu: "espresso, flat whites, pastries",
+        price: 4.0,
+        satiety: 0.12,
+        ingredients: &[(R::Dairy, 0.06), (R::Flour, 0.03)],
+        hours: (7, 16),
+        max_len: 5,
+        affinity: [0.8, 0.3, 0.3, 0.0, 1.4, 0.5],
+        warm_only: false,
+        cold_lift: true,
+        stock: 120.0,
+        cart: true,
+        sign: b"COFFEE",
+        jingle: false,
+    },
+    TruckRow {
+        kind: TruckKind::HotDog,
+        label: "hot-dog stand",
+        key: "hot_dog",
+        menu: "hot dogs, pretzels, soda",
+        price: 5.0,
+        satiety: 0.35,
+        ingredients: &[(R::Meat, 0.08), (R::Flour, 0.06)],
+        hours: (11, 23),
+        max_len: 5,
+        affinity: [1.0, 0.8, 1.5, 0.6, 0.7, 1.0],
+        warm_only: false,
+        cold_lift: false,
+        stock: 110.0,
+        cart: true,
+        sign: b"HOT DOGS",
+        jingle: false,
+    },
+    TruckRow {
+        kind: TruckKind::Fruit,
+        label: "fruit stand",
+        key: "fruit",
+        menu: "cut mango and pineapple, fresh juice",
+        price: 4.0,
+        satiety: 0.2,
+        ingredients: &[(R::Produce, 0.2)],
+        hours: (9, 18),
+        max_len: 6,
+        affinity: [1.0, 1.0, 0.3, 0.0, 0.9, 0.6],
+        warm_only: false,
+        cold_lift: false,
+        stock: 100.0,
+        cart: true,
+        sign: b"FRUIT",
+        jingle: false,
+    },
+];
+
+/// A food truck type's row.
+pub fn truck(k: TruckKind) -> &'static TruckRow {
+    &FOOD_TRUCKS[k.index()]
+}
 
 // ── where kinds grow ───────────────────────────────────────────────────────
 
@@ -2214,6 +2411,7 @@ pub const fn business_index(k: BusinessKind) -> usize {
         K::FreightForwarder => 67,
         K::Contractor => 68,
         K::BuildersMerchant => 69,
+        K::FoodTruck => 70,
     }
 }
 
@@ -2286,6 +2484,23 @@ mod tests {
         labels.sort();
         labels.dedup();
         assert_eq!(labels.len(), BUSINESSES.len(), "two kinds share a label");
+    }
+
+    /// [r14-foodtrucks] Every food-truck type has its row in order, a
+    /// price, a filling meal, ingredients someone makes, and hours.
+    #[test]
+    fn every_food_truck_has_a_complete_row() {
+        for (i, k) in TruckKind::ALL.into_iter().enumerate() {
+            let r = truck(k);
+            assert_eq!(r.kind, k, "row {i} out of order");
+            assert!(!r.label.is_empty() && !r.key.is_empty() && !r.menu.is_empty(), "{k:?}");
+            assert!(r.price > 0.0 && r.satiety > 0.0 && r.stock > 0.0 && r.hours.1 > r.hours.0 && r.max_len >= crate::food_trucks::MIN_STINT, "{k:?}");
+            assert!(!r.ingredients.is_empty());
+            for (res, n) in r.ingredients {
+                assert!(*n > 0.0 && makers(*res).next().is_some(), "{k:?}: nobody makes {res:?}");
+            }
+        }
+        assert!(truck(TruckKind::IceCream).warm_only && truck(TruckKind::IceCream).jingle);
     }
 
     /// [r13-catalogue] Plastics travel as pellets in bags: a dry box, not

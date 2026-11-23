@@ -225,7 +225,7 @@ impl CameraFollow {
             return false;
         }
         match self.target {
-            Some(Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_) | Selection::Ship(_) | Selection::Drone(_) | Selection::Rv(_)) => true,
+            Some(Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_) | Selection::Ship(_) | Selection::Drone(_) | Selection::Rv(_) | Selection::FoodTruck(_)) => true,
             Some(Selection::Citizen(id)) => sim.world.citizens.get(id).is_some_and(|c| matches!(c.activity, nd_sim::Activity::Driving { .. } | nd_sim::Activity::Riding { .. } | nd_sim::Activity::Passenger { seated: true, .. })),
             _ => false,
         }
@@ -302,6 +302,7 @@ pub fn zoom_distance(sim: &Sim, sel: Selection) -> f32 {
         // [feat/pt-ux] An aircraft from a little way off; a camper close.
         Selection::Drone(_) => 70.0,
         Selection::Rv(_) => 30.0,
+        Selection::FoodTruck(_) => 26.0,
         // [K34] A box close up: its number readable.
         Selection::Box(_) => 22.0,
         Selection::Building(id) => {
@@ -394,6 +395,7 @@ pub fn thing_pose(sim: &Sim, sel: Selection) -> Option<ThingPose> {
         // [feat/pt-ux] In the cabin; a camper from its driver's seat.
         Selection::Drone(id) => crate::air_select::pose(w, id, f).map(|(at, h)| ThingPose { pos: Vec2::new(at.x, at.z), heading: Some(h), eye: at.y + 1.2 }),
         Selection::Rv(seed) => w.society.homeless.rv(seed).map(|r| ThingPose { pos: r.pos, heading: Some(r.heading), eye: ground(r.pos) + 1.8 }),
+        Selection::FoodTruck(id) => crate::truck_select::pose(w, id, f).map(|(p, h)| ThingPose { pos: p, heading: Some(h), eye: ground(p) + 2.0 }),
         // [K34] Stood on the box's roof.
         Selection::Box(id) => crate::box_select::pose(sim, id).map(|(at, h, _)| ThingPose { pos: Vec2::new(at.x, at.z), heading: Some(h), eye: at.y + nd_procgen::CONTAINER_H + EYE_HEIGHT }),
         Selection::Bot(id) => w.bots.bots.get(id).map(|b| {
@@ -471,6 +473,7 @@ pub fn chase_subject(sim: &Sim, sel: Selection) -> Option<Subject> {
         }),
         Selection::Drone(id) => crate::air_select::pose(w, id, f).map(|(at, h)| simple(Vec2::new(at.x, at.z), h, at.y, SubjectKind::Air)),
         Selection::Rv(seed) => w.society.homeless.rv(seed).map(|r| simple(r.pos, r.heading, ground(r.pos), SubjectKind::Rv)),
+        Selection::FoodTruck(id) => crate::truck_select::pose(w, id, f).map(|(p, h)| simple(p, h, ground(p), SubjectKind::Rv)),
         Selection::Bot(id) => w.bots.bots.get(id).map(|b| {
             let p = if b.prev_pos.distance(b.pos) < 30.0 { b.prev_pos.lerp(b.pos, f) } else { b.pos };
             simple(p, lerp_angle(b.prev_heading, b.heading, f), ground(p), SubjectKind::Bot)

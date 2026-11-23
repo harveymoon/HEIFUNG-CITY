@@ -314,7 +314,9 @@ impl World {
 
     /// Adults without a job take an open one, food chain first.
     pub(in crate::world) fn job_search(&mut self) {
-        let jobless: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.work.is_none() && c.can_work()).map(|(id, _)| id).collect();
+        // [r14-foodtrucks] Someone who runs a food truck has a job: the truck.
+        let operators: std::collections::BTreeSet<CitizenId> = self.food_trucks.trucks.values().filter_map(|t| t.operator).collect();
+        let jobless: Vec<CitizenId> = self.citizens.iter().filter(|(id, c)| c.work.is_none() && c.can_work() && !operators.contains(id)).map(|(id, _)| id).collect();
         for id in jobless {
             // [megablocks] Downstairs first, for those living in an arcology.
             if let Some(job) = self.megablock_job_for(id) {

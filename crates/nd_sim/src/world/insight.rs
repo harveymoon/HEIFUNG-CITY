@@ -65,6 +65,7 @@ pub fn errand_of(e: Errand) -> (u8, u8, u64) {
         Errand::Taxi(_) => (12, 0, 0),
         Errand::Through => (13, 0, 0),
         Errand::Out => (14, 0, 0),
+        Errand::FoodTruck(_) => (15, 0, 0),
     }
 }
 
@@ -105,7 +106,7 @@ impl World {
             TripKind::Through
         } else if c.cargo.is_some() {
             TripKind::Lorry
-        } else if matches!(c.errand, Errand::Haul { .. } | Errand::Return(_) | Errand::Patrol(_) | Errand::Tow(_) | Errand::Recover(_) | Errand::Out) {
+        } else if matches!(c.errand, Errand::Haul { .. } | Errand::Return(_) | Errand::Patrol(_) | Errand::Tow(_) | Errand::Recover(_) | Errand::Out | Errand::FoodTruck(_)) {
             TripKind::Fleet
         } else if c.owned.is_some() || self.citizens.contains_key(c.citizen) {
             TripKind::Private

@@ -397,6 +397,7 @@ pub(super) fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Selection::Ship(id) => inspect(&json!({ "ship": key_str(id) }), ctx),
         Selection::Drone(id) => Ok(drone_json(&ctx.sim.world, id)),
         Selection::Rv(seed) => Ok(rv_json(&ctx.sim.world, seed)),
+        Selection::FoodTruck(id) => Ok(json!({ "food_truck": super::food_trucks::truck_json(&ctx.sim.world, id) })),
         Selection::Box(id) => Ok(json!({ "box": super::containers::box_json(&ctx.sim.world, id) })),
         Selection::None => Err("inspect needs one of citizen, building, lot, car, bot, train, metro, toll, road, segment, route, gesture (an id), or a selection".into()),
     }
@@ -460,6 +461,7 @@ pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<
         Selection::Ship(id) => ferry::ship_json(w, id).unwrap_or(Value::Null),
         Selection::Drone(id) => drone_json(w, id),
         Selection::Rv(seed) => rv_json(w, seed),
+        Selection::FoodTruck(id) => super::food_trucks::truck_json(w, id),
         Selection::Box(id) => super::containers::box_json(w, id),
     };
     let bus_line = route_sel.and_then(|r| w.transit.routes.get(r).map(|route| {
@@ -565,6 +567,13 @@ pub(super) fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     } else if let Some(v) = field(cmd, "box") {
         // [K34] A shipping container by its id or number.
         Selection::Box(super::containers::box_id(w, v)?)
+    } else if let Some(v) = field(cmd, "food_truck") {
+        // [r14-foodtrucks] A food truck, by its id (`food_trucks`).
+        let id = key_from::<nd_sim::food_trucks::TruckId>(v)?;
+        if !w.food_trucks.trucks.contains_key(id) {
+            return Err("no such food truck".into());
+        }
+        Selection::FoodTruck(id)
     } else if let Some(v) = field(cmd, "rv") {
         // [feat/pt-ux] A camper or van at the kerb, by its id (`society`'s `rv_list`).
         let seed = v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).ok_or("rv: an id (a number)")?;

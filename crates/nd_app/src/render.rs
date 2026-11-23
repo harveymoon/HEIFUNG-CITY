@@ -130,6 +130,8 @@ mod turbines;
 mod crossings;
 /// [taxis] Cabs in their yards, at ranks and kerbs; yard signs.
 mod taxis;
+/// [r14-foodtrucks] Food trucks at the kerb.
+mod food_trucks;
 /// [waterfront] Private jetties off waterfront lots.
 mod shore;
 
@@ -296,7 +298,7 @@ pub(crate) fn lifts(sel: Selection) -> Lifts {
         Selection::Car(c) => Lifts { car: Some(c), ..Default::default() },
         Selection::Unit(u) => Lifts { unit: Some(u), ..Default::default() },
         // Outlined by their own gizmos or meshes, not lifted.
-        Selection::None | Selection::Building(_) | Selection::Parked(_) | Selection::Toll(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Road(_) | Selection::Ship(_) | Selection::Drone(_) | Selection::Rv(_) | Selection::Box(_) => Lifts::default(),
+        Selection::None | Selection::Building(_) | Selection::Parked(_) | Selection::Toll(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Road(_) | Selection::Ship(_) | Selection::Drone(_) | Selection::Rv(_) | Selection::Box(_) | Selection::FoodTruck(_) => Lifts::default(),
     }
 }
 
@@ -542,6 +544,8 @@ impl Plugin for RenderPlugin {
         app.init_resource::<ParkedRender>().add_systems(Update, sync_parked_cars.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // [taxis] Cabs standing in yards, at ranks and kerbs.
         app.init_resource::<taxis::TaxiRender>().add_systems(Update, taxis::sync_taxis.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
+        // [r14-foodtrucks] Food trucks at the kerb, open or not.
+        app.init_resource::<food_trucks::FoodTruckRender>().add_systems(Update, food_trucks::sync_food_trucks.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // Emergency vehicles, fires and rubble, after the cars they hide.
         app.add_systems(Update, emergency::sync_emergency.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, emergency::amber_beacons.after(sync_cars).in_set(SimSet::Sync));

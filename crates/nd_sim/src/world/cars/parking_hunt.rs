@@ -54,6 +54,10 @@ impl World {
                 self.out_arrived(car_id);
                 true
             }
+            Errand::FoodTruck(id) => {
+                self.food_truck_arrived(car_id, id);
+                true
+            }
             // Its route ends at a highway exit off the map.
             Errand::Through => {
                 self.traffic.remove_car(car_id);

@@ -161,7 +161,7 @@ impl World {
                 }
                 for k in 0..count {
                     let slot = SQUEEZE_SLOT + k;
-                    if taken.is_some_and(|t| t.contains_key(&(side, slot))) {
+                    if taken.is_some_and(|t| t.contains_key(&(side, slot))) || self.food_trucks.holds(sid, side, slot) {
                         continue;
                     }
                     let (pos, heading) = self.squeeze_pose(sid, side, k);
@@ -278,7 +278,9 @@ impl World {
                 }
                 let mut best: Option<(f32, KerbSlot)> = None;
                 for slot in 0..count {
-                    if taken.is_some_and(|t| t.contains_key(&(side, slot))) {
+                    // [r14-foodtrucks] Nor a slot a food truck stands in
+                    // (or is heading for).
+                    if taken.is_some_and(|t| t.contains_key(&(side, slot))) || self.food_trucks.holds(sid, side, slot) {
                         continue;
                     }
                     let (pos, heading) = self.slot_pose(sid, side, slot);

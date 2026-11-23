@@ -123,6 +123,8 @@ mod social;
 mod society;
 /// [r5-layered] Bays under the raised roads.
 mod undercroft;
+/// [r14-foodtrucks] Food trucks and street vendors.
+mod food_trucks;
 /// [subway] The `subway` command and report section.
 mod subway;
 /// [cable] The `cable` command and report section.

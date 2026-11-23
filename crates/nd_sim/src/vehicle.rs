@@ -74,10 +74,13 @@ pub enum BodyType {
     /// [r14-materials] A curtain-sider: a box body with tarpaulin sides,
     /// for pallets.
     Curtainsider,
+    /// [r14-foodtrucks] A food truck: a step van with a serving hatch and an
+    /// awning, or a three-wheeler cart, by its livery (`Livery::FoodTruck`).
+    FoodTruck,
 }
 
 impl BodyType {
-    pub const ALL: [BodyType; 25] = [
+    pub const ALL: [BodyType; 26] = [
         BodyType::Hatchback,
         BodyType::Sedan,
         BodyType::Coupe,
@@ -103,6 +106,7 @@ impl BodyType {
         BodyType::Mixer,
         BodyType::Tipper,
         BodyType::Curtainsider,
+        BodyType::FoodTruck,
     ];
 
     pub fn two_wheeler(self) -> bool {
@@ -154,6 +158,7 @@ impl BodyType {
             BodyType::Mixer => "concrete_mixer",
             BodyType::Tipper => "tipper",
             BodyType::Curtainsider => "curtainsider",
+            BodyType::FoodTruck => "food_truck",
         }
     }
 }
@@ -186,10 +191,14 @@ pub enum Livery {
     /// van) painted in the company's colour (an index into
     /// `crate::companies::FLEET_COLOURS`).
     Fleet(u8, u8),
+    /// [r14-foodtrucks] A food truck's paint job by its type
+    /// (`food_trucks::TruckKind as u8`): an ice-cream van's pastels and
+    /// cone, a taco truck's red and yellow, and so on.
+    FoodTruck(u8),
 }
 
 impl Livery {
-    pub const ALL: [Livery; 11] = [Livery::None, Livery::Pizza, Livery::Parcels, Livery::Grocery, Livery::Construction, Livery::Utility, Livery::Transit, Livery::Taxi, Livery::Corp(6, 2), Livery::Fleet(7, 4), Livery::Fleet(4, 1)];
+    pub const ALL: [Livery; 13] = [Livery::None, Livery::Pizza, Livery::Parcels, Livery::Grocery, Livery::Construction, Livery::Utility, Livery::Transit, Livery::Taxi, Livery::Corp(6, 2), Livery::Fleet(7, 4), Livery::Fleet(4, 1), Livery::FoodTruck(0), Livery::FoodTruck(4)];
 
     /// [companies] The plain liveries by number, for `Livery::Fleet`.
     const PLAIN: [Livery; 8] = [Livery::None, Livery::Pizza, Livery::Parcels, Livery::Grocery, Livery::Construction, Livery::Utility, Livery::Transit, Livery::Taxi];
@@ -712,6 +721,9 @@ pub enum Errand {
     /// exit it can reach and leaves the world there
     /// (`World::retire_vehicle`). Vehicles never vanish mid-street.
     Out,
+    /// [r14-foodtrucks] A food truck on its way to a pitch or home
+    /// (`crate::food_trucks`): what it does on arriving is its job.
+    FoodTruck(crate::food_trucks::TruckId),
 }
 
 /// Why a private car came into or left the city: the only ways it can.

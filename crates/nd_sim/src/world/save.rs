@@ -208,6 +208,8 @@ impl World {
             self.strand_car(car);
         }
         self.vehicles_after_load();
+        // [r14-foodtrucks] Crews back in their trucks.
+        self.food_trucks_after_load();
         // [K34] A save from before the box records: a starting stock.
         self.containers_after_load();
         // [services] Which car is which unit's is not saved: without it the

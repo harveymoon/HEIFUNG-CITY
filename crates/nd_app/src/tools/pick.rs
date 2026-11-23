@@ -299,6 +299,10 @@ fn pick_any(sim: &Sim, p: SVec2, depth: Depth, reach: Reach) -> Selection {
     if let Some(seed) = crate::rv_select::pick(w, p).filter(|_| reach.cars) {
         return Selection::Rv(seed);
     }
+    // [r14-foodtrucks] A food truck at the kerb (its awning and stools too).
+    if let Some(id) = crate::truck_select::pick(w, p).filter(|_| reach.cars) {
+        return Selection::FoodTruck(id);
+    }
     // Parked cars at the kerb. [feat/pt-ux] Only those drawn there (F42: a
     // car in a lot or a garage is not drawn on its own, and picking it gave
     // an empty box over nothing), and only from close by.

@@ -132,6 +132,20 @@ lorry. Each load is booked on the site's `due` list before its lorry leaves, as 
 4. Walk the "still keyed on a kind elsewhere" list above: names, liveries, building looks, and the
    pressure that opens it.
 
+## Food trucks (r14-foodtrucks)
+
+`BusinessKind::FoodTruck` (appended) is the row for the trade as a whole: `needs_site`, so the
+market never grows one on a lot; its inspector line. The types of truck have their own table,
+**`FOOD_TRUCKS: [TruckRow; TruckKind::COUNT]`**, in `TruckKind` order (`nd_sim::food_trucks`):
+label and API key, menu, the price and the satiety of one serving, its `ingredients` per serving
+(bought each morning from the town's businesses holding them, else wholesale), trading `hours`
+(past midnight as 24..), the longest stint, `affinity` per kind of crowd (park, beach, stadium,
+nightlife, offices, event), `warm_only` (ice cream), `cold_lift` (coffee), servings loaded a day,
+`cart` (a three-wheeler with an umbrella), the sign word and `jingle`. Their paint jobs are
+`Livery::FoodTruck(type)` (`nd_procgen::vehicles::food_truck_colors`). To add a type: a variant at
+the end of `TruckKind` (and `ALL`, `COUNT`), a row at the end of `FOOD_TRUCKS`, its colours and
+names (`food_trucks::truck_name`), and `cargo test -p nd_sim catalogue` checks the row.
+
 ## Behaviour changes in r13-catalogue
 
 - Plastics ship in a dry box instead of a tank container (pellets in bags). Tanks now hold only crude

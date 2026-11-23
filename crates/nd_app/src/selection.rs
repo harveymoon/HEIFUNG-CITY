@@ -44,6 +44,9 @@ pub enum Selection {
     /// [K34] A shipping container (`world.containers`): in a depot's stacks,
     /// on a train or lorry, or built into a home.
     Box(nd_sim::containers::BoxId),
+    /// [r14-foodtrucks] A food truck (`world.food_trucks`): at the kerb,
+    /// on the road or at home.
+    FoodTruck(nd_sim::food_trucks::TruckId),
 }
 
 /// [fix/review-app] What the selection should be now that the sim has
@@ -74,6 +77,7 @@ pub fn validated(sel: Selection, sim: &Sim) -> Selection {
         Selection::Drone(id) => w.air.drones.contains_key(id),
         Selection::Rv(seed) => w.society.homeless.rv(seed).is_some(),
         Selection::Box(id) => w.containers.boxes.contains_key(id),
+        Selection::FoodTruck(id) => w.food_trucks.trucks.contains_key(id),
     };
     if alive { sel } else { Selection::None }
 }

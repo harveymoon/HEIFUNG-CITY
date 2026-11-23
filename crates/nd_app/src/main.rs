@@ -45,6 +45,8 @@ mod toll_select;
 /// [road-inspect] Picking and outlining street pieces, and the road card's figures.
 mod road_select;
 mod rv_select;
+/// [r14-foodtrucks] Food trucks to select.
+mod truck_select;
 /// [K34] A shipping container selected.
 mod box_select;
 mod remote;

@@ -855,6 +855,22 @@ Citizens are rendered from their simulated positions every frame.
   hungry buys groceries in at wholesale (before, only when the whole town's
   stock was low, which it never was while the stock stood in a few full shops
   across town).
+- **Food trucks and street vendors** [r14-foodtrucks] (`food_trucks.rs`,
+  `world/food_trucks.rs`; the types in the catalogue's `FOOD_TRUCKS`): households
+  run ice-cream vans, taco, noodle and kebab trucks and coffee, hot-dog and fruit
+  carts. Each morning a truck plans one or two stints from the town's crowds
+  (`crowd_spots`: parks and beaches by visitor-hours, today's stadium games, gigs
+  and raves, late-bar streets, office districts at lunch) scored by its liking for
+  the crowd, the weather (ice cream only warm and dry; coffee lifts in the cold),
+  the drive and the trucks already going there; buys its ingredients from the
+  town's businesses (else wholesale); is driven out in the traffic by a grown-up
+  of the household, parks in a free legal kerb slot (held for it) or a trading
+  pitch on a shopping street, opens its hatch and awning, and sells: people near
+  by, strollers and people set on a meal out walk up, queue and buy (the meal
+  feeds them and the takings go to the household). It moves on or drives home at
+  the end of the stint. Lease and permit at midnight; a week of losses sells it;
+  new trucks start at night where crowds outnumber them (one per 1,400 people).
+  Drawn at the kerb with the awning, bulbs, an A-board and stools when open.
 - **Inbound audit** [r12-hunger] (`world/inbound_audit.rs`): every 6 hours
   (03:00, 09:00, ...) the loads on their way to buyers (queued and moving
   lorries, rail orders, trains and yard aprons, ships ordered and at sea, island

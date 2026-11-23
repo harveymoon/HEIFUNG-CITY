@@ -76,6 +76,8 @@ impl World {
             .citizens
             .iter()
             .filter(|(id, c)| c.inside.is_none() && matches!(c.activity, Activity::Idle) && !down.contains(id))
+            // [r14-foodtrucks] The cook in a food truck at the kerb stays in it.
+            .filter(|(id, _)| self.food_trucks.trucks.is_empty() || self.food_trucks.crewed_by(*id).is_none())
             .filter(|(_, c)| self.in_carriageway(c.pos))
             .map(|(id, _)| id)
             .collect();
