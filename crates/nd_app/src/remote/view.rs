@@ -503,6 +503,13 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
             "waiting_for_materials": c.waiting_for_materials(), "ordered": c.ordered,
             "blocked": c.blocked.map(|k| k.key()), "blocked_text": c.blocked.map(|k| k.text()),
             "crew": b.workers.len(), "crew_wanted": b.jobs, "planned_homes": homes, "planned_jobs": jobs,
+            // [r14-materials] How it is built, its bill and its stockpile.
+            "build_type": w.build_type(id).map(|t| t.label()),
+            "bill_value": round(nd_sim::catalogue::bill_value(&w.site_bill(id))),
+            "stages": w.site_materials(id).iter().map(|s| {
+                let lines = |v: &[(nd_sim::market::Resource, f32)]| v.iter().map(|(r, n)| json!({"good": r.label(), "qty": round(*n), "unit": r.row().unit.label()})).collect::<Vec<_>>();
+                json!({"stage": s.stage.label(), "state": s.state.key(), "bill": lines(&s.bill), "delivered": lines(&s.delivered), "on_the_way": lines(&s.due), "on_site": lines(&s.on_site)})
+            }).collect::<Vec<_>>(),
         })
     });
     let rail = b.rail.as_ref().map(|l| {

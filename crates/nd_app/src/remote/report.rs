@@ -585,6 +585,10 @@ fn economy(w: &World) -> Value {
                 "resource": r.label(), "retail": r.is_retail(), "town_stock": round(stock), "avg_price": round(price), "base_price": round(r.base_price()),
                 "price_vs_base": r3(ratio), "local_sellers_open": sellers,
                 "local_supply_per_day": round(made), "business_demand_per_day": round(used), "scarce": scarce,
+                // [r14-materials] The catalogue's facts: what it is, its
+                // unit, the box and the lorry it travels in.
+                "category": r.row().category.label(), "unit": r.row().unit.label(), "box": r.row().ships.label(), "truck": r.row().truck.label(),
+                "local_from": r.row().local_from.map(|x| x.label()),
             })
         })
         .collect();

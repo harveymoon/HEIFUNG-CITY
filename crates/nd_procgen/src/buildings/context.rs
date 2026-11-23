@@ -62,6 +62,8 @@ pub struct Ctx<'a> {
     pub waste_fill: f32,
     /// [r6-architects] See [`Extras::site`].
     pub site: Option<super::architects::SiteLook>,
+    /// [r14-materials] See [`Extras::site_pile`].
+    pub pile: Vec<nd_sim::market::Resource>,
 }
 
 /// Per-building state that changes the look beyond style and condition.
@@ -162,11 +164,15 @@ pub struct Extras<'a> {
     /// [r11-lot-memory] Old signs painted over on the front (a shop that
     /// changed trade or shut): `crate::lot_memory::ghost_signs`.
     pub ghost_signs: &'a [crate::lot_memory::GhostSign],
+    /// [r14-materials] What a building site's stockpile holds now, the
+    /// biggest pile first (`World::site_pile_goods`): its stacks are drawn
+    /// as those materials. Empty: the old mixed stacks.
+    pub site_pile: &'a [nd_sim::market::Resource],
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, cable: false, battery: None, form: None, tower: None, megablock: None, brand: None, annex: None, shore: None, pier: None, park_look: None, units: &[], boxes_of: None, real_boxes: false, overhead: &[], waste_fill: 0.0, site: None, ghost_signs: &[] }
+        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, cable: false, battery: None, form: None, tower: None, megablock: None, brand: None, annex: None, shore: None, pier: None, park_look: None, units: &[], boxes_of: None, real_boxes: false, overhead: &[], waste_fill: 0.0, site: None, ghost_signs: &[], site_pile: &[] }
     }
 }
 
@@ -231,6 +237,7 @@ impl<'a> Ctx<'a> {
             overhead: extras.overhead.to_vec(),
             waste_fill: extras.waste_fill,
             site: extras.site,
+            pile: extras.site_pile.to_vec(),
         }
     }
 }

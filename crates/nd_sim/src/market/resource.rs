@@ -40,10 +40,37 @@ pub enum Resource {
     /// [dirty-industry] Ingots and billets from the smelters; sold out of
     /// town. Appended.
     Metal,
+    // -- [r14-materials] building materials (the supplies review), appended --
+    /// Cement in bulk: mixed with sand and gravel into concrete.
+    Cement,
+    /// Sand and gravel for concrete, fill and paths.
+    Aggregate,
+    /// Bricks and concrete blocks on pallets.
+    Bricks,
+    /// Flat glass: window panes and curtain-wall units.
+    Glass,
+    /// Structural steel: beams, columns, decking.
+    Steel,
+    /// Reinforcing bar for concrete.
+    Rebar,
+    /// Sawn timber and boards.
+    Timber,
+    /// Roof sheets and tiles.
+    Roofing,
+    /// Insulation batts and boards.
+    Insulation,
+    /// Pipes and plumbing.
+    Pipe,
+    /// Cable, switchgear and the electrical fit-out.
+    Wiring,
+    /// Fixtures and fittings: doors, kitchens, sanitaryware, lifts.
+    Fixtures,
+    /// Paint and finishes.
+    Paint,
 }
 
 impl Resource {
-    pub const COUNT: usize = 19;
+    pub const COUNT: usize = 32;
     pub const ALL: [Resource; Self::COUNT] = [
         Resource::Produce,
         Resource::Grain,
@@ -64,6 +91,19 @@ impl Resource {
         Resource::Fillets,
         Resource::Art,
         Resource::Metal,
+        Resource::Cement,
+        Resource::Aggregate,
+        Resource::Bricks,
+        Resource::Glass,
+        Resource::Steel,
+        Resource::Rebar,
+        Resource::Timber,
+        Resource::Roofing,
+        Resource::Insulation,
+        Resource::Pipe,
+        Resource::Wiring,
+        Resource::Fixtures,
+        Resource::Paint,
     ];
 
     /// Its row in the catalogue.

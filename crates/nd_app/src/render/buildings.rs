@@ -146,6 +146,8 @@ pub(crate) fn building_geometry(world: &World, kit: Kit, styles: &StyleBook, id:
     let overhead = if b.land_use == nd_sim::LandUse::Park { nd_procgen::undercroft::deck_quads(world, &lot.polygon) } else { Vec::new() };
     // [r11-lot-memory] Old signs painted over where the trade changed.
     let ghost_signs = nd_procgen::lot_memory::ghost_signs(world, id);
+    // [r14-materials] A site's stacks are its real stockpile.
+    let pile = world.site_pile_goods(id);
     // What decides the style comes from `style_extras`, the same inputs the
     // style book and the inspector's label use (a taxi company's yard is a
     // surface lot whose cabs `render/taxis.rs` stands in the bays); only
@@ -162,6 +164,7 @@ pub(crate) fn building_geometry(world: &World, kit: Kit, styles: &StyleBook, id:
         fleet: b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::FleetLot).map_or(0.5, |z| z.fleet_trucks as f32 / world.fleet_capacity(id).max(1) as f32),
         overhead: &overhead,
         ghost_signs: &ghost_signs,
+        site_pile: &pile,
         ..nd_procgen::style_extras(world, id, styles.neighbours(id))
     };
     let g = match &b.demolition {
