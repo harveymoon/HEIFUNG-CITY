@@ -537,8 +537,11 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         json!({
             "id": key_str(bz_id), "name": b.name, "rent_per_day": round(z.rent_day), "area_m2": round(w.business_area(bz_id)),
             "kind": z.kind.label(), "industry": z.kind.industry().map(|k| k.label()), "closed": z.closed, "money": round(z.money), "revenue_today": round(z.revenue_today),
+            // [r15-lots] (F10) Open for trade: built, standing and not shut.
+            // A site's payroll is its building crew (`site_crew`), not staff.
+            "open": b.operating() && !z.closed, "opens_when_built": b.construction.is_some(),
             "books": z.books.iter().map(|d| json!({ "revenue": round(d.revenue), "spend": round(d.spend) })).collect::<Vec<_>>(),
-            "spend_today": round(z.spend_today), "deals": z.deals, "staffing": round(b.staffing()), "broke_days": z.broke_days,
+            "spend_today": round(z.spend_today), "deals": z.deals, "staffing": round(if b.operating() { b.staffing() } else { 0.0 }), "site_crew": (!b.operating()).then(|| b.workers.len()), "broke_days": z.broke_days,
             "needs": recipe.inputs.iter().map(|(r, _)| json!({ "resource": r.label(), "stock": round(z.stock_of(*r)), "target": round(z.target_input(*r, b.jobs)) })).collect::<Vec<_>>(),
             "sells": recipe.outputs.iter().map(|(r, _)| json!({ "resource": r.label(), "stock": round(z.stock_of(*r)), "price": round(z.sell_price(*r, b.jobs)) })).collect::<Vec<_>>(),
             // [r14-builders] a contractor's crews, jobs and yard; a merchant's trade stock
@@ -740,7 +743,7 @@ pub fn lot_detail(w: &World, id: LotId, l: &Lot) -> Value {
         "width": round(l.width()), "depth": round(l.depth()), "entrance": v2(l.entrance()), "front_dir": v2(l.front_dir),
         "front_segment": l.front_segment.0, "car_segment": l.car_segment.map(|s| s.0),
         "building": opt_key(l.building), "building_name": building_name(w, l.building),
-        "vacant": l.building.is_none() && l.usable(), "usable": l.usable(), "landlocked": l.landlocked, "car_access": l.car_access(),
+        "vacant": l.building.is_none() && l.usable(), "usable": l.usable(), "landlocked": l.landlocked, "landlocked_why": w.lot_landlocked_why(id), "car_access": l.car_access(),
         "park": l.park.is_some(), "land_value": round(value), "land_tier": Tier::for_land_value(value).label(),
         "land_value_for_use": round(w.lot_value(id)), "access": w.lot_walk_access(id).map(|a| json!({ "park_min": a.park_min.map(round), "nightlife_min": a.nightlife_min.map(round), "value_for_homes": round(a.value), "text": w.lot_access_text(id).unwrap_or_else(|| a.describe()) })),
         "links": w.lot_link_warnings(id),

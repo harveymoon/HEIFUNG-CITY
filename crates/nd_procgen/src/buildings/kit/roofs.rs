@@ -6,6 +6,7 @@ use super::super::Ctx;
 use super::R;
 use crate::surface::{Geometry, Surface, Surface::*};
 use glam::Vec2;
+use nd_sim::zoning::{point_in_polygon, polygon_area};
 
 /// Shrink a polygon towards its centroid along one axis only, keeping
 /// `keep` of its extent along it: which turns a footprint into a roof
@@ -31,9 +32,43 @@ pub(crate) fn ridge_roof(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y: f32, rise:
 }
 
 /// A metal shed roof whose ridge runs across the street front.
+/// [r15-lots] (F9) An odd hall (a footprint that fills under 90% of its
+/// rectangle along the front: merged plots, a lot clipped by a curve) gets
+/// a flat roof behind a parapet: squashed towards its centroid, the ridge
+/// of an irregular outline ran off to a corner and the roof read as one
+/// skewed wedge (Meridian Fab 13 over three merged plots).
 pub(crate) fn gable_roof(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y: f32, ridge: f32, color: [f32; 3]) {
     let axis = c.front_face(poly).out;
+    if !rectangular_enough(poly, axis) {
+        flat_hall_roof(g, c, poly, y, color);
+        return;
+    }
     ridge_roof(g, c, poly, y, ridge, axis, 1.0 - 0.04, 0.4, Metal, color);
+}
+
+/// [r15-lots] (F9) Does a footprint fill at least 90% of its rectangle
+/// aligned to `axis` (a ridge over it then runs straight)?
+pub(crate) fn rectangular_enough(poly: &[Vec2], axis: Vec2) -> bool {
+    if poly.len() < 3 || axis == Vec2::ZERO {
+        return false;
+    }
+    let side = Vec2::new(-axis.y, axis.x);
+    let span = |d: Vec2| poly.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p.dot(d)), hi.max(p.dot(d))));
+    let ((u0, u1), (v0, v1)) = (span(axis), span(side));
+    let rect = (u1 - u0) * (v1 - v0);
+    rect > 1e-3 && polygon_area(poly).abs() / rect >= 0.9
+}
+
+/// [r15-lots] (F9) A flat roof on an odd hall: a deck over the whole
+/// footprint, a parapet round it and a row of roof lights.
+fn flat_hall_roof(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y: f32, color: [f32; 3]) {
+    extrude(g, &c.frame, Metal, poly, y, y + 0.2, mul(color, 0.8));
+    parapet(g, c, poly, y + 0.2, 0.7, 0.25, Metal, color);
+    let centre = poly_center(poly);
+    if point_in_polygon(centre, poly) {
+        let r = (inradius(poly) * 0.6).clamp(0.8, 6.0);
+        extrude(g, &c.frame, Glass, &rect(centre.x, centre.y, r, r * 0.35), y + 0.2, y + 0.6, [0.55, 0.6, 0.62]);
+    }
 }
 
 /// A gabled roof on a rectangle, its ridge along `v` (for buildings deep

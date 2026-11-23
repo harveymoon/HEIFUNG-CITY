@@ -1207,8 +1207,8 @@ A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price
   deliveries, materials), land value, rent, wage, condition, homes/jobs and the people,
   footfall, power (powered share, demand), parking, plant, depot, rail link, business (cash,
   takings, `industry`, `books`: the last 30 days' revenue and spend, oldest first, needs and sells
-  with stock and prices), park
-- lot: land use, polygon, area, land value and tier, `land_value_for_use` (as the lot's own land use feels it), `access` (as in `terrain_at`), zone, building, vacant/landlocked, footfall
+  with stock and prices; [r15-lots] `open` (built, standing and not shut), `opens_when_built` (a site), `staffing` 0 on a site and `site_crew` the building crew on its payroll), park
+- lot: land use, polygon, area, land value and tier, `land_value_for_use` (as the lot's own land use feels it), `access` (as in `terrain_at`), zone, building, vacant/landlocked, [r15-lots] `landlocked_why` (its ground, backland with no way along any edge, a sharp inward corner, a sliver, under 8 m across; null when usable; backland with no way at its edge has `car_access` false), footfall
 - [land] building `land`: `owner` ({id, name, properties, spent, detail {kind: firm (business) |
   developer | household | elite (citizen) | builder (founder) | company (founder)}}, or {kind: independent}), `sale_price`, `lots` (every
   plot it spans, primary first), `merged`, `pending_lots` (bought, still clearing), `form`

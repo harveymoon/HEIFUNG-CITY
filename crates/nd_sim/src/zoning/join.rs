@@ -218,7 +218,78 @@ pub fn join_parcels(polys: &[Vec<Vec2>], lu: LandUse, roads: &RoadNetwork) -> Ve
             }
         }
     }
+    fold_scraps(&mut groups, lu, roads);
     groups.into_iter().flatten().collect()
+}
+
+/// [r15-lots] (F1, F8) Scraps folded into a neighbour: a piece that is no
+/// lot for `lu` by its shape (a sliver, a sharp inward corner, under 8 m
+/// across: the thin radial wedges between the lots round a circus) or a
+/// small piece of backland (under 60% of a lot) joins the usable lot
+/// beside it that shares the longest boundary, when the two together make
+/// a sound lot ([`landlocked_why`] none) no bigger than backland is ever
+/// folded into. Left alone, each was a landlocked lot of its own: dead
+/// ground beside a street, or a shard of pad by a building.
+fn fold_scraps(groups: &mut [Option<(Vec<usize>, Vec<Vec2>)>], lu: LandUse, roads: &RoadNetwork) {
+    if lu == LandUse::Park {
+        return;
+    }
+    let max_area = backland_max_area(lu);
+    for _ in 0..3 {
+        let sound: Vec<bool> = groups.iter().map(|g| g.as_ref().is_some_and(|(_, p)| landlocked_why(lu, p, roads).is_none())).collect();
+        let mut merged = false;
+        for i in 0..groups.len() {
+            let Some((_, pi)) = groups[i].clone() else { continue };
+            if sound[i] {
+                continue;
+            }
+            let scrap = match landlocked_why(lu, &pi, roads) {
+                Some("no_frontage") => polygon_area(&pi).abs() < lu.lot_area() * 0.6,
+                Some(_) => true,
+                None => false,
+            };
+            if !scrap {
+                continue;
+            }
+            let bi = bounds_of(&pi);
+            let gi = to_geo(&pi);
+            let per_i = perimeter(&pi);
+            let mut best: Option<(f32, usize, Vec<Vec2>)> = None;
+            for (j, g) in groups.iter().enumerate() {
+                if i == j || !sound[j] {
+                    continue;
+                }
+                let Some((_, pj)) = g else { continue };
+                if !boxes_overlap(bi, bounds_of(pj), 0.5) {
+                    continue;
+                }
+                let u: MultiPolygon<f64> = gi.union(&to_geo(pj));
+                if u.0.len() != 1 || !u.0[0].interiors().is_empty() {
+                    continue;
+                }
+                let up = simplify_collinear(&from_geo(&u.0[0]));
+                if up.len() < 3 || polygon_area(&up).abs() > max_area {
+                    continue;
+                }
+                let shared = (per_i + perimeter(pj) - perimeter(&up)) * 0.5;
+                if shared < 3.0 || best.as_ref().is_some_and(|b| shared <= b.0) || landlocked_why(lu, &up, roads).is_some() {
+                    continue;
+                }
+                best = Some((shared, j, up));
+            }
+            if let Some((_, j, up)) = best {
+                let (mi, _) = groups[i].take().unwrap();
+                let g = groups[j].as_mut().unwrap();
+                g.0.extend(mi);
+                g.0.sort();
+                g.1 = up;
+                merged = true;
+            }
+        }
+        if !merged {
+            break;
+        }
+    }
 }
 
 /// [fix/roads-tools] The largest lot backland is folded into, for `lu`.

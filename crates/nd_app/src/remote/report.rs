@@ -1333,6 +1333,8 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     rail_broken.message = format!("{} stations/yards do not work: {} lack a track connection, {} a street connection", rail_broken.count, rail_missing.0, rail_missing.1);
     route_broken.message = format!("{} bus lines cannot run", route_broken.count);
     sites.message = format!("{} building sites are waiting for materials", sites.count);
+    // [r15-lots] (F10) It went out with an empty message.
+    sites_cut.message = format!("{} building sites cannot be reached by delivery trucks or builders", sites_cut.count);
     stuck.message = format!("{} vehicles have stood still for {STUCK_STALL_S:.0}+ s in traffic; {kerb} more wait at the kerb to pull out", stuck.count);
     if !gridlocks.is_empty() {
         let rings: Vec<String> = gridlocks

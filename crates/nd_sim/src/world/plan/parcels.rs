@@ -254,6 +254,57 @@ impl World {
         self.refresh_planned_zoning();
     }
 
+    /// [r15-lots] (F1) Why lot `id` is landlocked, in words (None when it
+    /// is not): its ground, no way at its edge, or its shape.
+    pub fn lot_landlocked_why(&self, id: LotId) -> Option<&'static str> {
+        let l = self.lots.get(id).filter(|l| l.landlocked)?;
+        if let Some(g) = self.landscape.lot_ground_problem(&l.polygon, l.center) {
+            return Some(g);
+        }
+        Some(match crate::zoning::landlocked_why(l.land_use, &l.polygon, &self.roads) {
+            Some("no_frontage") => "backland: no street or path along any edge",
+            Some("sharp_corner") => "a sharp inward corner: no building fits",
+            Some("sliver") => "a sliver: too thin to build on",
+            Some("narrow") => "under 8 m across",
+            _ => "rough ground",
+        })
+    }
+
+    /// [r15-lots] (F1) Empty landlocked lots judged again by today's rules
+    /// (a save keeps its lots as they were judged; only a rebuild judged
+    /// them again): a lot that was dead for its outline's crumbs, with a
+    /// street at its front, is a lot to build on, and backland with no
+    /// way at its edge loses the car access it never had. Rough ground
+    /// stays rough. Returns how many came back to use.
+    pub(in crate::world) fn rejudge_lots(&mut self) -> usize {
+        let ids: Vec<LotId> = self.lots.iter().filter(|(_, l)| l.landlocked && l.building.is_none() && l.park.is_none() && l.polygon.len() >= 3).map(|(id, _)| id).collect();
+        let mut freed = 0;
+        for id in ids {
+            let l = &self.lots[id];
+            let Some(fresh) = make_lot(l.zone, l.land_use, l.polygon.clone(), l.center, &self.roads) else { continue };
+            let rough = self.parcels.parcels.iter().any(|p| p.lot == Some(id) && p.rough) || self.landscape.lot_ground_problem(&l.polygon, l.center).is_some();
+            let lot = &mut self.lots[id];
+            if fresh.landlocked || rough {
+                if fresh.car_segment.is_none() {
+                    lot.car_segment = None;
+                }
+                continue;
+            }
+            lot.polygon = fresh.polygon;
+            lot.corners = fresh.corners;
+            lot.front_edge = fresh.front_edge;
+            lot.front_dir = fresh.front_dir;
+            lot.front_segment = fresh.front_segment;
+            lot.front_t = fresh.front_t;
+            lot.access_node = fresh.access_node;
+            lot.car_segment = fresh.car_segment;
+            lot.car_point = fresh.car_point;
+            lot.landlocked = false;
+            freed += 1;
+        }
+        freed
+    }
+
     /// Parcels from the roads, zoning from the master plan, a lot for every
     /// zoned parcel (or run of joined parcels). Zone polygons keep their
     /// zone; painted lots get a zone of their own outline.

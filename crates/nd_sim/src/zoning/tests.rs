@@ -165,9 +165,12 @@ fn curved_road_cuts_only_its_own_strip_and_leaves_no_slivers() {
     let good = usable(&lots);
     assert!(good.len() >= 12, "got {} usable parcels", good.len());
     for lot in &good {
-        let compact = lot.area() / perimeter(&lot.polygon).powi(2);
+        // [r15-lots] Judged, as lots are, without the outline's crumbs; the
+        // frontage may be a run of short pieces along the curve.
+        let shape = shape_outline(&lot.polygon);
+        let compact = polygon_area(&shape) / perimeter(&shape).powi(2);
         assert!(compact >= MIN_COMPACTNESS, "sliver parcel with compactness {compact}");
-        assert!(lot.front_edge[0].distance(lot.front_edge[1]) >= 5.0);
+        assert!(landlocked_why(LandUse::Residential, &lot.polygon, &roads).is_none());
     }
     // Parcels well inside the arch, away from any road, are landlocked.
     assert!(lots.values().any(|l| l.landlocked), "deep land without frontage is marked unusable");

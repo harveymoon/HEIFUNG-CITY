@@ -112,8 +112,12 @@ pub fn make_lot(zone_id: ZoneId, lu: LandUse, poly: Vec<Vec2>, center: Vec2, roa
 /// [`make_lot`]; `strict_shape` false lets a notched or long site with a
 /// street front be a lot ([attractions] a landmark's joined plots).
 fn make_lot_shaped(zone_id: ZoneId, lu: LandUse, poly: Vec<Vec2>, center: Vec2, roads: &RoadNetwork, strict_shape: bool) -> Option<Lot> {
+    // [r15-lots] (F1) A zoned lot the raw outline would kill loses its
+    // hairline spikes (a lot that was fine keeps its outline as it was).
+    let raw_dead = reflex_vertex(&poly, 0.6).is_some() || polygon_area(&poly) / perimeter(&poly).powi(2) < MIN_COMPACTNESS;
+    let poly = if strict_shape && raw_dead { cut_spikes(&poly) } else { poly };
+    #[cfg(test)]
     let area = polygon_area(&poly);
-    let compact = area / perimeter(&poly).powi(2);
     let (fi, road) = frontage_edge(&poly, roads, lu.fronts_paths());
     let n = poly.len();
     let fa = poly[fi];
@@ -132,7 +136,10 @@ fn make_lot_shaped(zone_id: ZoneId, lu: LandUse, poly: Vec<Vec2>, center: Vec2, 
         along * u0 + inward * v1,
     ];
     let has_frontage = road.is_some() && frontage_long_enough(&poly, fi, lu, roads);
-    let sharp = reflex_vertex(&poly, 0.6).is_some();
+    // [r15-lots] (F1) The shape is judged without the booleans' crumbs.
+    let shape = shape_outline(&poly);
+    let compact = polygon_area(&shape) / perimeter(&shape).powi(2);
+    let sharp = reflex_vertex(&shape, 0.6).is_some();
     let landlocked = !has_frontage || (strict_shape && (sharp || compact < MIN_COMPACTNESS)) || (u1 - u0) < 8.0 || (v1 - v0) < 8.0;
     #[cfg(test)]
     if landlocked {
@@ -148,7 +155,12 @@ fn make_lot_shaped(zone_id: ZoneId, lu: LandUse, poly: Vec<Vec2>, center: Vec2, 
     };
     let fronts_street = roads.segment(sid).is_street();
     let entrance = fa.lerp(fb, 0.5);
-    let (car_segment, car_point) = if fronts_street {
+    // [r15-lots] (F1) Backland with no edge on any way has no street a car
+    // stops at: the nearest road it hangs on is no access (its card read
+    // `car_access: true` beside `landlocked: true`).
+    let (car_segment, car_point) = if road.is_none() {
+        (None, entrance)
+    } else if fronts_street {
         (Some(sid), entrance)
     } else {
         match roads.nearest_street(entrance) {
@@ -176,6 +188,35 @@ fn make_lot_shaped(zone_id: ZoneId, lu: LandUse, poly: Vec<Vec2>, center: Vec2, 
         park: None,
         shore: LotShore::default(),
     })
+}
+
+/// [r15-lots] Why [`make_lot`] makes this outline a landlocked lot for
+/// `lu`, in the words the probes and the inspector use: `"no_frontage"`
+/// (no edge along a way it may use, or too short a one), `"sharp_corner"`
+/// (an inward corner sharper than ~35 degrees), `"sliver"` (area over
+/// squared perimeter under [`MIN_COMPACTNESS`]) or `"narrow"` (under 8 m
+/// across its frontage rectangle). None: usable by shape.
+pub fn landlocked_why(lu: LandUse, poly: &[Vec2], roads: &RoadNetwork) -> Option<&'static str> {
+    if poly.len() < 3 {
+        return Some("sliver");
+    }
+    let (fi, road) = frontage_edge(poly, roads, lu.fronts_paths());
+    let n = poly.len();
+    let along = (poly[(fi + 1) % n] - poly[fi]).normalize_or_zero();
+    let inward = Vec2::new(-along.y, along.x);
+    let (u0, u1) = extents(poly, along);
+    let (v0, v1) = extents(poly, inward);
+    if road.is_none() || !frontage_long_enough(poly, fi, lu, roads) {
+        Some("no_frontage")
+    } else if reflex_vertex(&shape_outline(poly), 0.6).is_some() {
+        Some("sharp_corner")
+    } else if { let s = shape_outline(poly); polygon_area(&s) / perimeter(&s).powi(2) < MIN_COMPACTNESS } {
+        Some("sliver")
+    } else if (u1 - u0) < 8.0 || (v1 - v0) < 8.0 {
+        Some("narrow")
+    } else {
+        None
+    }
 }
 
 /// [free-placement] The lot under a building the player placed: ground the

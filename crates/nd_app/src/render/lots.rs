@@ -15,13 +15,26 @@ pub(super) fn is_vacant_lot(lot: &nd_sim::Lot) -> bool {
     lot.building.is_none() && lot.park.is_none() && !lot.landlocked
 }
 
+/// [r15-lots] (F1) Unusable ground with nothing on it (backland, a scrap,
+/// rough ground) and no park plan: dressed as a rough meadow
+/// (`nd_procgen::generate_backland`), not floored as dead earth.
+pub(super) fn is_backland_meadow(lot: &nd_sim::Lot) -> bool {
+    lot.building.is_none() && lot.park.is_none() && lot.landlocked && lot.land_use != nd_sim::LandUse::Park && !lot.shore.beach
+}
+
 /// What floors a lot under whatever stands on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum LotFill {
-    /// Unusable ground: plain earth, no outline.
+    /// Unusable ground: [r15-lots] (F1) a rough meadow (it was dark bare
+    /// earth: 51 ha of "dead ground" in Harvey's day-81 city), no outline.
     Earth,
     /// A built lot's gravel.
     Gravel,
+    /// [r15-lots] (F8) A built lot's gravel as its building's apron: the
+    /// lot cut to the depth the building uses from its street and to the
+    /// width of its frontage, so a radial wedge or a long shard of a lot
+    /// does not spread a beige fan into the grass round the block.
+    Apron,
     None,
 }
 
@@ -221,13 +234,29 @@ pub(super) fn lot_fills(w: &World, holed: &[LotId]) -> Vec<(ChunkKey, LotId, Lot
         if is_park_lot(lot) || lot.polygon.is_empty() {
             continue;
         }
-        let own_floor = lot.land_use == nd_sim::LandUse::Park || lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.service.is_some_and(|s| s.kind.is_landmark()) || b.airport.is_some());
-        let fill = lot_fill(lot.landlocked, lot.building.is_some(), holed.contains(&id), own_floor);
+        let fill = fill_of(w, id, lot, holed);
         if fill != LotFill::None {
             out.push((chunk_of(lot.center), id, fill));
         }
     }
     out
+}
+
+/// The fill of one lot (not a park's).
+pub(super) fn fill_of(w: &World, id: LotId, lot: &nd_sim::Lot, holed: &[LotId]) -> LotFill {
+    // [r15-lots] (F1) The meadow dressing lays its own ground.
+    if is_backland_meadow(lot) {
+        return LotFill::None;
+    }
+    let own_floor = lot.land_use == nd_sim::LandUse::Park || lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.service.is_some_and(|s| s.kind.is_landmark()) || b.airport.is_some());
+    let fill = lot_fill(lot.landlocked, lot.building.is_some(), holed.contains(&id), own_floor);
+    // [r15-lots] (F8) A building alone on its own street lot has its
+    // apron; a site over joined plots (a yard, a pit, a tower's podium)
+    // keeps its whole ground.
+    if fill == LotFill::Gravel && !lot.landlocked && lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.lot == id && b.plot.extra_lots.is_empty() && !b.is_special()) {
+        return LotFill::Apron;
+    }
+    fill
 }
 
 /// [r11-adopt-frames] Each chunk's fills hashed: the lots, their fill and
@@ -259,11 +288,47 @@ pub(super) fn fill_mesh_in(w: &World, fills: &[(ChunkKey, LotId, LotFill)], chun
         let lot = &w.lots[*id];
         let from = fill.positions.len();
         fill_lot(&mut fill, lot, *f, pal, lot_wear(w, lot, *f));
-        if *f == LotFill::Gravel {
+        if matches!(*f, LotFill::Gravel | LotFill::Apron) {
             set_on_pad(w, *id, &mut fill.positions[from..]);
         }
     }
     fill
+}
+
+/// [r15-lots] (F8) How deep a building's apron runs from its street: the
+/// use's usual lot depth and a third again, at least 16 m.
+pub(super) fn apron_depth(lu: nd_sim::LandUse) -> f32 {
+    (lu.lot_depth() * 1.3).max(16.0)
+}
+
+/// [r15-lots] (F8) A built lot's outline cut to its building's apron: no
+/// deeper than [`apron_depth`] from the front edge, and no wider than the
+/// outline is within 3 m of the street (plus 2 m a side), so the wedge of a
+/// lot fanning out behind a curve, or a shard's tail, is left as grass.
+/// The outline itself when the cut leaves too little (a lot that is all
+/// apron anyway).
+pub(super) fn apron(lot: &nd_sim::Lot) -> Vec<SVec2> {
+    let poly = &lot.polygon;
+    let [fa, fb] = lot.front_edge;
+    let inward = -lot.front_dir;
+    let along = SVec2::new(inward.y, -inward.x);
+    if poly.len() < 3 || inward == SVec2::ZERO || !inward.is_finite() {
+        return poly.clone();
+    }
+    let v_front = fa.dot(inward).min(fb.dot(inward));
+    let near: Vec<f32> = poly.iter().filter(|p| p.dot(inward) - v_front < 3.0).map(|p| p.dot(along)).collect();
+    if near.is_empty() {
+        return poly.clone();
+    }
+    let (u0, u1) = near.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &u| (lo.min(u), hi.max(u)));
+    let depth = apron_depth(lot.land_use);
+    let mut cut = nd_sim::zoning::clip_halfplane(poly, inward * (v_front + depth), -inward);
+    cut = nd_sim::zoning::clip_halfplane(&cut, along * (u0 - 2.0), along);
+    cut = nd_sim::zoning::clip_halfplane(&cut, along * (u1 + 2.0), -along);
+    if cut.len() < 3 || nd_sim::zoning::polygon_area(&cut).abs() < 0.4 * nd_sim::zoning::polygon_area(poly).abs().min(depth * depth) {
+        return poly.clone();
+    }
+    cut
 }
 
 /// [r12-odd-lots] A built lot's gravel lies under its building's yard, on
@@ -290,7 +355,7 @@ pub(super) fn set_on_pad(w: &World, lot: LotId, verts: &mut [[f32; 3]]) {
 /// age, condition, tier and use), or well worn for unusable ground.
 pub(super) fn lot_wear(w: &World, lot: &nd_sim::Lot, f: LotFill) -> f32 {
     match (f, lot.building.and_then(|b| w.buildings.get(b))) {
-        (LotFill::Earth, _) => 0.7,
+        (LotFill::Earth, _) => 0.45,
         (_, Some(b)) => {
             let age_days = w.clock.tick.saturating_sub(b.built_tick) as f32 / nd_sim::clock::MINUTES_PER_DAY as f32;
             nd_procgen::weathering::building_grime(b.tier, b.condition, age_days, b.land_use, None)
@@ -312,11 +377,18 @@ fn seg_dist(p: SVec2, a: SVec2, b: SVec2) -> f32 {
 /// edge (furthest into its corners); any other lot as one polygon.
 pub(super) fn fill_lot(fill: &mut MeshData, lot: &nd_sim::Lot, f: LotFill, pal: &nd_procgen::Palette, wear: f32) {
     let color = match f {
-        LotFill::Earth => scale(pal.ground, 1.15),
-        LotFill::Gravel => rgba(pal.gravel),
+        // [r15-lots] (F1) Rough grass, between the ground and the foliage.
+        LotFill::Earth => scale([(pal.ground[0] + pal.foliage[0]) * 0.5, (pal.ground[1] + pal.foliage[1]) * 0.5, (pal.ground[2] + pal.foliage[2]) * 0.5], 1.2),
+        LotFill::Gravel | LotFill::Apron => rgba(pal.gravel),
         LotFill::None => return,
     };
-    let poly = &lot.polygon;
+    let cut;
+    let poly = if f == LotFill::Apron {
+        cut = apron(lot);
+        &cut
+    } else {
+        &lot.polygon
+    };
     if wear > 0.0 && poly.len() >= 3 && nd_procgen::mesh::is_convex(poly) {
         let c = poly.iter().copied().fold(SVec2::ZERO, |a, p| a + p) / poly.len() as f32;
         let inr = (0..poly.len()).map(|i| seg_dist(c, poly[i], poly[(i + 1) % poly.len()])).fold(f32::MAX, f32::min);
@@ -468,11 +540,13 @@ pub(super) fn sync_vacant(
     // Per chunk: the lots in it and a hash of what their dressing depends on.
     let mut per_chunk: HashMap<ChunkKey, (DefaultHasher, Vec<LotId>)> = HashMap::new();
     for (id, lot) in w.lots.iter() {
-        if !is_vacant_lot(lot) {
+        let meadow = is_backland_meadow(lot);
+        if !is_vacant_lot(lot) && !meadow {
             continue;
         }
         let (h, ids) = per_chunk.entry(chunk_of(lot.center)).or_insert_with(|| (DefaultHasher::new(), Vec::new()));
         id.hash(h);
+        meadow.hash(h);
         vacant_bucket(w.land_value.at(lot.center)).hash(h);
         hash_f32s(h, lot.polygon.iter().copied());
         nd_procgen::lot_memory::slab_trace(w, lot).map(|(t, s)| (t.id, s)).hash(h);
@@ -496,6 +570,10 @@ pub(super) fn sync_vacant(
         for id in ids {
             let lot = &w.lots[id];
             let seed = w.config.seed ^ ((lot.center.x * 31.0 + lot.center.y * 17.0).abs() as u64);
+            if is_backland_meadow(lot) {
+                geo.append(&nd_procgen::generate_backland(lot, seed, pal));
+                continue;
+            }
             // [r11-lot-memory] The slab of what stood here, under the weeds.
             // On dear land the owner has it turfed into a parklet after two
             // weeks; until then the lot is the bare cleared ground round it.
@@ -561,11 +639,10 @@ mod lot_fill_tests {
             if is_park_lot(lot) || lot.polygon.is_empty() {
                 continue;
             }
-            let own_floor = lot.land_use == nd_sim::LandUse::Park || lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.service.is_some_and(|s| s.kind.is_landmark()) || b.airport.is_some());
-            let f = lot_fill(lot.landlocked, lot.building.is_some(), holed.contains(&id), own_floor);
+            let f = fill_of(&w, id, lot, &holed);
             let from = whole.positions.len();
             fill_lot(&mut whole, lot, f, &pal, lot_wear(&w, lot, f));
-            if f == LotFill::Gravel {
+            if matches!(f, LotFill::Gravel | LotFill::Apron) {
                 set_on_pad(&w, id, &mut whole.positions[from..]);
             }
         }
@@ -598,7 +675,7 @@ mod lot_fill_tests {
         let fills = lot_fills(&w, &[]);
         let mut checked = 0;
         for (k, id, f) in &fills {
-            if *f != LotFill::Gravel {
+            if !matches!(*f, LotFill::Gravel | LotFill::Apron) {
                 continue;
             }
             let lot = &w.lots[*id];
@@ -613,6 +690,45 @@ mod lot_fill_tests {
         }
         assert!(checked >= 4, "built lots checked: {checked}");
         assert!(off_pad > 0, "some lot vertices sit off the pad (else this proves nothing)");
+    }
+
+    /// [r15-lots] (F8) A wedge of a lot fanning out behind a curve, built
+    /// on: its gravel is the apron by the street, not the whole fan.
+    #[test]
+    fn a_wedge_lots_gravel_is_its_aprons_not_the_fan() {
+        // Front 20 m along y = 0 (the street below), fanning to 90 m wide
+        // 70 m back.
+        let poly = vec![SVec2::new(-10.0, 0.0), SVec2::new(10.0, 0.0), SVec2::new(45.0, 70.0), SVec2::new(-45.0, 70.0)];
+        let lot = nd_sim::Lot {
+            zone: Default::default(),
+            land_use: nd_sim::LandUse::Residential,
+            corners: [SVec2::new(-45.0, 0.0), SVec2::new(45.0, 0.0), SVec2::new(45.0, 70.0), SVec2::new(-45.0, 70.0)],
+            front_edge: [poly[0], poly[1]],
+            center: SVec2::new(0.0, 40.0),
+            front_dir: SVec2::new(0.0, -1.0),
+            front_segment: nd_sim::roads::SegmentId(0),
+            front_t: 0.5,
+            access_node: nd_sim::roads::NodeId(0),
+            building: None,
+            landlocked: false,
+            footfall_today: 0,
+            footfall_hour: 0,
+            car_segment: None,
+            car_point: SVec2::ZERO,
+            park: None,
+            shore: Default::default(),
+            polygon: poly.clone(),
+        };
+        let a = apron(&lot);
+        let depth = apron_depth(nd_sim::LandUse::Residential);
+        assert!(a.iter().all(|p| p.y <= depth + 0.01 && p.x.abs() <= 12.01), "apron {a:?}");
+        let area = nd_sim::zoning::polygon_area(&a).abs();
+        assert!(area > 20.0 * depth * 0.9 && area < nd_sim::zoning::polygon_area(&poly).abs() * 0.5, "apron area {area}");
+        // A plain rectangle of a lot is all apron (to the use's depth).
+        let rect = vec![SVec2::new(-10.0, 0.0), SVec2::new(10.0, 0.0), SVec2::new(10.0, 25.0), SVec2::new(-10.0, 25.0)];
+        let lot2 = nd_sim::Lot { polygon: rect.clone(), front_edge: [rect[0], rect[1]], ..lot };
+        let a2 = apron(&lot2);
+        assert!((nd_sim::zoning::polygon_area(&a2).abs() - 500.0).abs() < 1.0 || depth < 25.0, "{a2:?}");
     }
 
 }
