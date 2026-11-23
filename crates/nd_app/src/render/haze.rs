@@ -37,6 +37,9 @@ const STEAM_RGB: [f32; 3] = [0.86, 0.87, 0.9];
 const STEAM_ALPHA: f32 = 0.7;
 /// Most opaque a smog puff gets.
 const SMOG_ALPHA: f32 = 0.38;
+/// [r14-photofix] Least height of a smog puff's lower edge over the ground
+/// (or deck) under it, metres.
+const SMOG_CLEAR: f32 = 6.0;
 /// Smog colour: a dirty brown.
 const SMOG_RGB: [f32; 3] = [0.36, 0.27, 0.17];
 
@@ -292,11 +295,23 @@ pub(super) fn sync_haze(
                 let h = 7.0 + 18.0 * r1 + d * 0.05;
                 let pos = plant.centre + along * (d + drift) + side * lateral + Vec3::Y * h;
                 let size = 45.0 + 35.0 * r2 + d * 0.15;
+                // [r14-photofix] Its foot clear of the ground under it. A
+                // billboard 20-36 m tall centred 7 m up stood in the street:
+                // its plane cut through the road and everything on it at a
+                // hard line, everything behind it washed a mustard brown
+                // (photo report 2026-11-22, finding 6: "mustard-yellow
+                // asphalt" downwind of a coal plant). Smog over the rooftops
+                // reads the same from above and leaves the street its grey.
+                let ground = w.surface_height(SVec2::new(pos.x, pos.z));
+                let pos = Vec3::new(pos.x, pos.y.max(ground + size * 0.45 * 0.5 + SMOG_CLEAR), pos.z);
                 let alpha = 0.55 + 0.45 * (now * 0.08 + puff.k as f32 * 2.1).sin().abs();
                 (pos, size, alpha, 1)
             }
         };
-        let a = alpha * plant.shown * near_fade(eye.distance(pos), size);
+        // [r14-photofix] Smog fades out sooner as the eye comes near it
+        // (a camera under the layer sees it further off, not on the lens).
+        let fade = if smog == 1 { smoothstep(0.6 * size, 1.3 * size, eye.distance(pos)) } else { near_fade(eye.distance(pos), size) };
+        let a = alpha * plant.shown * fade;
         if a < 0.5 / ALPHA_STEPS as f32 {
             vis.set_if_neq(Visibility::Hidden);
             continue;
