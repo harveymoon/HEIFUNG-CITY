@@ -789,7 +789,8 @@ Citizens are rendered from their simulated positions every frame.
   ore and metal 2.5, crude 2, livestock 1.6 times an ordinary lorry (`road_wear::vehicle_load`).
   The looks: sooty stained yards, slag and ore heaps, a manure lagoon, a poisoned settling pond,
   smoke, fumes and dust from their vents, and the contamination stains the ground in the city
-  (sickly yellow-green to dead brown) and has its own map layer.
+  (sickly yellow-green to dead brown; [r14-photofix] only a trace of it over streets and their
+  pavements, which traffic keeps grey) and has its own map layer.
 - **Truck and bus lots**: a logistics building with one bay per 90 m² (4..40). A lorry that
   has delivered parks at the nearest lot with room within 700 m, else drives back to the
   business that sent it, else to the nearest lot with room at any distance, else out of town by

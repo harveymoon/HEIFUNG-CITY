@@ -35,6 +35,34 @@ const STAIN_Y: f32 = 0.28;
 const STAIN_CELL: f32 = 12.0;
 /// Seconds between stain rebuilds.
 const STAIN_REBUILD_SECS: f32 = 4.0;
+/// [r14-photofix] Share of the stain taken off over a street's carriageway
+/// and pavements. The wash floats 0.28 m over the graded ground, above the
+/// asphalt but under most lot floors, so on a poisoned stretch the streets
+/// alone turned a sickly olive: the "mustard-yellow asphalt" east of Pylon
+/// Boulevard (photo report 2026-11-22, finding 6), with contamination 0.46
+/// from the factory farms there. Traffic and street sweeping keep a street
+/// near its grey; the lots and verges keep the stain.
+const STAIN_STREET_CUT: f32 = 0.85;
+/// [r14-photofix] Metres past a street's corridor over which the stain
+/// comes back in full.
+const STAIN_STREET_FADE: f32 = 6.0;
+
+/// [r14-photofix] How much `p` lies on a street's corridor (carriageway and
+/// pavements): 1 on it, falling to 0 over [`STAIN_STREET_FADE`] beyond it.
+/// Footpaths, the railway and tunnels do not count.
+fn street_cover(roads: &nd_sim::roads::RoadNetwork, p: SVec2) -> f32 {
+    let mut best = f32::INFINITY;
+    for sid in roads.segments_near(p, 30.0) {
+        let seg = roads.segment(sid);
+        if !seg.is_street() || seg.tunnel {
+            continue;
+        }
+        let (a, b) = roads.segment_points(sid);
+        let (_, q) = nd_sim::geom::project_on_segment(p, a, b);
+        best = best.min(p.distance(q) - seg.corridor_half_width());
+    }
+    1.0 - smoothstep(0.0, STAIN_STREET_FADE, best)
+}
 
 /// Look of each kind of vent: colour, most alpha, puffs per vent.
 fn vent_look(k: VentKind) -> ([f32; 3], f32, usize) {
@@ -148,7 +176,10 @@ pub(super) fn sync_grime(
             let n = g.cols + 1;
             for j in 0..=g.rows {
                 for i in 0..=g.cols {
-                    g.values[j * n + i] = c.at(g.corner(i, j));
+                    let p = g.corner(i, j);
+                    let v = c.at(p);
+                    // [r14-photofix] Over a street only a trace of it.
+                    g.values[j * n + i] = if v < 0.03 { v } else { v * (1.0 - STAIN_STREET_CUT * street_cover(&w.roads, p)) };
                 }
             }
             let flat = w.landscape.is_flat();
