@@ -2588,10 +2588,7 @@ trait MindProvider {
   Hong Kong's shotcrete "chunam" with rows of weep holes. The sim's own retaining walls
   (`Ground::retaining`) run their face down to the lowest drawn ground in front of them (a wall
   holding the hill back up to the highest), so none hangs over a gap. A lot's earth or gravel fill
-  lies on its pad (the back pad behind a step). A motorway or railway held in a cutting 20 m or
-  more under the land (`terrain::COVER_DEPTH`) is covered: a lid at the land's height over the
-  band between its walls and a portal headwall where the open cutting goes under it
-  (`terrain::covered_cuttings`). Cutting walls: a lone 4 m piece between gaps is not drawn, nor a
+  lies on its pad (the back pad behind a step). Cutting walls: a lone 4 m piece between gaps is not drawn, nor a
   piece inside another held way's band (cuttings crossing at a junction), and an underpass's wing
   walls stop where another way passes through them (Route 88 / Neon Parade).
 - Ramps (`roads::is_ramp_spec`: one-way streets narrower than a highway): an end dropped on a

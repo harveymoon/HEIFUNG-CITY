@@ -259,9 +259,6 @@ fn main() {
             buried += 1;
         }
     }
-    // Motorway and railway cuttings deep enough to be covered.
-    let deep: Vec<String> = w.roads.alive_segments().filter(|(sid, _)| nd_procgen::terrain::covered_cutting(&w, *sid)).map(|(sid, _)| sid.0.to_string()).collect();
-    println!("cuttings covered (>= {} m under the land): {} pieces {:?}", nd_procgen::terrain::COVER_DEPTH, deep.len(), deep);
     wworst.sort_by(|a, b| b.0.total_cmp(&a.0));
     println!("walls over a drop: {walls}  hanging (gap under the foot >0.3 m): {hanging} ({gap_m:.0} m of wall)  buried (terrain over the top >0.3 m): {buried}");
     for (_, s) in wworst.iter().take(8) {

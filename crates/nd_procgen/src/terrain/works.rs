@@ -727,83 +727,6 @@ fn in_other_band(world: &World, holds: &[Option<nd_sim::landscape::Hold>], sid: 
     })
 }
 
-/// [r15-hillside] A motorway or railway cutting this deep under the land
-/// (at its quarter points and middle) is covered over: real engineers do
-/// not leave a 35-47 m canyon with sheer walls (the Route 88 cuttings out
-/// west, r14-cliffs' leftovers), they bore or cut and cover.
-pub const COVER_DEPTH: f32 = 20.0;
-
-/// [r15-hillside] Whether `sid` runs in a cutting deep enough to be covered
-/// (`COVER_DEPTH`): a held cutting of a motorway or railway.
-pub fn covered_cutting(world: &World, sid: nd_sim::roads::SegmentId) -> bool {
-    let roads = &world.roads;
-    let seg = roads.segment(sid);
-    if !seg.alive || !(seg.is_motorway() || seg.is_rail()) || seg.bridge || seg.viaduct || seg.tunnel {
-        return false;
-    }
-    if nd_sim::landscape::earthwork_hold(&world.landscape, roads, &world.road_z, &world.road_inner, sid) != Some(nd_sim::landscape::Hold::Cut) {
-        return false;
-    }
-    let (a, b) = roads.segment_points(sid);
-    [0.25f32, 0.5, 0.75].iter().all(|&t| world.landscape.height(a.lerp(b, t)).max(BANK_HEIGHT) - world.road_height(sid, t) >= COVER_DEPTH)
-}
-
-/// [r15-hillside] The lid over every covered cutting (`covered_cutting`):
-/// a slab spanning the cutting from the back of one wall's band to the
-/// other's at the land's height, its top the ground's colour, a concrete
-/// soffit under it, and a portal headwall where the open cutting goes
-/// under it.
-pub fn covered_cuttings(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32; 3], ground: [f32; 3]) {
-    use glam::Vec3;
-    let roads = &world.roads;
-    if world.landscape.is_flat() {
-        return;
-    }
-    let covered: Vec<bool> = (0..roads.segments.len()).map(|k| covered_cutting(world, nd_sim::roads::SegmentId(k as u32))).collect();
-    let wall = rgba(mul(concrete, 0.75));
-    let coping = rgba(mul(concrete, 0.6));
-    let top = rgba(ground);
-    for (sid, seg) in roads.alive_segments() {
-        if !covered[sid.0 as usize] {
-            continue;
-        }
-        let (a, b) = roads.segment_points(sid);
-        let len = a.distance(b);
-        if len < 0.5 {
-            continue;
-        }
-        let dir = (b - a) / len;
-        let side = Vec2::new(-dir.y, dir.x);
-        let (_, back) = nd_sim::landscape::held_band(seg, nd_sim::landscape::Hold::Cut);
-        let span = back + 1.0;
-        // The lid meets the land either side of the band (the ground is
-        // the natural land past a held band; the graded ground there may
-        // be the twin carriageway's cutting).
-        let natural = |p: Vec2| world.landscape.height(p).max(BANK_HEIGHT);
-        let lid = |p: Vec2| natural(p + side * span).max(natural(p - side * span)) + 0.05;
-        let steps = (len / 4.0).ceil().max(1.0) as usize;
-        for k in 0..steps {
-            let (t0, t1) = (k as f32 / steps as f32, (k + 1) as f32 / steps as f32);
-            let (p0, p1) = (a.lerp(b, t0) - dir * if k == 0 { 0.2 } else { 0.0 }, a.lerp(b, t1) + dir * if k + 1 == steps { 0.2 } else { 0.0 });
-            let v = |p: Vec2, z: f32| Vec3::new(p.x, z, p.y);
-            let (l0, l1, r0, r1) = (p0 + side * span, p1 + side * span, p0 - side * span, p1 - side * span);
-            let (zl0, zl1, zr0, zr1) = (natural(l0) + 0.05, natural(l1) + 0.05, natural(r0) + 0.05, natural(r1) + 0.05);
-            g.part(Surface::Dirt).quad_facing([v(r0, zr0), v(r1, zr1), v(l1, zl1), v(l0, zl0)], Vec3::Y, top);
-            g.part(Surface::Concrete).quad_facing([v(r0, zr0 - 1.2), v(r1, zr1 - 1.2), v(l1, zl1 - 1.2), v(l0, zl0 - 1.2)], -Vec3::Y, wall);
-        }
-        // A portal where the open cutting meets the covered one.
-        for (n, end) in [(seg.a, a), (seg.b, b)] {
-            let open = roads.node(n).segments.iter().copied().find(|&o| o != sid && roads.segment(o).alive && roads.segment(o).kind == seg.kind && !covered[o.0 as usize] && !roads.segment(o).tunnel);
-            let Some(o) = open else { continue };
-            let os = roads.segment(o);
-            let far = roads.node(if os.a == n { os.b } else { os.a }).pos;
-            let out = (far - end).normalize_or_zero();
-            let z = world.road_z.get(n.0 as usize).copied().unwrap_or(0.0);
-            portal_arch(g, end, out, z, seg.half_width() + crate::street::TUNNEL_WALL, lid(end), wall, coping, rgba(mul(steel, 2.2)));
-        }
-    }
-}
-
 /// [r4-hillside] The verge of a way in a bench on a hillside, from the edge
 /// of its paving (a street's pavement) to its walls' faces, at the way's
 /// height: the ground mesh is cut out there (`holes::bench_holes`).
@@ -1049,7 +972,6 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
     }
     viaducts(world, &mut g, concrete, steel);
     tunnel_works(world, &mut g, concrete, steel);
-    covered_cuttings(world, &mut g, concrete, steel, mul(palette.ground, 0.9));
     bench_verges(world, &mut g, concrete);
     bridges(world, &mut g, concrete, steel);
     underpasses(world, &mut g, concrete, steel);
