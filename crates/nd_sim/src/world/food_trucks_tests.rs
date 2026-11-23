@@ -230,3 +230,33 @@ fn an_ice_cream_van_stays_home_in_the_snow() {
     assert!(matches!(w.food_trucks.trucks[id].plan[0].state, StintState::Skipped(_)), "{:?}", w.food_trucks.trucks[id].plan);
     assert_eq!(w.food_trucks.stats.too_cold_today, 1);
 }
+
+/// A household whose grown-ups all work days plans no daytime stint: the
+/// truck goes out only when someone is off shift to drive it.
+#[test]
+fn stints_fit_round_the_crews_shifts() {
+    let mut w = town();
+    let (hh, _) = owner(&mut w);
+    let id = w.found_food_truck(TruckKind::Coffee, Some(hh)).expect("a cart starts up");
+    let job = w.buildings.iter().find(|(_, b)| b.construction.is_none() && b.service.is_none() && b.business.as_ref().is_some_and(|z| { let h = z.kind.hours(); !h.always() && h.span() <= 10 })).map(|(id, _)| id).expect("a business");
+    for m in w.households[hh].members.clone() {
+        if let Some(c) = w.citizens.get_mut(m) {
+            if c.age >= crate::citizens::ADULT_AGE {
+                c.work = Some(job);
+            }
+        }
+    }
+    let busy = w.crew_busy_hours(hh);
+    assert!(!busy.is_empty(), "everyone at work some hours");
+    let seeds: Vec<u64> = w.households[hh].members.iter().filter_map(|m| w.citizens.get(*m)).filter(|c| c.age >= crate::citizens::ADULT_AGE && c.age < 75).map(|c| c.seed).collect();
+    for h in 0u8..24 {
+        let all_on = seeds.iter().all(|s| w.buildings[job].shift_for(*s).contains(h));
+        assert_eq!(all_on, busy.iter().any(|&(a, b)| (a..=b).contains(&h) || (a..=b).contains(&(h + 24))), "hour {h}: {busy:?}");
+    }
+    w.plan_food_trucks(5);
+    for s in &w.food_trucks.trucks[id].plan {
+        for &(a, b) in &busy {
+            assert!(!(s.from <= b && a <= s.to), "stint {}-{} clashes with the shift {a}-{b}", s.from, s.to);
+        }
+    }
+}

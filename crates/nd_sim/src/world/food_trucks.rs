@@ -173,7 +173,8 @@ impl World {
             // Keep today's stints under way or done; drop the rest (and
             // any left from yesterday).
             let keep: Vec<Stint> = t.plan.iter().filter(|s| s.day == day && (s.from < from || !matches!(s.state, StintState::Planned))).cloned().collect();
-            let busy: Vec<(u8, u8)> = keep.iter().map(|s| (s.from, s.to)).collect();
+            let mut busy: Vec<(u8, u8)> = keep.iter().map(|s| (s.from, s.to)).collect();
+            busy.extend(self.crew_busy_hours(t.household));
             let room = MAX_STINTS.saturating_sub(keep.len());
             let picks = if room == 0 { Vec::new() } else { pick_stints(t.kind, base, from, &spots, &taken, &temp_at, wet, tkey(id) ^ day.wrapping_mul(0x9E37), &busy, room) };
             let mut plan = keep;
@@ -187,6 +188,34 @@ impl World {
             self.hold_operator(id);
         }
         self.food_trucks.spots = spots;
+    }
+
+    /// The hours (0..28, past midnight as 24+) when every grown-up of the
+    /// household is at a job's shift: nobody could take the truck out, so
+    /// the plan leaves them free (an hour's slack on each side comes from
+    /// `pick_stints`' gap rule). Runs of such hours, as (first, last).
+    pub(crate) fn crew_busy_hours(&self, hh: HouseholdId) -> Vec<(u8, u8)> {
+        let Some(h) = self.households.get(hh) else { return Vec::new() };
+        let shifts: Vec<Option<crate::clock::Hours>> = h
+            .members
+            .iter()
+            .filter_map(|m| self.citizens.get(*m))
+            .filter(|c| c.age >= crate::citizens::ADULT_AGE && c.age < 75)
+            .map(|c| c.work.and_then(|w| self.buildings.get(w)).map(|b| b.shift_for(c.seed)))
+            .collect();
+        if shifts.is_empty() || shifts.iter().any(|s| s.is_none()) {
+            return Vec::new();
+        }
+        let mut out: Vec<(u8, u8)> = Vec::new();
+        for hour in 0u8..28 {
+            if shifts.iter().all(|s| s.is_some_and(|s| s.contains(hour % 24))) {
+                match out.last_mut() {
+                    Some(r) if r.1 + 1 == hour => r.1 = hour,
+                    _ => out.push((hour, hour)),
+                }
+            }
+        }
+        out
     }
 
     /// When a truck at home must set off for stint `s`.
