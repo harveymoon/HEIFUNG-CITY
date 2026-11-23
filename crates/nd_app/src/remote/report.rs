@@ -1180,6 +1180,11 @@ impl Alert {
 
 /// In traffic, standing still for minutes, not dwelling at a stop, not at
 /// a red light and not still waiting at the kerb to set off.
+/// [r15-freight] A roundabout is reported over capacity when this many cars
+/// have stood this long (s) in queues held at its entries.
+const RING_QUEUE_STALL_S: f32 = 120.0;
+const RING_QUEUE_MIN: usize = 8;
+
 fn is_stuck(c: &nd_sim::Car) -> bool {
     c.stalled > STUCK_STALL_S && c.hold <= 0.0 && !c.entering && c.wait != nd_sim::traffic::Wait::Signal
 }
@@ -1296,6 +1301,25 @@ pub fn alerts(w: &World) -> Vec<Alert> {
         fleet_short.count = 1;
         fleet_short.message = format!("the lines want {fleet_wanted} buses; the depots hold {fleet_room}");
     }
+    // [r15-freight] (photo 2026-11-20 F12) Roundabouts over capacity: queues
+    // held at a ring's entries for two minutes and more.
+    let mut rings_over = Alert::new("roundabout_over_capacity", 2, "queues standing for minutes at a roundabout's entries: a one-lane ring over capacity, or zebras right at its exits holding the ring (cars stopping for walkers just off the ring keep it full); give it a second lane, move the crossings back from the ring, or take traffic off it");
+    let ring_q = w.traffic.ring_queues(RING_QUEUE_STALL_S);
+    let mut worst: Option<(usize, usize, f32)> = None;
+    for (&k, &(n, stall)) in &ring_q {
+        if n < RING_QUEUE_MIN {
+            continue;
+        }
+        let Some(r) = w.roads.rings.get(k) else { continue };
+        rings_over.add(format!("ring {k}"), Some(r.center));
+        if worst.is_none_or(|x| n > x.1) {
+            worst = Some((k, n, stall));
+        }
+    }
+    if let Some((k, n, stall)) = worst {
+        let r = &w.roads.rings[k];
+        rings_over.message = format!("{} roundabouts hold queues of cars standing {RING_QUEUE_STALL_S:.0}+ s at their entries; worst {n} cars (longest {stall:.0} s) at ({:.0}, {:.0}), radius {:.0} m, {} lane(s)", rings_over.count, r.center.x, r.center.y, r.radius, r.lanes);
+    }
     let gridlocks = w.traffic.gridlocks();
     let mut kerb = 0;
     for (id, c) in w.traffic.cars.iter() {
@@ -1390,7 +1414,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
         a.message = format!("no dispatcher on duty: jobs go out {} minutes after the call", w.dispatcher().1);
         uncovered.push(a);
     }
-    let mut out = vec![fires, hungry, starving, unhoused, rent, food_staff, food_empty, closed, broke, unpowered, crowded, rail_broken, dock_off, route_broken, no_buses, fleet_short, sites_cut, sites, stuck, derelict, vacant_demand];
+    let mut out = vec![fires, hungry, starving, unhoused, rent, food_staff, food_empty, closed, broke, unpowered, crowded, rail_broken, dock_off, route_broken, no_buses, fleet_short, sites_cut, sites, stuck, rings_over, derelict, vacant_demand];
     // City-wide conditions with no single place.
     // Only working-age adults look for work: children and retirees are not
     // unemployed.

@@ -302,30 +302,7 @@ impl World {
     /// [w1-roads] Has a driver stood at crossing `cr` (just before it, on
     /// one of its lanes) for `ZEBRA_PATIENCE` or more?
     pub(super) fn driver_kept_waiting(&self, cr: u32) -> bool {
-        self.driver_waiting(cr, crate::pedestrians::ZEBRA_PATIENCE) || self.ring_exit_waiting(cr)
-    }
-
-    /// [r15-freight] (photo 2026-11-20 F12) Is a car leaving a roundabout
-    /// standing at zebra `cr` (it lies across the arm just past the exit)
-    /// for `RING_EXIT_PATIENCE` or more? Walkers coming up let it off the
-    /// ring: one car standing in the exit holds the whole ring behind it,
-    /// and the entries behind those (a steady stream of walkers at the
-    /// exits of the single-lane rings at (700,-91) and (919,-59) kept those
-    /// rings full and their entries waiting for minutes).
-    fn ring_exit_waiting(&self, cr: u32) -> bool {
-        let Some(info) = self.peds.crossings.get(cr as usize) else { return false };
-        let t = &self.traffic;
-        let reach = crate::pedestrians::ZEBRA_WAIT_REACH;
-        let patience = crate::pedestrians::RING_EXIT_PATIENCE;
-        info.lanes.iter().any(|&(l, s)| {
-            s < reach
-                && t.net.lanes.get(l as usize).is_some_and(|lane| {
-                    lane.prev.iter().filter_map(|&p| t.net.lanes.get(p as usize).map(|pl| (p, pl))).any(|(p, pl)| {
-                        let exit = matches!(pl.kind, crate::traffic::LaneKind::Connector { node, .. } if t.net.rings.nodes.get(&node).is_some_and(|rn| rn.exits.contains(&p)));
-                        exit && pl.cars.iter().filter_map(|&c| t.cars.get(c)).any(|c| c.v < 0.5 && c.stalled >= patience && pl.length - c.s + s < reach)
-                    })
-                })
-        })
+        self.driver_waiting(cr, crate::pedestrians::ZEBRA_PATIENCE)
     }
 
     /// [w1-roads] Has a driver stood at crossing `cr` (just before it, on

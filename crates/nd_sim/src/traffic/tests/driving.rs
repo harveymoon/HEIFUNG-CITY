@@ -301,3 +301,37 @@ fn lorries_setting_off_from_one_kerb_point_line_up() {
         apart(&t);
     }
 }
+
+/// [r15-freight] (photo 2026-11-20 F2: lorries drawn inside one another)
+/// A lorry takes its own length on the road: a queue of semis stands
+/// nose to tail, not cab through trailer, while cars keep a car's length.
+#[test]
+fn a_queue_of_lorries_keeps_their_own_lengths() {
+    let mut roads = RoadNetwork::default();
+    roads.add_polyline(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+    let mut t = Traffic::default();
+    t.rebuild(&roads);
+    let seg = roads.nearest_street(Vec2::ZERO).unwrap().0;
+    let lane = lane_of(&t, seg, Vec2::X, 0);
+    let len = t.net.lanes[lane as usize].length;
+    // A stopped car at the far end; semis come up behind it one by one.
+    let stop = t.spawn_car(CitizenId::default(), None, vec![lane], len - 20.0, len - 1.0, 0);
+    t.cars[stop].hold = 1.0e6;
+    let mut ids = Vec::new();
+    for k in 0..4 {
+        let id = t.spawn_car(CitizenId::default(), None, vec![lane], 20.0 + k as f32 * 2.0, len - 1.0, 0);
+        t.cars[id].model.body = crate::vehicle::BodyType::Semi;
+        t.cars[id].model.boxed = crate::vehicle::CHASSIS_40;
+        ids.push(id);
+        for _ in 0..30 {
+            t.step(1.0, 4);
+        }
+    }
+    let semi = crate::vehicle::semi_length(crate::vehicle::CHASSIS_40);
+    assert!((t.cars[ids[0]].length() - semi).abs() < 0.01 && t.cars[stop].length() == CAR_LENGTH);
+    let mut s: Vec<f32> = ids.iter().map(|&id| t.cars[id].s).collect();
+    s.sort_by(|a, b| b.total_cmp(a));
+    for p in s.windows(2) {
+        assert!(p[0] - p[1] >= semi, "semis {:.1} m apart, each {semi:.1} m long", p[0] - p[1]);
+    }
+}
