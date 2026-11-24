@@ -44,7 +44,7 @@ fn apply_filter(f: &mut Filters, v: &Value) -> Result<(), String> {
                 return Err(format!("unknown group {g:?}: one of {}", catalogue::GROUPS[..catalogue::GROUPS.len() - 1].join(", ")));
             }
         }
-        f.group = g.map(|g| catalogue::GROUPS.iter().find(|x| x.eq_ignore_ascii_case(&g)).unwrap().to_string());
+        f.group = g.map(|g| catalogue::GROUPS.iter().find(|x| x.eq_ignore_ascii_case(&g)).expect("checked above").to_string());
     }
     if let Some(x) = text("form") {
         f.form = x;

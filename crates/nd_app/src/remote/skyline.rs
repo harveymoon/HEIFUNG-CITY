@@ -39,8 +39,9 @@ pub fn building_tower(w: &World, id: BuildingId) -> Value {
 }
 
 fn tower_row(w: &World, id: BuildingId) -> Value {
-    let b = &w.buildings[id];
-    let t = b.plot.tower.unwrap();
+    // [r16-crash] Not a tower (any more): null, not a panic.
+    let Some(b) = w.buildings.get(id) else { return Value::Null };
+    let Some(t) = b.plot.tower else { return Value::Null };
     json!({
         "id": key_str(id), "name": b.name, "height_m": round(t.height), "league": t.league().label(), "design": t.design.key(),
         "developer": w.owner_of(id).map(|(_, o)| o.name.clone()), "lots": 1 + b.plot.extra_lots.len() + b.plot.pending_lots.len(),

@@ -43,7 +43,7 @@ impl World {
     pub(in crate::world) fn name_active_project(&mut self) {
         if self.project.as_ref().is_some_and(|p| p.id == 0) {
             let fresh = self.fresh_project(None);
-            let p = self.project.as_mut().unwrap();
+            let p = self.project.as_mut().expect("checked is_some_and");
             p.id = fresh.id;
             if p.name.is_empty() {
                 p.name = fresh.name;
@@ -252,7 +252,7 @@ impl World {
     /// Edit the project (starting one if need be), then refresh the plan.
     pub(in crate::world) fn edit_project(&mut self, f: impl FnOnce(&mut Project)) {
         self.start_project();
-        f(self.project.as_mut().unwrap());
+        f(self.project.as_mut().expect("start_project starts one"));
         self.plan_changed();
     }
 

@@ -55,7 +55,7 @@ impl World {
         let engines = self.engines_on_scene(id).max(1) as f32;
         self.maybe_second_alarm(id);
         let (bid, fighting, intensity) = {
-            let i = self.services.incident_mut(id).unwrap();
+            let i = self.services.incident_mut(id).expect("the fire being stepped");
             let fighting = i.stage == Stage::OnScene;
             if fighting {
                 i.intensity -= ENGINE_RATE * engines;
@@ -65,7 +65,7 @@ impl World {
             (i.building, fighting, i.intensity)
         };
         if intensity <= 0.0 {
-            self.services.incident_mut(id).unwrap().intensity = 0.0;
+            self.services.incident_mut(id).expect("the fire being stepped").intensity = 0.0;
             self.resolve(id, Outcome::Extinguished);
             return true;
         }

@@ -355,7 +355,7 @@ impl World {
                     island_lots.insert(l, k);
                 } else if !cs.contains(&main) {
                     walk_cut.insert(l);
-                    groups.entry((0, *cs.iter().min().unwrap())).or_default().push((l, b));
+                    groups.entry((0, *cs.iter().min().expect("a group is not empty"))).or_default().push((l, b));
                 }
             }
             if let (Some(main), Some(c)) = (drive_main, self.lots.get(l).and_then(drive_of)) {

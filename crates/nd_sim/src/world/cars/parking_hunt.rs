@@ -243,7 +243,7 @@ impl World {
             .filter(|(_, c)| matches!(c.errand, Errand::Search { .. } | Errand::ToKerb) && c.owned.is_some() && !c.entering && c.hold <= 0.0 && !c.crashed() && !c.in_stunt())
             .filter(|(_, c)| gates.contains_key(&c.route[c.idx]))
             .map(|(id, c)| {
-                let last = *c.route.last().unwrap();
+                let last = *c.route.last().expect("route[idx] is there");
                 let end = self.traffic.net.lanes[last as usize].point_at(c.s_end).0;
                 (id, c.route[c.idx], c.s, c.errand, c.citizen, end)
             })

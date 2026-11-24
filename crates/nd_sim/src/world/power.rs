@@ -476,7 +476,7 @@ impl World {
         let mut batteries = 0;
         let (mut room, mut available, mut capacity) = (0.0f32, 0.0f32, 0.0f32);
         for b in self.buildings.values().filter(|b| Self::battery_online(b)) {
-            let bat = b.battery.as_ref().unwrap();
+            let bat = b.battery.as_ref().expect("battery_online: a battery");
             room += bat.room_mw();
             available += bat.available_mw();
             capacity += bat.kind.capacity_mwh();
@@ -501,7 +501,7 @@ impl World {
                 }
                 continue;
             }
-            let bat = b.battery.as_mut().unwrap();
+            let bat = b.battery.as_mut().expect("battery_online: a battery");
             let flow = if d.charge_mw > 0.0 {
                 -bat.room_mw() * d.charge_share
             } else {

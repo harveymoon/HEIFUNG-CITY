@@ -322,7 +322,7 @@ impl Traffic {
         if !rn.through.contains(&next) {
             return false;
         }
-        let (goal, s_end, s) = (*c.route.last().unwrap(), c.s_end, c.s);
+        let (goal, s_end, s) = (*c.route.last().expect("route[idx + 1] is there"), c.s_end, c.s);
         let exits: Vec<LaneId> = rn.exits.iter().copied().filter(|&x| self.net.lanes[x as usize].prev.contains(&here)).collect();
         for x in exits {
             let Some(&arm) = self.net.lanes[x as usize].next.first() else { continue };

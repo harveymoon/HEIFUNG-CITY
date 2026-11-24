@@ -280,7 +280,7 @@ impl World {
                 return false;
             }
         };
-        let i = self.services.incident_mut(id).unwrap();
+        let i = self.services.incident_mut(id).expect("looked up at the top");
         i.unit = Some(sec);
         i.second = None;
         i.stage = stage;
@@ -369,7 +369,7 @@ impl World {
                         return;
                     }
                 }
-                self.on_scene(inc.unwrap());
+                self.on_scene(inc.expect("live: it has an incident"));
             }
             UnitState::Transporting => self.deliver_patient(uid),
             UnitState::Returning => self.park_at_station(uid),
@@ -425,7 +425,8 @@ impl World {
     pub(in crate::world) fn on_scene(&mut self, id: u32) {
         let tick = self.clock.tick;
         let (kind, bid, response) = {
-            let i = self.services.incident_mut(id).unwrap();
+            // [r16-crash] An incident closed under the unit: nothing to arrive at.
+            let Some(i) = self.services.incident_mut(id) else { return };
             i.stage = Stage::OnScene;
             i.arrived = Some(tick);
             (i.kind, i.building, i.response_ticks())

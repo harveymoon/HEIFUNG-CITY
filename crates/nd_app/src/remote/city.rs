@@ -150,7 +150,7 @@ pub(super) fn airlift(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let w = &mut ctx.sim.world;
     let car = key_from(field(cmd, "car").ok_or("car is required")?)?;
     w.airlift(car)?;
-    let a = w.airlifts().last().unwrap();
+    let a = w.airlifts().last().ok_or("the airlift was not recorded")?;
     Ok(json!({ "airlift": true, "at": [a.at.x, a.at.y], "from": [a.from.x, a.from.y], "to": [a.to.x, a.to.y], "pound": a.pound.map(key_str), "hook_tick": a.hook_tick(), "end_tick": a.end_tick() }))
 }
 

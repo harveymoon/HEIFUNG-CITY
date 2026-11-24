@@ -165,8 +165,8 @@ pub fn join_parcels(polys: &[Vec<Vec2>], lu: LandUse, roads: &RoadNetwork) -> Ve
                     }
                 }
                 if let Some((_, j, up)) = best {
-                    let (mj, _) = groups[j].take().unwrap();
-                    let g = groups[i].as_mut().unwrap();
+                    let (mj, _) = groups[j].take().expect("a live group, checked when picked");
+                    let g = groups[i].as_mut().expect("a live group, checked when picked");
                     g.0.extend(mj);
                     g.0.sort();
                     g.1 = up;
@@ -205,8 +205,8 @@ pub fn join_parcels(polys: &[Vec<Vec2>], lu: LandUse, roads: &RoadNetwork) -> Ve
                     }
                 }
                 if let Some((_, j, up)) = best {
-                    let (mi, _) = groups[i].take().unwrap();
-                    let g = groups[j].as_mut().unwrap();
+                    let (mi, _) = groups[i].take().expect("a live group, checked when picked");
+                    let g = groups[j].as_mut().expect("a live group, checked when picked");
                     g.0.extend(mi);
                     g.0.sort();
                     g.1 = up;
@@ -280,8 +280,8 @@ fn fold_scraps(groups: &mut [Option<(Vec<usize>, Vec<Vec2>)>], lu: LandUse, road
                 best = Some((shared, j, up));
             }
             if let Some((_, j, up)) = best {
-                let (mi, _) = groups[i].take().unwrap();
-                let g = groups[j].as_mut().unwrap();
+                let (mi, _) = groups[i].take().expect("a live group, checked when picked");
+                let g = groups[j].as_mut().expect("a live group, checked when picked");
                 g.0.extend(mi);
                 g.0.sort();
                 g.1 = up;

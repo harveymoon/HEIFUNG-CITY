@@ -200,7 +200,7 @@ impl World {
             v.mood = (v.mood - 0.1).max(0.0);
             v.thought = "Somebody just robbed me.".to_string();
         }
-        let kind = *[CrimeKind::Robbery, CrimeKind::Theft, CrimeKind::Assault, CrimeKind::Vandalism].choose(self.srng()).unwrap();
+        let kind = *[CrimeKind::Robbery, CrimeKind::Theft, CrimeKind::Assault, CrimeKind::Vandalism].choose(self.srng()).expect("not empty");
         self.report_crime(kind, bid, suspect, victim)
     }
 

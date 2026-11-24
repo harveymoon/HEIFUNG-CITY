@@ -76,6 +76,8 @@ pub(super) fn status(ctx: &Ctx) -> Value {
         "message": ctx.flags.message, "tool_status": ctx.tools.status, "event_seq": ctx.log.seq,
         "favourites": ctx.tools.favorites.iter().map(|&f| key_str(f)).collect::<Vec<_>>(),
     });
+    // [r16-crash] The last tick that failed and paused the game, if any.
+    v["sim_fault"] = json!(ctx.sim.fault);
     // [r12-yards] Households' things on screen.
     v["render"]["yards"] = json!({ "props": ctx.stats.yard_props, "homes": ctx.stats.yard_homes });
     // [r13-detail] Mesh entities drawn last frame, and those under a detail band.

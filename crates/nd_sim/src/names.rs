@@ -24,15 +24,15 @@ const HANDLE: &[&str] = &[
 
 /// A family name shared by a household.
 pub fn family_name(rng: &mut impl Rng) -> String {
-    LAST.choose(rng).unwrap().to_string()
+    LAST.choose(rng).expect("a name list is not empty").to_string()
 }
 
 /// A member of the `family` household: their own first name (and maybe a
 /// street handle), the family's last name.
 pub fn member_name(rng: &mut impl Rng, family: &str) -> String {
-    let first = FIRST.choose(rng).unwrap();
+    let first = FIRST.choose(rng).expect("a name list is not empty");
     if rng.random_bool(0.2) {
-        let handle = HANDLE.choose(rng).unwrap();
+        let handle = HANDLE.choose(rng).expect("a name list is not empty");
         format!("{first} \"{handle}\" {family}")
     } else {
         format!("{first} {family}")
@@ -40,10 +40,10 @@ pub fn member_name(rng: &mut impl Rng, family: &str) -> String {
 }
 
 pub fn citizen_name(rng: &mut impl Rng) -> String {
-    let first = FIRST.choose(rng).unwrap();
-    let last = LAST.choose(rng).unwrap();
+    let first = FIRST.choose(rng).expect("a name list is not empty");
+    let last = LAST.choose(rng).expect("a name list is not empty");
     if rng.random_bool(0.2) {
-        let handle = HANDLE.choose(rng).unwrap();
+        let handle = HANDLE.choose(rng).expect("a name list is not empty");
         format!("{first} \"{handle}\" {last}")
     } else {
         format!("{first} {last}")
@@ -89,27 +89,27 @@ pub fn building_name(rng: &mut impl Rng, land_use: LandUse) -> String {
             if rng.random_bool(0.3) {
                 format!("Habitat {}-{}", rng.random_range(1..40), (b'A' + rng.random_range(0..6)) as char)
             } else {
-                format!("{} {}", RES_PREFIX.choose(rng).unwrap(), RES_SUFFIX.choose(rng).unwrap())
+                format!("{} {}", RES_PREFIX.choose(rng).expect("a name list is not empty"), RES_SUFFIX.choose(rng).expect("a name list is not empty"))
             }
         }
-        LandUse::Commercial => format!("{} {}", SHOP_PREFIX.choose(rng).unwrap(), SHOP.choose(rng).unwrap()),
-        LandUse::Industrial => format!("{} Fab {}", CORPS.choose(rng).unwrap(), rng.random_range(1..20)),
+        LandUse::Commercial => format!("{} {}", SHOP_PREFIX.choose(rng).expect("a name list is not empty"), SHOP.choose(rng).expect("a name list is not empty")),
+        LandUse::Industrial => format!("{} Fab {}", CORPS.choose(rng).expect("a name list is not empty"), rng.random_range(1..20)),
         LandUse::Entertainment => {
             if rng.random_bool(0.5) {
-                format!("{} {}", CLUB.choose(rng).unwrap(), CLUB_NAME.choose(rng).unwrap())
+                format!("{} {}", CLUB.choose(rng).expect("a name list is not empty"), CLUB_NAME.choose(rng).expect("a name list is not empty"))
             } else {
-                format!("{} {}", CLUB_NAME.choose(rng).unwrap(), CLUB.choose(rng).unwrap())
+                format!("{} {}", CLUB_NAME.choose(rng).expect("a name list is not empty"), CLUB.choose(rng).expect("a name list is not empty"))
             }
         }
         LandUse::Civic => {
-            let c = CIVIC.choose(rng).unwrap();
+            let c = CIVIC.choose(rng).expect("a name list is not empty");
             if c.contains(' ') {
                 c.to_string()
             } else {
                 format!("{c} {}", rng.random_range(1..30))
             }
         }
-        LandUse::Park => format!("{} {}", RES_PREFIX.choose(rng).unwrap(), PARK.choose(rng).unwrap()),
+        LandUse::Park => format!("{} {}", RES_PREFIX.choose(rng).expect("a name list is not empty"), PARK.choose(rng).expect("a name list is not empty")),
     }
 }
 
@@ -126,7 +126,7 @@ const CITY_LAST: &[&str] = &[
 /// [identity] A name to offer for a new city ("Cobalt Reach"); the player
 /// may keep it or type their own.
 pub fn city_name(rng: &mut impl Rng) -> String {
-    format!("{} {}", CITY_FIRST.choose(rng).unwrap(), CITY_LAST.choose(rng).unwrap())
+    format!("{} {}", CITY_FIRST.choose(rng).expect("a name list is not empty"), CITY_LAST.choose(rng).expect("a name list is not empty"))
 }
 
 // -- [pt-visual] Names that say what the business is (F38: a tow company

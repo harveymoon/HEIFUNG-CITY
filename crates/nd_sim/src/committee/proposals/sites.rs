@@ -101,7 +101,7 @@ pub fn site_options(w: &World, action: &Action) -> Vec<SiteOption> {
             out.sort_by(|a, b| b.score.total_cmp(&a.score));
             let mut kept: Vec<SiteOption> = Vec::new();
             for o in out {
-                if kept.iter().all(|k| k.point.unwrap().distance(o.point.unwrap()) > 60.0) {
+                if kept.iter().all(|k| k.point.expect("kept only with a point").distance(o.point.expect("filtered to points")) > 60.0) {
                     kept.push(o);
                 }
                 if kept.len() == 4 {
@@ -195,7 +195,7 @@ pub fn site_options(w: &World, action: &Action) -> Vec<SiteOption> {
             cells.sort_by(|x, y| y.1.total_cmp(&x.1).then(x.0.x.total_cmp(&y.0.x)));
             let mut out: Vec<SiteOption> = Vec::new();
             for (p, _) in cells {
-                if out.iter().any(|o| o.point.unwrap().distance(p) < 160.0) {
+                if out.iter().any(|o| o.point.expect("kept only with a point").distance(p) < 160.0) {
                     continue;
                 }
                 let radius = 90.0;

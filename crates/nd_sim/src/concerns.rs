@@ -331,7 +331,7 @@ impl Concerns {
                 self.days.pop_front();
             }
         }
-        let d = self.days.back_mut().unwrap();
+        let d = self.days.back_mut().expect("a day was pushed above");
         if d.counts.len() < Concern::COUNT {
             d.counts.resize(Concern::COUNT, 0);
             d.weight.resize(Concern::COUNT, 0.0);

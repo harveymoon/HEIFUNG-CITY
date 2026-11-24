@@ -139,7 +139,7 @@ impl World {
     pub(super) fn hub_note_exports(&mut self, units: f32) {
         let first = self.cargo_hubs.hubs.keys().copied().find(|h| self.cargo_hub_works(*h));
         if let Some(h) = first {
-            self.cargo_hubs.hubs.get_mut(&h).unwrap().outbound += units;
+            self.cargo_hubs.hubs.get_mut(&h).expect("h is a listed hub").outbound += units;
         }
     }
 
@@ -194,9 +194,9 @@ impl World {
         if !state.trunk_due(tick) {
             return;
         }
-        let loads = self.cargo_hubs.hubs.get_mut(&h).unwrap().fill_trunk();
+        let loads = self.cargo_hubs.hubs.get_mut(&h).expect("h is a listed hub").fill_trunk();
         let n = loads.len() as u32;
-        self.cargo_hubs.hubs.get_mut(&h).unwrap().trunk = loads;
+        self.cargo_hubs.hubs.get_mut(&h).expect("h is a listed hub").trunk = loads;
         let token = Cargo { from: BuildingId::default(), to: h, resource: Resource::Goods, amount: 0.0, price: 0.0 };
         let route = self.truck_stop(h).and_then(|(s, p)| self.route_from_edge(s, p));
         let s = &mut self.cargo_hubs.stats;
@@ -208,7 +208,7 @@ impl World {
                 let car = self.traffic.spawn_car(CitizenId::default(), Some(token), route, s0, s1, 6);
                 let mut rng = crate::vehicle::model_rng(tick, slotmap::Key::data(&car).as_ffi());
                 self.traffic.cars[car].model = crate::vehicle::VehicleModel::for_cargo(Resource::Goods, None, false, true, &mut rng);
-                self.cargo_hubs.hubs.get_mut(&h).unwrap().trunk_car = Some(car);
+                self.cargo_hubs.hubs.get_mut(&h).expect("h is a listed hub").trunk_car = Some(car);
             }
             // No road in from the edge (or the roads are full of lorries):
             // the semi is as good as here.
@@ -225,11 +225,11 @@ impl World {
         if n == 0 {
             return;
         }
-        let loads: Vec<HubLoad> = self.cargo_hubs.hubs.get_mut(&h).unwrap().ready.drain(..n).collect();
+        let loads: Vec<HubLoad> = self.cargo_hubs.hubs.get_mut(&h).expect("h is a listed hub").ready.drain(..n).collect();
         for l in loads {
             if !self.buildings.contains_key(l.buyer) {
                 // The buyer went: its goods are exported on.
-                self.cargo_hubs.hubs.get_mut(&h).unwrap().outbound += l.amount;
+                self.cargo_hubs.hubs.get_mut(&h).expect("h is a listed hub").outbound += l.amount;
                 continue;
             }
             self.unpark_truck(h);
@@ -262,7 +262,7 @@ impl World {
         let Some((seg, pt)) = self.truck_stop(h) else { return };
         let Some((start, s0, _)) = self.traffic.net.nearest_lane_on(seg, pt) else { return };
         let Some((route, s0, s1)) = self.edge_exits(pt).into_iter().find_map(|(goal, s_end)| self.traffic.net.route_lanes(start, s0, goal, s_end)) else { return };
-        self.cargo_hubs.hubs.get_mut(&h).unwrap().outbound -= hub::EXPORT_TRUNK;
+        self.cargo_hubs.hubs.get_mut(&h).expect("h is a listed hub").outbound -= hub::EXPORT_TRUNK;
         self.cargo_hubs.stats.trunks_out_today += 1;
         let car = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, 6);
         let mut rng = crate::vehicle::model_rng(self.clock.tick, slotmap::Key::data(&car).as_ffi());

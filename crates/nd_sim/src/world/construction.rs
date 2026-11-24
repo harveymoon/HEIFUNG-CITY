@@ -101,8 +101,10 @@ impl World {
             // says so (K6). Deliveries that found no way wait for
             // `retry_at` and are sent again.
             let builders_ok = reach.as_ref().is_none_or(|r| self.builders_reach(bid, r));
+            // [r16-crash] A site finished or cleared by an earlier one in
+            // this loop is skipped (was a panic).
             let newly = {
-                let c = self.buildings[bid].construction.as_mut().unwrap();
+                let Some(c) = self.buildings.get_mut(bid).and_then(|b| b.construction.as_mut()) else { continue };
                 let was = c.blocked;
                 if !builders_ok {
                     c.blocked = Some(SiteBlock::Builders);
@@ -123,7 +125,7 @@ impl World {
                 self.tender_site(bid);
             }
             let (order, waiting, before, after) = {
-                let c = self.buildings[bid].construction.as_mut().unwrap();
+                let Some(c) = self.buildings.get_mut(bid).and_then(|b| b.construction.as_mut()) else { continue };
                 let before = c.progress;
                 // One load is kept on the road ahead of the work, so a
                 // quarter only stalls when its truck is late.
@@ -471,7 +473,8 @@ impl World {
         let ids: Vec<BuildingId> = self.buildings.iter().filter(|(id, b)| b.demolition.is_some() && site_slot(*id) == slot).map(|(id, _)| id).collect();
         for bid in ids {
             let (before, after, haul) = {
-                let d = self.buildings[bid].demolition.as_mut().unwrap();
+                // [r16-crash] Gone or finished since the list was made: skipped.
+                let Some(d) = self.buildings.get_mut(bid).and_then(|b| b.demolition.as_mut()) else { continue };
                 let before = d.progress;
                 d.progress = (d.progress + d.work_hour_step()).min(1.0);
                 let haul = d.loads < d.loads_due();

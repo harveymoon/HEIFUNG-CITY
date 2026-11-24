@@ -99,9 +99,9 @@ impl Lane {
     pub(super) fn new(points: Vec<Vec2>, kind: LaneKind, end_node: NodeId, speed_limit: f32) -> Self {
         let mut cum = vec![0.0];
         for w in points.windows(2) {
-            cum.push(cum.last().unwrap() + w[0].distance(w[1]));
+            cum.push(cum.last().expect("starts with 0.0") + w[0].distance(w[1]));
         }
-        let length = *cum.last().unwrap();
+        let length = *cum.last().expect("starts with 0.0");
         Self { points, cum, length, next: Vec::new(), kind, cars: Vec::new(), green: true, speed_limit, limit_end: speed_limit, highway: false, ramp: false, end_node, left: None, right: None, prev: Vec::new(), turn: 0, arrows: 0, permitted: true, approach: u32::MAX, red_for: 0.0, blocked: false, rail_closed: false, toll: None, rough: 0.0, climb: 0.0, uturn: false, turnaround: false }
     }
 
@@ -184,7 +184,7 @@ impl Lane {
     }
 
     pub fn end(&self) -> Vec2 {
-        *self.points.last().unwrap()
+        *self.points.last().expect("a lane has points")
     }
 
     pub(super) fn start_dir(&self) -> Vec2 {

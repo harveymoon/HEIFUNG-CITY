@@ -372,7 +372,7 @@ impl World {
                 s.businesses_open += 1;
                 if z.kind == BusinessKind::Hotel {
                     s.hotels += 1;
-                    s.beds += self.hotel_beds(lot.building.unwrap()) as u32;
+                    s.beds += self.hotel_beds(lot.building.expect("the lot's building")) as u32;
                 }
             }
             if b.homes > 0 {
