@@ -5,7 +5,7 @@
 //! the mean purse. Used to compare main and a branch on a copy of a real
 //! save. Not part of the game.
 //!
-//! cargo run --profile fast -p nd_sim --example money_probe -- <save.ron> [days]
+//! cargo run --profile fast -p nd_sim --example money_probe -- <save.ron|demo> [days]  (SEED=n for the demo)
 
 use nd_minds::RuleBasedMind;
 use nd_sim::bank::{Class, Kind};
@@ -151,7 +151,14 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let src = args.get(1).expect("save path");
     let days: u32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(10);
-    let mut w = World::read_save(src).expect("load");
+    let mut w = if src == "demo" {
+        let mut w = World::new(nd_sim::WorldConfig { seed: std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(1), ..nd_sim::WorldConfig::default() });
+        w.drain_events();
+        nd_sim::scenarios::demo_district(&mut w);
+        w
+    } else {
+        World::read_save(src).expect("load")
+    };
     let mut minds = RuleBasedMind::default();
     health(&w, "start", 0.0);
     earnings(&w);

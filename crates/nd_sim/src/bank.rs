@@ -1012,7 +1012,7 @@ mod tests {
 pub const EDGE_KINDS: &[(Kind, &str)] = &[
     (Kind::Wages, "pensions and gig work paid from away; the crews an out-of-town builder hires here; crews of an out-of-town developer or a bank-financed build"),
     (Kind::Flow(Flow::IncomeTax), "the income tax held back from that pay from away"),
-    (Kind::Services, "clients out of town paying the town's offices for their work (out of which the offices pay their staff)"),
+    (Kind::Services, "clients out of town paying the town's offices for their work, and the region's budget for its agencies on civic ground (out of which the offices pay their staff)"),
     (Kind::Exports, "goods sold out of town"),
     (Kind::Imports, "goods bought from out of town (and the film and act bookings of cinemas, theatres and halls)"),
     (Kind::Living, "the half of living costs spent away: power, phone, insurance, things bought from away"),

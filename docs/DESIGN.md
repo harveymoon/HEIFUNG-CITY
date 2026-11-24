@@ -2124,9 +2124,10 @@ Citizens are rendered from their simulated positions every frame.
   moves only by `World::transfer` (`crate::bank`); the outside world is one account, so the sum of all
   balances and it is always zero and every edge crossing is booked. *Earnings* are paid at midnight
   in the household's pass by whoever really pays them: a business pays its staff the whole wage
-  (plus the standard income tax, held back for the treasury) out of its till; an office on
-  commercial land is paid by its clients out of town for the work (`Kind::Services`) and pays its
-  staff out of that; the treasury pays the city's own staff (civic ground, services, plants, depots,
+  (plus the standard income tax, held back for the treasury) out of its till; an office is
+  paid by its clients out of town for the work (`Kind::Services`; on civic ground: a regional or
+  state agency, paid from its budget away) and pays its staff out of that; the treasury pays the
+  city's own staff (services, civic buildings that are not offices, plants, depots,
   stations, ports, airports, the city's car parks and cargo hubs; ledger line `city staff wages`,
   `Flow::StaffWages`) and takes their tax back; a building site's crew is paid by its owner (a
   developer, residents' company or builder), by the independent landlords' pool for a site no owner

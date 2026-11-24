@@ -155,7 +155,7 @@ fn the_city_pays_its_staff_and_offices_their_clients_fees() {
             .filter(|(id, b)| b.operating() && b.construction.is_none() && want(w, *id))
             .find_map(|(id, b)| b.workers.iter().copied().find(|c| w.citizens.get(*c).is_some_and(|c| c.income > 0.0 && c.household.is_some())).map(|c| (id, c)))
     };
-    let civic = worker(&w, &|w, id| w.buildings[id].service.is_some() || w.buildings[id].land_use == LandUse::Civic);
+    let civic = worker(&w, &|w, id| w.buildings[id].service.is_some() || (w.buildings[id].land_use == LandUse::Civic && !w.buildings[id].business.as_ref().is_some_and(|z| z.kind == BusinessKind::Office)));
     if let Some((bid, c)) = civic {
         assert_eq!(w.earnings_payer(c), super::market::Payer::City(bid));
         let hid = w.citizens[c].household.unwrap();

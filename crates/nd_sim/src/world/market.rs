@@ -42,8 +42,9 @@ pub(crate) enum Passer {
 pub(in crate::world) enum Payer {
     /// The business they work for, out of its own till.
     Business(BuildingId),
-    /// An office on commercial land: out of the fees its clients out of town
-    /// pay it for the work (`Kind::Services`), booked as they are paid.
+    /// An office (on commercial land, or a regional agency on civic ground):
+    /// out of the fees its clients (or its budget) away pay it for the work
+    /// (`Kind::Services`), booked as they are paid.
     Office(BuildingId),
     /// The treasury: the city's own staff (civic ground, services, plants,
     /// depots, stations, ports, airports, the city's car parks and hubs).
@@ -263,7 +264,9 @@ impl World {
         match &b.business {
             Some(z) if z.closed => Payer::Outside,
             Some(z) if self.publicly_funded(bid) => {
-                if z.kind == BusinessKind::Office && b.land_use != LandUse::Civic {
+                // Offices on civic ground too: the region's and the
+                // state's agencies, paid from their budgets away.
+                if z.kind == BusinessKind::Office {
                     Payer::Office(bid)
                 } else {
                     Payer::City(bid)
