@@ -22,6 +22,24 @@ fn main() {
     let path = args.get(1).expect("save path");
     let step: f32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(2.0);
     let worst_n: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(15);
+    if std::env::var("ND_DAY").is_ok() {
+        // A day run from the save, with the water kept open and as before
+        // r15-water: population and treasury.
+        for keep in [false, true] {
+            nd_sim::landscape::KEEP_WATER_OPEN.store(keep, std::sync::atomic::Ordering::Relaxed);
+            let mut w = World::read_save(path).expect("load");
+            let mut minds = nd_minds::RuleBasedMind::default();
+            let day = w.clock.day();
+            while w.clock.day() == day {
+                w.tick(&mut minds);
+            }
+            for _ in 0..1440 {
+                w.tick(&mut minds);
+            }
+            println!("keep_water_open {keep}: day {} {:02}:00 pop {} treasury {:.0} buildings {}", w.clock.day(), w.clock.hour(), w.citizens.len(), w.economy.treasury, w.buildings.len());
+        }
+        return;
+    }
     let t0 = std::time::Instant::now();
     let w = World::read_save(path).expect("load");
     eprintln!("loaded in {:.1}s", t0.elapsed().as_secs_f32());

@@ -445,6 +445,11 @@ pub(super) enum Fix {
 /// water (under the sheet at [`WATER_LEVEL`]).
 pub const WATER_BED_MAX: f32 = WATER_LEVEL - 0.6;
 
+/// [r15-water] Probes only: off, the ground is built as before r15-water
+/// (`examples/water_probe` compares a day's run both ways).
+#[doc(hidden)]
+pub static KEEP_WATER_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
 /// [r15-water] Free ground on the water stays under it. The side slopes of
 /// the ways and pads beside a river (a town raised to its bridges' 7 m
 /// decks, the fill round a quay street) spread over the free cells of the
@@ -456,6 +461,9 @@ pub const WATER_BED_MAX: f32 = WATER_LEVEL - 0.6;
 /// (drawn as a quay wall, `nd_procgen::terrain::water_edges`). Held cells
 /// (a lot's pad, a road's core, a causeway) keep their height.
 pub(super) fn keep_water_open(land: &Landscape, n: usize, half: f32, fix: &mut [Fix], natural: &[f32], h: &mut [f32]) {
+    if !KEEP_WATER_OPEN.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     for k in 0..n * n {
         if fix[k] != Fix::Free {
             continue;

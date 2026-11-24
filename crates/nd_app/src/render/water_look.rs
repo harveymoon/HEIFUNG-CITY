@@ -90,7 +90,7 @@ fn water_slope(p: vec2<f32>, flow: vec2<f32>, t: f32, calm: f32) -> vec2<f32> {
     let q = p - flow * t;
     let n1 = vnoise(q * 0.55 + vec2(t * 0.11, t * 0.07));
     let n2 = vnoise(q * 1.9 - vec2(t * 0.23, -t * 0.17));
-    g += n1.yz * 0.55 * 0.10 + n2.yz * 1.9 * 0.035;
+    g += n1.yz * 0.55 * 0.16 + n2.yz * 1.9 * 0.05;
     // A river's ripples streak along its course.
     let speed = length(flow);
     if speed > 0.05 {
@@ -149,17 +149,17 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var foam = 0.0;
     if !frozen {
         // Clear over the shallows, murky deep down.
-        let murk = 1.0 - exp(-thick * 0.42);
-        let clear = base.rgb * 1.35 + vec3(0.015, 0.035, 0.03);
-        rgb = mix(clear, base.rgb * 0.85, murk);
-        alpha = mix(0.3, 0.93, murk);
+        let murk = 1.0 - exp(-thick * 0.9);
+        let clear = base.rgb + vec3(0.0, 0.015, 0.012);
+        rgb = mix(clear, base.rgb * 0.7, murk);
+        alpha = mix(0.45, 0.95, murk);
         // Foam lapping at whatever the water washes against.
         let n = vnoise(p * 0.9 + vec2(t * 0.25, -t * 0.18)).x;
-        let edge = 1.0 - smoothstep(0.0, 0.45 + 0.25 * n, thick);
+        let edge = 1.0 - smoothstep(0.0, 0.22 + 0.18 * n, thick);
         let lap = 0.5 + 0.5 * sin(thick * 16.0 - t * 1.7 + n * 4.0);
         foam = edge * (0.45 + 0.55 * lap) * smoothstep(0.25, 0.65, n + 0.3 * edge);
-        rgb = mix(rgb, vec3(0.78, 0.84, 0.86), foam * 0.75);
-        alpha = max(alpha, foam * 0.85);
+        rgb = mix(rgb, vec3(0.7, 0.75, 0.76), foam * 0.6);
+        alpha = max(alpha, foam * 0.75);
     }
     pbr_input.material.base_color = vec4(rgb, alpha);
     var color = apply_pbr_lighting(pbr_input);
@@ -172,20 +172,22 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     sky += water_glow.rgb * (1.0 - smoothstep(0.0, max(water_glow.w, 0.02), up));
     sky += water_glare.rgb * pow(max(dot(R, water_sun.xyz), 0.0), 220.0) * 4.0;
     let fres = 0.02 + 0.98 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
-    var refl = sky * fres * select(0.9, 0.35, frozen);
+    var refl = sky * fres * select(0.5, 0.25, frozen);
     // At night, the city's neon smeared across the water: streaks toward
     // the eye, broken up by the ripples.
     if night > 0.02 && !frozen {
+        // Columns of light running toward the eye (as a lit window or a
+        // sign across the water draws one), wavering with the ripples.
         let toward = normalize(view.world_position.xz - p);
         let side = vec2(-toward.y, toward.x);
-        let wob = (N.x * 9.0 + N.z * 7.0);
-        let sc = vec2(dot(p, side) * 0.22 + wob, dot(p, toward) * 0.018);
-        let s = vnoise(sc).x;
-        let streak = smoothstep(0.66, 0.97, s);
-        let hue = vnoise(vec2(dot(p, side) * 0.03, 5.0)).x;
-        let neon = mix(vec3(1.0, 0.12, 0.62), vec3(0.08, 0.75, 1.0), smoothstep(0.3, 0.7, hue));
+        let a = dot(p, side);
+        let b = dot(p, toward);
+        let col = 0.5 + 0.5 * sin(a * 0.21 + 2.5 * sin(a * 0.047) + N.x * 6.0 + N.z * 4.0);
+        let streak = pow(col, 14.0) * (0.55 + 0.45 * sin(b * 0.9 - t * 0.8 + N.z * 8.0));
+        let hue = 0.5 + 0.5 * sin(a * 0.013 + 1.3);
+        let neon = mix(vec3(1.0, 0.15, 0.6), vec3(0.1, 0.75, 1.0), hue);
         let near = 1.0 - smoothstep(250.0, 900.0, dist);
-        refl += neon * streak * night * near * (0.12 + 0.6 * fres) * 0.55;
+        refl += mix(water_glow.rgb * 2.0, neon, 0.6) * streak * night * near * (0.2 + 0.8 * fres) * 0.4;
     }
     color = vec4(color.rgb + refl * color.a, color.a);
     var out: FragmentOutput;
@@ -230,7 +232,10 @@ impl MaterialExtension for WaterSurface {
 }
 
 pub(super) fn add_water_shader(mut shaders: ResMut<Assets<Shader>>) {
-    let _ = shaders.insert(WATER_SHADER.id(), Shader::from_wgsl(WATER_SHADER_SRC, "nd_app/water_surface.wgsl"));
+    // `ND_WATER_SHADER=<file.wgsl>`: the surface from a file instead, for
+    // tuning the look without a rebuild (a restart picks it up).
+    let src = std::env::var("ND_WATER_SHADER").ok().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_else(|| WATER_SHADER_SRC.to_string());
+    let _ = shaders.insert(WATER_SHADER.id(), Shader::from_wgsl(src, "nd_app/water_surface.wgsl"));
 }
 
 /// The one water material, shared by the sheet and the far water.
@@ -255,7 +260,7 @@ impl WaterLook {
 /// Every frame: the waves' clock, and the sky the water mirrors.
 pub(super) fn sync_water_look(time: Res<Time>, sky: Res<SkyLook>, look: Res<WaterLook>, mut materials: ResMut<Assets<WaterMaterial>>) {
     let Some(h) = &look.mat else { return };
-    let Some(m) = materials.get_mut(h) else { return };
+    let Some(mut m) = materials.get_mut(h) else { return };
     let v3 = |c: [f32; 3], w: f32| Vec4::new(c[0], c[1], c[2], w);
     let e = &mut m.extension;
     e.clock = Vec4::new(time.elapsed_secs_wrapped() % 3600.0, (1.0 - sky.daylight).clamp(0.0, 1.0), 1.0, 0.0);

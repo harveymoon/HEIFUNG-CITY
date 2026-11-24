@@ -2591,6 +2591,26 @@ trait MindProvider {
   lies on its pad (the back pad behind a step). Cutting walls: a lone 4 m piece between gaps is not drawn, nor a
   piece inside another held way's band (cuttings crossing at a junction), and an underpass's wing
   walls stop where another way passes through them (Route 88 / Neon Parade).
+- Water drawn where the sim says water [r15-water]: the sim's water is exact (`Landscape::is_water`),
+  but the works beside it (a town raised to its bridges' 7 m decks, a quay street on fill) spread
+  their side slopes over the river's free ground cells and filled 14 m streams to 4-7 m, drawn as a
+  brown strip of bed colour though the sim still called them rivers. `Ground::build_with` now holds
+  every free cell the sim calls water to its natural bed, at most `WATER_BED_MAX` (0.6 m under the
+  sheet), marked `Fix::Quay` (`keep_water_open`; lots, road cores and causeways keep their heights;
+  ground is rebuilt on load, so old saves are repaired). The 8 m render mesh still ran from a high
+  bank vertex to a bed vertex metres into the water, so `nd_procgen::water_edge` cuts every piece
+  of shore (6 m pieces along river banks, lake outlines and the sea's shores) whose strip, 12 m
+  into the water or the whole of a narrow river, is drawn over the sheet anywhere, plus a piece
+  either side, out of the ground mesh (`holes::ground_holes`), and draws it in `waterworks`: a
+  stone quay wall with a wet dark band below the waterline and a coping where the bank stands
+  over 1.4 m (`WALL_FROM`), else an earth bank shelving 1 m into the water, and the bed below.
+  `DrawnGround` gives the drawn height anywhere for probes and tests; `examples/water_probe`
+  counts water points drawn under ground and river widths drawn against the sim's. The water
+  surface is a shader on the sheet and far water (`render::water_look`): waves and chop as a
+  normal (rivers' chop carried by their current, the sheet's UVs), depth from the depth prepass
+  (else the shore distance in UV 2) for clear shallows, murky deeps and a lap of foam where water
+  meets anything, the sky mirrored (zenith, horizon, glow band, sun glint) and at night neon-tinted
+  streaks broken by the ripples; ice stays flat. Low ground by the water is drawn darker (wet band).
 - Ramps (`roads::is_ramp_spec`: one-way streets narrower than a highway): an end dropped on a
   highway gets a lead point `RAMP_LEAD` (40 m) before a merge or after a diverge, beside the
   carriageway (`roads::ease_ramp_ends`), so the ramp joins nearly tangent; the join is drawn as a

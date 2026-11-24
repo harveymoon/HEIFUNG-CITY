@@ -138,7 +138,6 @@ pub(super) fn landscape_signature(w: &World) -> u64 {
 pub(super) fn sync_landscape(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     sim: Res<Sim>,
     assets: Res<GameAssets>,
     mats: Res<Materials>,
