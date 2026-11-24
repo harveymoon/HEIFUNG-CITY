@@ -78,12 +78,33 @@ pub fn build_water(world: &World, palette: &Palette) -> MeshData {
                 mesh.positions.push([c.x, WATER_LEVEL, c.y]);
                 mesh.normals.push([0.0, 1.0, 0.0]);
                 mesh.colors.push([rgb[0], rgb[1], rgb[2], a]);
-                mesh.uvs.push([c.x, -c.y]);
+                // [r15-water] For the water shader (`render::water_look`):
+                // the current (m/s, x and z) in the first UV set, the
+                // distance to the shore and whether it is frozen in the
+                // second.
+                let f = if inside(*c) { flow_at(land, *c) } else { Vec2::ZERO };
+                mesh.uvs.push([f.x, f.y]);
+                mesh.aux.push([d.clamp(-60.0, 12.0), if fr[k] { 1.0 } else { 0.0 }]);
             }
             mesh.indices.extend_from_slice(&[base, base + 3, base + 1, base + 1, base + 3, base + 2]);
         }
     }
     mesh
+}
+
+/// [r15-water] The current at `p`, in metres per second: a river's or
+/// stream's along its course (out to its banks and a little past, so the
+/// sheet under the bank carries it too), still water elsewhere.
+pub fn flow_at(land: &nd_sim::landscape::Landscape, p: Vec2) -> Vec2 {
+    let mut best: Option<(f32, Vec2)> = None;
+    for r in &land.rivers {
+        let (seg, _, d) = r.nearest(p);
+        let reach = r.width * 0.5 + 12.0;
+        if d <= reach && best.is_none_or(|(bd, _)| d < bd) {
+            best = Some((d, r.flow(seg) * r.current));
+        }
+    }
+    best.map_or(Vec2::ZERO, |b| b.1)
 }
 
 /// The water beyond the fine sheet of [`build_water`]: the sea and the
@@ -124,4 +145,54 @@ pub fn build_far_water(world: &World, palette: &Palette) -> MeshData {
         }
     }
     mesh
+}
+
+#[cfg(test)]
+mod water_tests {
+    use super::*;
+    use nd_sim::landscape::{LandscapeParams, LandscapePreset};
+    use nd_sim::WorldConfig;
+
+    fn river_world() -> World {
+        World::new(WorldConfig { landscape: LandscapeParams::preset(LandscapePreset::RiverValley, 8), ..WorldConfig::default() })
+    }
+
+    /// [r15-water] No grid on the water: everything the sheet's shading
+    /// reads (colour, current, distance to shore, ice) is a function of the
+    /// place alone, so the cells that share a corner agree on it and
+    /// nothing steps from one 10 m cell to the next; and the current runs
+    /// along the rivers.
+    #[test]
+    fn the_water_sheet_has_no_grid_and_carries_the_current() {
+        let w = river_world();
+        let m = build_water(&w, &Palette::default());
+        assert!(!m.indices.is_empty());
+        assert_eq!(m.aux.len(), m.positions.len(), "every vertex has its shore distance");
+        let mut seen: std::collections::HashMap<(i32, i32), ([f32; 4], [f32; 2], [f32; 2])> = Default::default();
+        let mut moving = 0;
+        for k in 0..m.positions.len() {
+            let key = ((m.positions[k][0] * 10.0).round() as i32, (m.positions[k][2] * 10.0).round() as i32);
+            let here = (m.colors[k], m.uvs[k], m.aux[k]);
+            if let Some(prev) = seen.insert(key, here) {
+                assert_eq!(prev, here, "two cells disagree at the corner {key:?}");
+            }
+            let f = Vec2::new(m.uvs[k][0], m.uvs[k][1]);
+            assert!(f.length() < 10.0, "a current of {} m/s", f.length());
+            moving += (f.length() > 0.05) as usize;
+        }
+        assert!(moving > 100, "the rivers carry their current to the sheet ({moving})");
+        // The shore distance runs from the deep water out under the banks.
+        assert!(m.aux.iter().any(|a| a[0] < -5.0) && m.aux.iter().any(|a| a[0] > 2.0));
+    }
+
+    /// [r15-water] The wet band: the low ground right by the water is drawn
+    /// darker than the dry shore a little way up.
+    #[test]
+    fn the_ground_by_the_water_is_darker() {
+        let w = river_world();
+        let c = super::super::heightfield::LandColours::for_climate(w.landscape.params.climate, &Palette::default());
+        let spot = |d: f32| super::super::heightfield::GroundSpot { v: 0.5, d, hot: None };
+        let lum = |c: [f32; 3]| c[0] + c[1] + c[2];
+        assert!(lum(c.rgb(spot(1.0), 0.3)) < 0.8 * lum(c.rgb(spot(13.0), 1.6)));
+    }
 }

@@ -978,6 +978,8 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
     port_docks(world, palette, &mut g, concrete);
     water_plants(world, palette, &mut g, concrete, steel);
     hot_vents(world, palette, &mut g);
+    // [r15-water] Quay walls and banks where the shore was cut out.
+    crate::water_edge::water_edges(world, palette, &mut g);
     g
 }
 

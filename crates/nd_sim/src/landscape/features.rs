@@ -100,7 +100,7 @@ impl Sea {
     }
 
     /// Shore polylines: the coast and every island outline (closed).
-    pub(super) fn shores(&self) -> Vec<Vec<Vec2>> {
+    pub fn shores(&self) -> Vec<Vec<Vec2>> {
         let mut out = Vec::new();
         if self.coast.len() >= 2 {
             out.push(self.coast.clone());

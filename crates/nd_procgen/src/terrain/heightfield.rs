@@ -243,7 +243,10 @@ impl LandColours {
         let rgb = if s.d < 0.0 {
             self.mud
         } else if s.d < 14.0 {
-            mix(self.sand, flat, s.d / 14.0)
+            // [r15-water] The wet band: low ground right by the water is
+            // darker, soaked by the lap of the water.
+            let wet = (1.0 - smoothstep(0.25, 1.1, h)) * (1.0 - smoothstep(3.0, 11.0, s.d));
+            mul(mix(self.sand, flat, s.d / 14.0), 1.0 - 0.42 * wet)
         } else {
             flat
         };
@@ -252,6 +255,11 @@ impl LandColours {
             None => rgb,
         }
     }
+}
+
+fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
+    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// The graded ground's height at every vertex (a hair under it, so road

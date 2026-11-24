@@ -24,7 +24,6 @@ pub(super) struct LandscapeRender {
     pub(super) tile_ents: Vec<Option<Entity>>,
     /// [refactor/app] The counters `signature` was hashed under.
     pub(super) gate: Gate<(u64, u64, u64, usize, usize, u64, bool, u64)>,
-    pub(super) water_mat: Option<Handle<StandardMaterial>>,
     /// [economy] One mesh per `ShipKind` (freighter, ferry, trawler, yacht, sailboat).
     pub(super) ship_meshes: Option<[Handle<Mesh>; 6]>,
     /// Each drawn ship and the kind its mesh shows.
@@ -147,6 +146,8 @@ pub(super) fn sync_landscape(
     terrain: Query<Entity, With<TerrainTag>>,
     water: Query<Entity, With<WaterTag>>,
     works: Query<Entity, With<WaterworksTag>>,
+    mut water_mats: ResMut<Assets<super::water_look::WaterMaterial>>,
+    mut water_look: ResMut<super::water_look::WaterLook>,
 ) {
     let _t = crate::frame_stats::span("sync_landscape");
     let w = &sim.world;
@@ -201,19 +202,8 @@ pub(super) fn sync_landscape(
     if state.water_signature != Some(map) || fresh {
         state.water_signature = Some(map);
         despawn_all(&mut commands, &water);
-        let water_mat = state
-            .water_mat
-            .get_or_insert_with(|| {
-                materials.add(StandardMaterial {
-                    base_color: Color::WHITE,
-                    alpha_mode: AlphaMode::Blend,
-                    perceptual_roughness: 0.06,
-                    reflectance: 0.6,
-                    metallic: 0.1,
-                    ..default()
-                })
-            })
-            .clone();
+        // [r15-water] The water surface shader (`water_look`).
+        let water_mat = water_look.material(&mut water_mats);
         let sheet = nd_procgen::terrain::build_water(w, &assets.palette);
         if !sheet.is_empty() {
             commands.spawn((Mesh3d(meshes.add(to_mesh(&sheet, false))), MeshMaterial3d(water_mat), Transform::IDENTITY, NotShadowCaster, WaterTag));

@@ -27,6 +27,9 @@ pub mod holes;
 /// [r15-hillside] Lots cut out of the coarse ground mesh, floored at their
 /// pads, their sides walled or banked.
 pub mod lot_ground;
+/// [r15-water] The shore cut out of the ground where it stood over the
+/// water, and drawn as quay walls, banks and bed.
+pub mod water_edge;
 /// [horizon] The world past the map out to the horizon: far ground, water,
 /// ridges, the ways on to the neighbouring towns and their skylines.
 pub mod horizon;

@@ -165,6 +165,8 @@ mod boxes;
 /// [r8] The depots' straddle carriers moving the real boxes.
 mod carriers;
 mod landscape;
+/// [r15-water] The water surface shader.
+mod water_look;
 /// [r4-tiles] The Land for sale layer's outlines.
 pub mod land_tiles;
 mod lift;
@@ -504,7 +506,7 @@ impl Plugin for RenderPlugin {
         app.init_resource::<people::PeopleRender>();
         app.add_plugins(thumbs::ThumbsPlugin);
         app.add_plugins(turntable::TurntablePlugin);
-        app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_plugins(MaterialPlugin::<street_look::PoolMaterial>::default()).add_plugins(MaterialPlugin::<cutaway::CutMaterial>::default()).add_plugins(MaterialPlugin::<weathering::WeatherMaterial>::default()).add_systems(Startup, weathering::add_shader).init_resource::<cutaway::CutState>().add_systems(Startup, cutaway::add_shader).init_resource::<sky::SkyLook>().add_systems(Startup, (lights::add_shader, street_look::add_pool_shader, setup)).add_systems(
+        app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_plugins(MaterialPlugin::<street_look::PoolMaterial>::default()).add_plugins(MaterialPlugin::<cutaway::CutMaterial>::default()).add_plugins(MaterialPlugin::<weathering::WeatherMaterial>::default()).add_plugins(MaterialPlugin::<water_look::WaterMaterial>::default()).init_resource::<water_look::WaterLook>().add_systems(Startup, water_look::add_water_shader).add_systems(Startup, weathering::add_shader).init_resource::<cutaway::CutState>().add_systems(Startup, cutaway::add_shader).init_resource::<sky::SkyLook>().add_systems(Startup, (lights::add_shader, street_look::add_pool_shader, setup)).add_systems(
             Update,
             (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_walk_networks, sync_transit, sync_buildings, sync_citizens, sync_cars, sync_bots, sync_trains, update_daylight)
                 .chain()
@@ -525,6 +527,7 @@ impl Plugin for RenderPlugin {
         app.init_resource::<climate::SceneClock>().add_systems(Update, climate::tick_scene_clock.in_set(SimSet::Input));
         app.add_systems(Update, (climate::sync_precipitation, climate::sync_steam).in_set(SimSet::Sync).after(sync_landscape));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
+        app.add_systems(Update, water_look::sync_water_look.in_set(SimSet::Sync).after(update_daylight));
         // [sweep-visual] The sun's shadow cascades reach as far as the
         // orbit camera looks.
         app.add_systems(Update, sun_cascades_follow_camera);

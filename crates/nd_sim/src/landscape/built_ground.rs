@@ -435,6 +435,41 @@ pub(super) enum Fix {
     Wall,
     /// A lot, at its pad.
     Pad,
+    /// [r15-water] Free ground on the water held down under it where the
+    /// works beside it would have filled it (`keep_water_open`): the bank
+    /// meets it in a step, a quay wall's face.
+    Quay,
+}
+
+/// [r15-water] Deepest the built ground may stand at a point the sim calls
+/// water (under the sheet at [`WATER_LEVEL`]).
+pub const WATER_BED_MAX: f32 = WATER_LEVEL - 0.6;
+
+/// [r15-water] Free ground on the water stays under it. The side slopes of
+/// the ways and pads beside a river (a town raised to its bridges' 7 m
+/// decks, the fill round a quay street) spread over the free cells of the
+/// river bed too, and filled a 14 m stream to 4-7 m along a kilometre of
+/// Harvey's city: the sim still called it water (`is_water`) while the
+/// ground was drawn over the water sheet, a brown strip of bed colour.
+/// Every free cell the sim calls water is held to its natural bed, at most
+/// [`WATER_BED_MAX`]; the built bank beside it meets the water in a step
+/// (drawn as a quay wall, `nd_procgen::terrain::water_edges`). Held cells
+/// (a lot's pad, a road's core, a causeway) keep their height.
+pub(super) fn keep_water_open(land: &Landscape, n: usize, half: f32, fix: &mut [Fix], natural: &[f32], h: &mut [f32]) {
+    for k in 0..n * n {
+        if fix[k] != Fix::Free {
+            continue;
+        }
+        let p = Vec2::new(-half + (k % n) as f32 * GROUND_CELL, -half + (k / n) as f32 * GROUND_CELL);
+        let d = land.water_distance(p);
+        if d < 0.0 || (d < 8.0 && land.is_water(p)) {
+            let bed = h[k].min(natural[k]).min(WATER_BED_MAX);
+            if bed < h[k] - 0.05 {
+                fix[k] = Fix::Quay;
+            }
+            h[k] = bed;
+        }
+    }
 }
 
 /// Ways within this many metres of the raster's edge also grade the
@@ -557,7 +592,7 @@ pub(super) fn grade_free_ground(n: usize, natural: &[f32], fix: &[Fix], set: &[f
                 hi[k] = set[k];
             }
             // A cut neither grades the ground beside it nor is graded.
-            Fix::Cut | Fix::Wall => {
+            Fix::Cut | Fix::Wall | Fix::Quay => {
                 lo[k] = f32::NEG_INFINITY;
                 hi[k] = f32::INFINITY;
             }
@@ -890,7 +925,8 @@ impl Ground {
                 }
             }
         }
-        let h = grade_free_ground(n, &natural, &fix, &set, lo, hi, &cap);
+        let mut h = grade_free_ground(n, &natural, &fix, &set, lo, hi, &cap);
+        keep_water_open(land, n, half, &mut fix, &natural, &mut h);
         let outer_index = index_outer(&outer);
         let mut g = Ground { half, n, h, fix, pads, steps, decks, underpasses, bridge_decks, outer, outer_index, retaining: Vec::new(), terraces: Vec::new(), terrace_index: Default::default() };
         g.blend_into_outer(land);

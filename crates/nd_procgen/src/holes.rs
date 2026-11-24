@@ -225,6 +225,8 @@ pub fn ground_holes(world: &nd_sim::World) -> Vec<Vec<Vec2>> {
     // stepped lots among them): its floor and sides are drawn
     // (`lot_ground`).
     out.extend(crate::lot_ground::lot_holes(world));
+    // [r15-water] The shore where the ground stood over the water.
+    out.extend(crate::water_edge::water_holes(world));
     out
 }
 

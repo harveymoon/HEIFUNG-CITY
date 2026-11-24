@@ -45,7 +45,6 @@ pub(super) struct FarRender {
     /// The counters `key` was hashed under: the landscape, the roads, the
     /// built ground, the ports.
     gate: super::Gate<(u64, u64, u64, u64, u32, usize)>,
-    water_mat: Option<Handle<StandardMaterial>>,
     way_mat: Option<Handle<StandardMaterial>>,
     /// Ridges and skylines: the fog's colour, alpha the clarity.
     haze_mat: Option<Handle<StandardMaterial>>,
@@ -154,6 +153,8 @@ pub(super) fn sync_far(
     land_render: Res<LandscapeRender>,
     mut state: ResMut<FarRender>,
     existing: Query<Entity, With<FarTag>>,
+    mut water_mats: ResMut<Assets<super::water_look::WaterMaterial>>,
+    mut water_look: ResMut<super::water_look::WaterLook>,
 ) {
     let _t = crate::frame_stats::span("sync_far");
     let w = &sim.world;
@@ -225,10 +226,8 @@ pub(super) fn sync_far(
 
     // The far water.
     if !flat {
-        let water_mat = state
-            .water_mat
-            .get_or_insert_with(|| materials.add(StandardMaterial { base_color: Color::WHITE, alpha_mode: AlphaMode::Blend, perceptual_roughness: 0.06, reflectance: 0.6, metallic: 0.1, ..default() }))
-            .clone();
+        // [r15-water] The same water as the sheet (`water_look`).
+        let water_mat = water_look.material(&mut water_mats);
         for m in horizon::far_water(&far, pal).iter().filter(|m| !m.is_empty()) {
             tris += m.indices.len() / 3;
             let (local, at) = centred(m);

@@ -310,7 +310,7 @@ fn built_ground_has_no_cliffs_spikes_or_seams() {
     // Walls stand at underpass cuts, sunken roads and tunnel portals, and
     // under a viaduct the ground is left as it was: none of that is
     // earthwork.
-    let skip: Vec<bool> = (0..n * n).map(|k| matches!(g.fix[k], Fix::Cut | Fix::Wall) || !g.decks_at(at(k % n, k / n)).is_empty()).collect();
+    let skip: Vec<bool> = (0..n * n).map(|k| matches!(g.fix[k], Fix::Cut | Fix::Wall | Fix::Quay) || !g.decks_at(at(k % n, k / n)).is_empty()).collect();
     for j in 1..n - 1 {
         for i in 1..n - 1 {
             let k = j * n + i;
@@ -357,7 +357,7 @@ fn built_ground_has_no_cliffs_spikes_or_seams() {
             for dj in -3isize..=3 {
                 let row: Vec<String> = (-3isize..=3).map(|di| {
                     let k = (cj + dj) as usize * n + (ci + di) as usize;
-                    format!("{:7.2}{}|{:6.1}", g.h[k], match g.fix[k] { Fix::Free => ' ', Fix::Road => 'R', Fix::Cut => 'C', Fix::Wall => 'W', Fix::Pad => 'P' }, g.outer_height(&w.landscape, at((ci + di) as usize, (cj + dj) as usize)))
+                    format!("{:7.2}{}|{:6.1}", g.h[k], match g.fix[k] { Fix::Free => ' ', Fix::Road => 'R', Fix::Cut => 'C', Fix::Wall => 'W', Fix::Pad => 'P', Fix::Quay => 'Q' }, g.outer_height(&w.landscape, at((ci + di) as usize, (cj + dj) as usize)))
                 }).collect();
                 println!("y {:7.1}: {}", at(0, (cj + dj) as usize).y, row.join(" "));
             }
@@ -499,4 +499,40 @@ fn the_water_is_continuous_across_the_map_edge_and_the_tile_seams() {
             }
         }
     }
+}
+
+/// [r15-water] The side slopes of works beside a river never fill it: with
+/// the whole raster graded up to a town's 7 m (a town raised to its bridges'
+/// decks), every free cell the sim calls water is held down under the
+/// sheet (a quay's step), and the land beside it keeps its height.
+#[test]
+fn works_beside_the_water_never_fill_it() {
+    let land = Landscape::new(&LandscapeParams::preset(LandscapePreset::RiverValley, 8));
+    assert!(!land.rivers.is_empty());
+    let half = 1200.0;
+    let n = (half * 2.0 / GROUND_CELL) as usize + 1;
+    let at = |k: usize| Vec2::new(-half + (k % n) as f32 * GROUND_CELL, -half + (k / n) as f32 * GROUND_CELL);
+    let natural: Vec<f32> = (0..n * n).map(|k| land.height(at(k))).collect();
+    let mut fix = vec![Fix::Free; n * n];
+    // One cell held as a causeway's road: it keeps its height.
+    let road = (0..n * n).find(|&k| land.is_water(at(k))).expect("water on the raster");
+    fix[road] = Fix::Road;
+    let mut h = vec![7.0f32; n * n];
+    keep_water_open(&land, n, half, &mut fix, &natural, &mut h);
+    let (mut wet, mut quays) = (0, 0);
+    for k in 0..n * n {
+        let p = at(k);
+        if k == road {
+            assert_eq!(h[k], 7.0);
+            continue;
+        }
+        if land.is_water(p) {
+            wet += 1;
+            assert!(h[k] <= WATER_BED_MAX && h[k] <= natural[k], "water at {p} filled to {}", h[k]);
+            quays += (fix[k] == Fix::Quay) as usize;
+        } else if land.water_distance(p) > 1.0 {
+            assert_eq!(h[k], 7.0, "land at {p} moved");
+        }
+    }
+    assert!(wet > 100 && quays == wet, "{wet} water cells, {quays} held as quays");
 }
