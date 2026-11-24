@@ -2645,6 +2645,23 @@ trait MindProvider {
   (no street) gets a dark rubber panel at the rails' height over the ballast and sleepers, the
   rails flush in it, ramps down to the paving and yellow tactile strips; the crossings' flashing lamps throw a pulsing red point light on the road at
   night (a pool beside the street lamps', a third its size, none at Low).
+- Hillside lots cut to their pads [r15-hillside] (`nd_procgen::lot_ground`): the renderer's ground
+  mesh has 8 m cells running straight from vertex to vertex, so beside a levelled lot it rose
+  through the lot's floor or hung under it, and next to a walled terrace it ran up the wall in
+  zig-zags (the "saw-tooth skirts"). Every lot with a pad (not a park, not a strip mine) whose drawn
+  ground near it stands `CUT_FROM` (0.12 m) or more off its floor is cut out of the mesh exactly
+  (`lot_holes`, the outline in triangles through `holes::cut_hole_set`, holes binned 16 m so
+  thousands are cheap), floored with a flat cap at its pad (both pads of a stepped lot), and its
+  sides closed (`lot_ground`): along each edge, from the floor to the ground the mesh draws there
+  (`TerrainProbe`: the drawn heights, the mesh's own diagonals, split at every cell edge) or down
+  to a lower cut neighbour's floor (the higher lot draws the step). A side under 1 m is an earth
+  face; taller it is a retaining wall with a coping, faced by lot in board-formed concrete, stone or
+  Hong Kong's shotcrete "chunam" with rows of weep holes. The sim's own retaining walls
+  (`Ground::retaining`) run their face down to the lowest drawn ground in front of them (a wall
+  holding the hill back up to the highest), so none hangs over a gap. A lot's earth or gravel fill
+  lies on its pad (the back pad behind a step). Cutting walls: a lone 4 m piece between gaps is not drawn, nor a
+  piece inside another held way's band (cuttings crossing at a junction), and an underpass's wing
+  walls stop where another way passes through them (Route 88 / Neon Parade).
 - Ramps (`roads::is_ramp_spec`: one-way streets narrower than a highway): an end dropped on a
   highway gets a lead point `RAMP_LEAD` (40 m) before a merge or after a diverge, beside the
   carriageway (`roads::ease_ramp_ends`), so the ramp joins nearly tangent; the join is drawn as a

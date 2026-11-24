@@ -372,6 +372,16 @@ pub(super) fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 json!({ "at": [round(c.at.x), round(c.at.y)], "passes": if c.upper.0 == sid { "over" } else { "under" }, "other_segment": other.0, "clearance": round((w.road_height(c.upper.0, c.upper.1) - w.road_height(c.lower.0, c.lower.1)).abs()) })
             })
             .collect();
+        // [r15-hillside] The heights in the `road` reply too: it has the
+        // same `level` field, and readers looked for `levels` and `heights`
+        // beside it and found nulls (photographer 2026-11-20, F3).
+        let mut road = road::road_detail(w, sid);
+        if let Some(m) = road.as_mut().and_then(|r| r.as_object_mut()) {
+            m.insert("levels".into(), json!([w.roads.node(s.a).level, w.roads.node(s.b).level]));
+            m.insert("heights".into(), json!([round(z(s.a)), round(z(s.b))]));
+            m.insert("inner_heights".into(), json!(w.road_inner.get(sid.0 as usize).map(|v| v.iter().map(|(t, h)| [round(*t), round(*h)]).collect::<Vec<_>>()).unwrap_or_default()));
+            m.insert("grade_crossings".into(), json!(crossings.clone()));
+        }
         return Ok(json!({ "segment": {
             "id": sid.0, "from": [round(a.x), round(a.y)], "to": [round(b.x), round(b.y)], "kind": road_kind_name(s.kind),
             "lanes_fwd": s.lanes_fwd, "lanes_bwd": s.lanes_bwd, "highway": s.is_highway(),
@@ -380,7 +390,7 @@ pub(super) fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             "nodes": [s.a.0, s.b.0], "junction_degrees": [w.roads.neighbors(s.a).count(), w.roads.neighbors(s.b).count()],
             "grade_crossings": crossings,
             "condition": nights::segment_condition(w, sid),
-        }, "road": road::road_detail(w, sid) }));
+        }, "road": road }));
     }
     // No id: whatever is selected.
     match *ctx.selection {

@@ -1033,7 +1033,7 @@ Reply: `total` (matches), `returned`, `rows`.
 `inspect {segment: id}` or `inspect {road: [x, y]}` (the piece nearest the point) gives a road piece: ends, kind,
 lanes, `level` (ground / viaduct / cutting / tunnel / bridge), `levels` and `heights` at its ends, `inner_heights` (`[t, z]` samples between them on a long street over the hills), the
 `bridge`/`viaduct`/`tunnel` flags, its nodes and their degrees, and `grade_crossings`: every way it
-passes over or under (`passes`, `other_segment`, `clearance`). Also `condition` (null for pieces the
+passes over or under (`passes`, `other_segment`, `clearance`); [r15-hillside] `levels`, `heights`, `inner_heights` and `grade_crossings` are also in the `road` reply beside its `level`. Also `condition` (null for pieces the
 city does not maintain): `wear`, `condition`, `label` (good / fair / worn / crumbling),
 `speed_factor`, `crash_factor`, `land_value`, `repair_cost`, `queue_place` and `queue_length` in
 the crews' queue, and the `street` name.
