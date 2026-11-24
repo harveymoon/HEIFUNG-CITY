@@ -1599,7 +1599,9 @@ fn a_save_mid_journey_keeps_trucks_buses_and_riders() {
     }
     // A truck on the road too.
     let shop = w.lots[shop_lot].building.unwrap();
-    w.import(shop, Resource::Goods, 3.0, 10.0);
+    // [r15-freight] Sent now: an import waits for the shop's delivery
+    // hours (it is 19:00), and no site lorry need be out at this hour.
+    w.dispatch_truck(super::market::TruckOrigin::CityEdge, Cargo { from: BuildingId::default(), to: shop, resource: Resource::Goods, amount: 3.0, price: 10.0 }, 6);
     let trucks = w.traffic.cars.values().filter(|c| c.cargo.is_some()).count();
     let cars = w.traffic.cars.len();
     let riding = w.citizens.values().filter(|c| matches!(c.activity, Activity::Riding { .. })).count();
