@@ -307,7 +307,7 @@ pub struct LandscapeTiles {
     raw: Vec<f32>,
     kept: Vec<f32>,
     /// [p2-look] The holes cut through the ground (`holes::ground_holes`).
-    holes: Vec<Vec<Vec2>>,
+    holes: crate::holes::HoleSet,
     meshes: Vec<MeshData>,
 }
 
@@ -320,7 +320,7 @@ impl LandscapeTiles {
         let n = landscape_n(half, cell);
         let per_side = (n - 1).div_ceil(Self::TILE);
         let (raw, kept) = landscape_heights(world, cell, n);
-        let holes = crate::holes::ground_holes(world);
+        let holes = crate::holes::HoleSet::new(crate::holes::ground_holes(world));
         let mut t = Self { half, cell, n, per_side, colours: LandColours::new(world, palette), spots: ground_spots(world, cell, n), raw, kept, holes, meshes: Vec::new() };
         t.meshes = (0..per_side * per_side).map(|k| t.build_tile(k)).collect();
         t
@@ -348,10 +348,15 @@ impl LandscapeTiles {
             }
         }
         // [p2-look] A pit dug, grown or filled in: the tiles under it.
+        // [r15-hillside] Only the holes that changed (every hillside lot is
+        // one or more).
         let holes = crate::holes::ground_holes(world);
-        if holes != self.holes {
+        if holes != self.holes.holes {
             let tile_of = |v: f32| (((v + self.half) / self.cell).floor().max(0.0) as usize / Self::TILE).min(self.per_side - 1);
-            for hole in self.holes.iter().chain(holes.iter()) {
+            let key = |h: &Vec<Vec2>| h.iter().flat_map(|p| [p.x.to_bits(), p.y.to_bits()]).collect::<Vec<u32>>();
+            let old: std::collections::HashSet<Vec<u32>> = self.holes.holes.iter().map(key).collect();
+            let new: std::collections::HashSet<Vec<u32>> = holes.iter().map(key).collect();
+            for hole in self.holes.holes.iter().filter(|h| !new.contains(&key(h))).chain(holes.iter().filter(|h| !old.contains(&key(h)))) {
                 let (lo, hi) = hole.iter().fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
                 for tj in tile_of(lo.y)..=tile_of(hi.y) {
                     for ti in tile_of(lo.x)..=tile_of(hi.x) {
@@ -359,7 +364,7 @@ impl LandscapeTiles {
                     }
                 }
             }
-            self.holes = holes;
+            self.holes = crate::holes::HoleSet::new(holes);
         }
         self.raw = raw;
         self.kept = kept;
@@ -407,7 +412,7 @@ impl LandscapeTiles {
             }
         }
         grid_indices(&mut mesh, 0, i1 - i0 + 1, j1 - j0 + 1);
-        crate::holes::cut_holes(&mut mesh, &self.holes);
+        crate::holes::cut_hole_set(&mut mesh, &self.holes);
         mesh
     }
 }
@@ -426,29 +431,10 @@ impl LandscapeTiles {
 fn keep_under_streets(world: &World, cell: f32, n: usize, heights: &mut [f32]) {
     let half = world.landscape.land_half();
     let roads = &world.roads;
-    // A vertex reaches a point at most a cell's diagonal from it.
-    let reach = cell * std::f32::consts::SQRT_2;
     let index = |v: f32| (((v + half) / cell).floor().max(0.0) as usize).min(n - 1);
     for (sid, s) in roads.alive_segments() {
-        if s.bridge || s.viaduct || s.tunnel || roads.node(s.a).level < 0.0 || roads.node(s.b).level < 0.0 || s.is_rail() {
-            continue;
-        }
-        // [r4-hillside] A way in a bench on a hillside is cut out of the
-        // ground mesh instead (`holes::bench_holes`): its 8 m cells held
-        // down to the way dug a trench into the hill beside it, and the odd
-        // vertex caught at its edge fanned the slope into zig-zags.
+        let Some(r) = street_hold_reach(world, sid, s, cell) else { continue };
         let (a, b) = roads.segment_points(sid);
-        let hold = nd_sim::landscape::earthwork_hold(&world.landscape, roads, &world.road_z, &world.road_inner, sid);
-        if hold == Some(nd_sim::landscape::Hold::Bench) {
-            continue;
-        }
-        if !s.is_street() {
-            continue;
-        }
-        let r = match hold {
-            Some(h) => nd_sim::landscape::held_band(s, h).1,
-            None => s.half_width() + reach,
-        };
         let (lo, hi) = (a.min(b) - Vec2::splat(r), a.max(b) + Vec2::splat(r));
         for j in index(lo.y)..=(index(hi.y) + 1).min(n - 1) {
             for i in index(lo.x)..=(index(hi.x) + 1).min(n - 1) {
@@ -462,6 +448,29 @@ fn keep_under_streets(world: &World, cell: f32, n: usize, heights: &mut [f32]) {
             }
         }
     }
+}
+
+/// How far from its centre line the street `sid` holds the ground mesh's
+/// vertices down to its own height (`keep_under_streets`), or `None` when
+/// it does not (decks, tunnels, sunken ways, rail, paths, benches).
+pub(crate) fn street_hold_reach(world: &World, sid: nd_sim::roads::SegmentId, s: &nd_sim::Segment, cell: f32) -> Option<f32> {
+    let roads = &world.roads;
+    if s.bridge || s.viaduct || s.tunnel || roads.node(s.a).level < 0.0 || roads.node(s.b).level < 0.0 || s.is_rail() {
+        return None;
+    }
+    // [r4-hillside] A way in a bench on a hillside is cut out of the
+    // ground mesh instead (`holes::bench_holes`): its 8 m cells held
+    // down to the way dug a trench into the hill beside it, and the odd
+    // vertex caught at its edge fanned the slope into zig-zags.
+    let hold = nd_sim::landscape::earthwork_hold(&world.landscape, roads, &world.road_z, &world.road_inner, sid);
+    if hold == Some(nd_sim::landscape::Hold::Bench) || !s.is_street() {
+        return None;
+    }
+    // A vertex reaches a point at most a cell's diagonal from it.
+    Some(match hold {
+        Some(h) => nd_sim::landscape::held_band(s, h).1,
+        None => s.half_width() + cell * std::f32::consts::SQRT_2,
+    })
 }
 
 #[cfg(test)]

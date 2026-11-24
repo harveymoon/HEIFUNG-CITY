@@ -288,7 +288,9 @@ pub(super) fn fill_mesh_in(w: &World, fills: &[(ChunkKey, LotId, LotFill)], chun
         let lot = &w.lots[*id];
         let from = fill.positions.len();
         fill_lot(&mut fill, lot, *f, pal, lot_wear(w, lot, *f));
-        if matches!(*f, LotFill::Gravel | LotFill::Apron) {
+        // [r15-hillside] Earth too: a hillside lot is cut out of the
+        // ground mesh to its pad (`nd_procgen::lot_ground`).
+        if *f != LotFill::None {
             set_on_pad(w, *id, &mut fill.positions[from..]);
         }
     }
@@ -346,8 +348,11 @@ pub(super) fn set_on_pad(w: &World, lot: LotId, verts: &mut [[f32; 3]]) {
         return;
     }
     let pad = w.lots.get(lot).and_then(|l| l.building).and_then(|b| w.buildings.get(b)).map_or_else(|| w.lot_pad(lot), |b| w.lot_pad(b.lot));
+    // [r15-hillside] Behind a step, on the back pad.
+    let floor = nd_procgen::lot_ground::lot_floor(w, lot).filter(|f| f.0 == pad).and_then(|f| f.1);
     for p in verts {
-        p[1] += pad - super::lift::lie_height(w, SVec2::new(p[0], p[2]));
+        let q = SVec2::new(p[0], p[2]);
+        p[1] += floor.map_or(pad, |st| st.pad_at(q, pad)) - super::lift::lie_height(w, q);
     }
 }
 
@@ -642,7 +647,7 @@ mod lot_fill_tests {
             let f = fill_of(&w, id, lot, &holed);
             let from = whole.positions.len();
             fill_lot(&mut whole, lot, f, &pal, lot_wear(&w, lot, f));
-            if matches!(f, LotFill::Gravel | LotFill::Apron) {
+            if f != LotFill::None {
                 set_on_pad(&w, id, &mut whole.positions[from..]);
             }
         }

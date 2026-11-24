@@ -174,9 +174,31 @@ pub fn install() {
     INSTALLED.store(true, Ordering::SeqCst);
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        // [r15-polish] A panic `contain` catches is not a crash: one line
+        // on stderr, no crash log.
+        if CONTAINING.with(|c| c.get()) {
+            let at = info.location().map_or_else(|| "unknown".to_string(), |l| format!("{}:{}", l.file(), l.line()));
+            eprintln!("contained panic at {at}: {}", message(info));
+            return;
+        }
         write_log(&panic_text(info));
         default(info);
     }));
+}
+
+thread_local! {
+    /// Set while `contain` runs `f` on this thread.
+    static CONTAINING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// [r15-polish] Run `f`, catching a panic in it instead of letting it
+/// take the game down: for third-party code that can panic on a bad
+/// device (gilrs, the gamepad library). `Err` holds the panic's message.
+pub fn contain<R>(f: impl FnOnce() -> R) -> Result<R, String> {
+    let was = CONTAINING.with(|c| c.replace(true));
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    CONTAINING.with(|c| c.set(was));
+    r.map_err(|p| p.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| p.downcast_ref::<String>().cloned()).unwrap_or_else(|| "(no message)".to_string()))
 }
 
 /// Note a save or load (`what` "saving", "loaded" and so on) for the next
@@ -204,6 +226,15 @@ impl Plugin for CrashPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_contained_panic_is_caught() {
+        assert_eq!(contain(|| 7), Ok(7));
+        let v: Vec<u8> = Vec::new();
+        let r = contain(|| v[0]);
+        assert!(r.is_err_and(|m| m.contains("index out of bounds")));
+        assert!(!CONTAINING.with(|c| c.get()));
+    }
 
     #[test]
     fn logs_rotate_keeping_the_last_few() {

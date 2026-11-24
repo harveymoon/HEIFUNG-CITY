@@ -31,6 +31,9 @@ winit = { version = "0.30", default-features = false }
 # [viewer] The building viewer shows a picture from the Inspirations folder
 # beside the building (jpg, png and webp).
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+# [r15-polish] Gamepads (the version Bevy's gilrs plugin uses), driven by
+# `gamepad.rs` so a gilrs panic is contained.
+gilrs = "0.11"
 
 [dev-dependencies]
 # [fonts] The glyph-coverage test reads the fonts' character maps.

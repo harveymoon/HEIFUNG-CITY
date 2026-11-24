@@ -125,7 +125,9 @@ pub(super) fn lighting(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(b) = opt_bool(cmd, "weather")? {
         l.show_weather = b;
     }
-    Ok(json!({ "follow_clock": l.follow_clock, "hour": l.hour, "heat_vision": l.heat, "weather": l.show_weather }))
+    let hour = l.shown_hour(&ctx.sim.world.clock);
+    let l = &ctx.lighting;
+    Ok(json!({ "follow_clock": l.follow_clock, "hour": hour, "pinned_hour": l.hour, "heat_vision": l.heat, "weather": l.show_weather }))
 }
 
 pub(super) fn heat_vision(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {

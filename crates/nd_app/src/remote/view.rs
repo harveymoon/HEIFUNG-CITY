@@ -454,7 +454,7 @@ pub fn building_row(w: &World, id: BuildingId, b: &Building) -> Value {
         "homes": b.homes, "residents": b.residents.len(), "jobs": b.jobs, "workers": b.workers.len(),
         "under_construction": b.construction.is_some() && !b.being_demolished(), "being_demolished": b.demolition.is_some(),
         "business": b.business.as_ref().map(|z| z.kind.label()), "plant": b.plant.map(plant_name),
-        "depot": b.depot, "rail": b.rail.as_ref().map(|r| rail_name(r.kind)), "derelict": b.is_derelict(),
+        "depot": b.depot, "rail": b.rail.as_ref().map(|r| rail_name(r.kind)), "dilapidated": b.is_derelict(),
         "service": b.service.map(|s| format!("{}:{}", s.kind.key(), tier_key(s.tier))), "burning": w.services.is_burning(id),
         // [tenants] units let to other businesses, and the building a tenant rents in
         "tenants": w.tenants_of(id).len(), "units": b.units.len(), "units_vacant": b.vacant_units(),
@@ -583,7 +583,7 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         "under_construction": construction,
         "demolition": demolition,
         "look": b.look.map(|l| l.label()), "district": w.district_of_lot(b.lot).map(|d| d.name.clone()),
-        "land_value": round(b.land_value), "rent": round(b.rent), "wage": round(b.wage()), "condition": round(b.condition), "derelict": b.is_derelict(),
+        "land_value": round(b.land_value), "rent": round(b.rent), "wage": round(b.wage()), "condition": round(b.condition), "dilapidated": b.is_derelict(),
         "homes": b.homes, "jobs": b.jobs, "visitors": b.visitors,
         "residents": people(&b.residents), "workers": people(&b.workers),
         "footfall_today": lot.map(|l| l.footfall_today), "footfall_hour": lot.map(|l| l.footfall_hour), "car_access": lot.map(|l| l.car_access()),

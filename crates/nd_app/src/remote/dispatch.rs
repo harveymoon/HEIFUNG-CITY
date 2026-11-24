@@ -789,7 +789,7 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("what", "citizens|buildings|lots|parcels|cars|trains|drones|routes|gestures"),
         ("near", "[x,y]"),
         ("radius", "m (default 100 with near)"),
-        ("filter", "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind"),
+        ("filter", "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,dilapidated (old name derelict); lots: land_use,vacant,park,min_area; cars/trains: kind"),
         ("limit", "default 50"),
     ] },
     Cmd { name: "inspect", aliases: &[], effect: Read, run: inspect::inspect, help: &[
