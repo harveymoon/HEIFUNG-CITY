@@ -2763,6 +2763,15 @@ trait MindProvider {
   `ND_SIM_THREAD=0`, a window writing the city every frame or `ND_CHUNK_JOBS=0`, layers are
   regenerated on the main thread within 6 ms a frame as before. `status.render.chunks` counts
   what redrew chunks (by cause), their cost and the lag from change to screen.
+- The world copy and the load [r16-speed]: the sim thread hands the screen a copy of the city after
+  every batch (`World::exact_copy`, `nd_sim/src/world/copy.rs`): the same exact clone as
+  `versioned::exact_clone`, with the biggest fields cloned on three scoped threads beside the rest
+  (35 ms on a 17k city, 62 ms at 36k; was 100 and 207 on one core). Citizens' memory lines are a
+  shared `Arc<str>`, saved as plain strings. After a load the ground tiles and their meshes
+  (`LandscapeTiles::build_tiles`, `mesh_util::to_meshes`) and the lift of every newly spawned flat
+  mesh onto the ground (`lift_spawned`) run on up to 8 threads; the results are the same as one by
+  one. Every `sync_*` render system has a `frame_stats` span. `clone_probe` (nd_sim) and
+  `load_rebuild_probe` (nd_procgen) time the copy and the ground's rebuild on a save.
 - Taking in a batch [r11-adopt-frames]: the renderers react to each world the sim thread hands
   over by redrawing only what changed. Skid row and the trash (`render/society.rs`) and murals and
   gardens (`render/social.rs`) are merged per 512 m cell from pieces kept as built; a cell whose
