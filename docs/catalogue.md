@@ -27,6 +27,128 @@ The old methods (`Resource::label`, `base_price`, `BusinessKind::recipe`, `hours
 still exist and keep their signatures; they are one-line reads of the catalogue, so no caller had to
 change. Enum variants, their order and serde are unchanged: saves load as before.
 
+## Every good and every kind of business
+
+Generated from `catalogue.rs` and checked by the test
+`catalogue::tests::catalogue_md_lists_every_good_and_kind` [r16-docs], so this list cannot drift:
+after adding a good or a kind (or changing which goods a recipe names) run
+`ND_BLESS_DOCS=1 cargo test -p nd_sim catalogue_md_lists_every_good_and_kind` to rewrite it.
+"Made by" is `catalogue::makers` (recipe outputs and `local_from`); "Grows on" is the land-use
+lists (`INDUSTRIAL`, `COMMERCIAL`, `ENTERTAINMENT` = leisure, `CIVIC`); "its own system" kinds are
+opened by a pressure, placed by the player or started by their subsystem (ports, transit, food
+trucks, builders).
+
+<!-- doc-guard: catalogue lists start -->
+| Good | Label | Category | Unit | Made by |
+|---|---|---|---|---|
+| `Produce` | produce | farm | crates | VertFarm |
+| `Grain` | grain | farm | t | GrainFarm |
+| `Flour` | flour | food | pallets | Mill |
+| `BakedGoods` | baked goods | food | crates | Bakery, Cafe, Diner, NoodleBar, PizzaPlace, FastFood, FoodHall, StreetFood, BubbleTea, FoodTruck |
+| `Meat` | meat | food | crates | ProteinVat, FishPlant, Slaughterhouse, FishStickFactory |
+| `Dairy` | dairy | food | crates | Dairy |
+| `Groceries` | groceries | consumer | pallets | Grocery, FishMarket |
+| `Parts` | parts | manufactured | pallets | Fab |
+| `Electronics` | electronics | manufactured | pallets | Assembly |
+| `Goods` | goods | consumer | pallets | GadgetShop, Bookshop, BuildersMerchant |
+| `Crude` | crude oil | petrochemical | kL | OilWell |
+| `Fuel` | fuel | petrochemical | kL | Refinery |
+| `Plastics` | plastics | petrochemical | t | Refinery, ChemicalWorks |
+| `Fish` | fish | seafood | crates | Fishery, FishingPort |
+| `Livestock` | livestock | farm | head | CowFarm, ChickenFarm, Feedlot |
+| `Ore` | ore | minerals | t | StripMine |
+| `Fillets` | fish fillets | seafood | crates | FishGutting |
+| `Art` | art | culture | pieces | ArtStudio |
+| `Metal` | metal | minerals | t | Smelter, ScrapYard |
+| `Cement` | cement | building material | t | - |
+| `Aggregate` | sand and gravel | building material | t | StripMine |
+| `Bricks` | bricks and blocks | building material | t | - |
+| `Glass` | glass | building material | t | - |
+| `Steel` | structural steel | building material | t | Smelter, ScrapYard |
+| `Rebar` | rebar | building material | t | Smelter, ScrapYard |
+| `Timber` | timber | building material | t | - |
+| `Roofing` | roofing | building material | pallets | - |
+| `Insulation` | insulation | building material | pallets | Refinery, ChemicalWorks |
+| `Pipe` | pipe and plumbing | building material | pallets | Refinery, ChemicalWorks |
+| `Wiring` | wiring and electrical | building material | crates | Fab |
+| `Fixtures` | fixtures and fittings | building material | crates | Fab |
+| `Paint` | paint | building material | crates | Refinery, ChemicalWorks |
+
+| Kind | API key | Grows on | Uses | Makes |
+|---|---|---|---|---|
+| `VertFarm` | `vertical_farm` | industrial | - | Produce |
+| `GrainFarm` | `grain_farm` | industrial | - | Grain |
+| `ProteinVat` | `protein_vat` | industrial | Grain | Meat |
+| `Dairy` | `dairy` | industrial | Grain | Dairy |
+| `Mill` | `mill` | industrial | Grain | Flour |
+| `Fab` | `parts_fab` | industrial | - | Parts |
+| `Assembly` | `assembly_plant` | industrial | Parts | Electronics |
+| `Grocery` | `grocery` | commercial | Produce, Flour, Meat, Dairy | Groceries |
+| `Bakery` | `bakery` | commercial | Flour | BakedGoods |
+| `GadgetShop` | `gadget_shop` | commercial | Electronics | Goods |
+| `Venue` | `venue` | leisure | Groceries | - |
+| `Office` | `office` | commercial, civic | - | - |
+| `Parking` | `parking` | - (its own system) | - | - |
+| `OilWell` | `oil_well` | industrial | - | Crude |
+| `Refinery` | `refinery` | industrial | Crude | Fuel, Plastics |
+| `ContainerYard` | `container_yard` | industrial | Fuel | - |
+| `FleetLot` | `truck_and_bus_lot` | industrial | Fuel | - |
+| `Fishery` | `fishery` | industrial | - | Fish |
+| `FishPlant` | `fish_processing_plant` | industrial | Fish | Meat |
+| `TowYard` | `tow_company` | industrial | - | - |
+| `Hotel` | `hotel` | - (its own system) | Groceries | - |
+| `TaxiCompany` | `taxi_company` | - (its own system) | - | - |
+| `CargoHub` | `cargo_hub` | - (its own system) | - | - |
+| `Mechanic` | `car_repair_shop` | - (its own system) | - | - |
+| `CarDealer` | `car_dealership` | - (its own system) | - | - |
+| `TrashCompany` | `trash_company` | industrial | - | - |
+| `BikeShop` | `bike_shop` | - (its own system) | - | - |
+| `CowFarm` | `cattle_farm` | industrial | Grain | Livestock |
+| `ChickenFarm` | `chicken_farm` | industrial | Grain | Livestock |
+| `Slaughterhouse` | `slaughterhouse` | industrial | Livestock | Meat |
+| `StripMine` | `strip_mine` | industrial | - | Ore |
+| `Marina` | `marina` | - (its own system) | - | - |
+| `FishingPort` | `fishing_port` | - (its own system) | - | Fish |
+| `FishGutting` | `fish_gutting_shed` | industrial | Fish | Fillets |
+| `FishStickFactory` | `fishstick_factory` | industrial | Fillets | Meat |
+| `FishMarket` | `fish_market` | - (its own system) | Fish | Groceries |
+| `SeafoodRestaurant` | `seafood_restaurant` | - (its own system) | Fillets | - |
+| `GolfRange` | `golf_driving_range` | - (its own system) | - | - |
+| `ArtStudio` | `artists_studios` | - (its own system) | - | Art |
+| `Gallery` | `gallery` | - (its own system) | Art | - |
+| `Smelter` | `smelter` | industrial | Ore, Fuel | Metal |
+| `Feedlot` | `factory_farm` | industrial | Grain | Livestock |
+| `ChemicalWorks` | `chemical_works` | industrial | Crude | Plastics |
+| `BeachResort` | `beach_resort` | - (its own system) | Groceries | - |
+| `PierRestaurant` | `pier_restaurant` | - (its own system) | Groceries | - |
+| `BeachBar` | `beach_bar` | - (its own system) | Groceries | - |
+| `BoatRental` | `boat_rental` | - (its own system) | Fuel | - |
+| `Cafe` | `cafe` | - (its own system) | Flour, Dairy | BakedGoods |
+| `Bookshop` | `bookshop` | - (its own system) | Plastics | Goods |
+| `ScrapYard` | `scrap_yard` | - (its own system) | - | Metal |
+| `Diner` | `diner` | commercial | Meat, Dairy, Flour, Produce | BakedGoods |
+| `NoodleBar` | `noodle_bar` | commercial, leisure | Flour, Meat, Produce | BakedGoods |
+| `PizzaPlace` | `pizza_place` | commercial | Flour, Dairy, Meat, Produce | BakedGoods |
+| `FastFood` | `fastfood_drivethrough` | commercial | Meat, Flour, Produce | BakedGoods |
+| `FoodHall` | `food_hall` | commercial | Groceries, Meat, Produce | BakedGoods |
+| `StreetFood` | `streetfood_stalls` | leisure | Meat, Produce, Flour | BakedGoods |
+| `FineDining` | `finedining_restaurant` | leisure | Meat, Produce, Dairy | - |
+| `BubbleTea` | `bubbletea_bar` | commercial | Dairy, Produce | BakedGoods |
+| `Bar` | `bar` | leisure | Groceries | - |
+| `KaraokeBox` | `karaoke_box` | leisure | Groceries | - |
+| `Cinema` | `cinema` | leisure | Groceries | - |
+| `Theatre` | `theatre` | leisure | Groceries | - |
+| `ConcertHall` | `livemusic_hall` | leisure | Groceries | - |
+| `BowlingAlley` | `bowling_alley` | leisure | Groceries | - |
+| `Arcade` | `arcade` | leisure | Electronics | - |
+| `Gym` | `gym` | commercial | - | - |
+| `ComedyClub` | `comedy_club` | leisure | Groceries | - |
+| `FreightForwarder` | `freight_forwarder` | - (its own system) | Fuel | - |
+| `Contractor` | `building_contractor` | - (its own system) | - | - |
+| `BuildersMerchant` | `builders_merchant` | - (its own system) | Plastics | Goods |
+| `FoodTruck` | `food_truck` | - (its own system) | Meat, Produce, Flour, Dairy | BakedGoods |
+<!-- doc-guard: catalogue lists end -->
+
 ## Inventory: fact, where it was, where it is now
 
 | Fact | Was | Now |

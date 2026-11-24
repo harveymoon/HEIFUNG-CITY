@@ -66,7 +66,7 @@ fn grid(s: &LandSurvey, values: Vec<f32>) -> HeatGrid {
 
 /// The wash for one layer over the survey.
 pub(super) fn land_mesh(w: &World, s: &LandSurvey, layer: LandLayer, weights: &[[f32; nd_sim::IndustryKind::COUNT]]) -> nd_procgen::MeshData {
-    let height = |p: nd_sim::Vec2| if w.landscape.is_flat() { 0.0 } else { w.ground_height(p) };
+    let height = |p: nd_sim::Vec2| if w.landscape.is_flat() { 0.0 } else { nd_procgen::drawn_ground::height(w, p) };
     match layer {
         LandLayer::BestIndustry => {
             // Each corner takes the favourite kind's hue, as solid as its lead.

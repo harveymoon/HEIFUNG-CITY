@@ -291,7 +291,7 @@ pub(super) fn sync_steam(
                 if !nd_procgen::climate::vent_clear(w, p) {
                     continue;
                 }
-                let y = w.ground_height(p);
+                let y = nd_procgen::drawn_ground::height(w, p);
                 let vent = state.vents.len();
                 state.vents.push(Vec3::new(p.x, y, p.y));
                 for k in 0..per {

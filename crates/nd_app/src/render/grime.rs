@@ -180,7 +180,7 @@ pub(super) fn sync_grime(
                 }
             }
             let flat = w.landscape.is_flat();
-            let height = |p: SVec2| if flat { 0.0 } else { w.ground_height(p) };
+            let height = |p: SVec2| if flat { 0.0 } else { nd_procgen::drawn_ground::height(&w, p) };
             let m = g.mesh_by(STAIN_Y, |k| ground_stain_color(g.values[k]), |k| g.values[k] < 0.03, height);
             if !m.is_empty() {
                 let mat = state.stain_material.clone().unwrap_or_default();

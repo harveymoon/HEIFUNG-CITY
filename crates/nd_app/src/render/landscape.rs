@@ -168,6 +168,7 @@ pub(super) fn sync_landscape(
         state.water_signature = None;
         state.tiles = None;
         state.tile_ents.clear();
+        nd_procgen::drawn_ground::clear();
         // No terrain or water to draw, but viaducts and flyovers the
         // player built stand on the flat ground.
         if w.relief {
@@ -197,6 +198,12 @@ pub(super) fn sync_landscape(
             state.tile_ents = (0..tiles.len()).map(|t| spawn_tile(&mut commands, &mut meshes, tiles.mesh(t))).collect();
             state.tiles = Some(tiles);
         }
+    }
+    // [r16-ground] What is drawn is what things are set on
+    // (`ND_SIM_GROUND=1`: on the sim's ground, as before, to compare).
+    match &state.tiles {
+        Some(tiles) if std::env::var_os("ND_SIM_GROUND").is_none() => nd_procgen::drawn_ground::install(tiles.drawn(w)),
+        _ => nd_procgen::drawn_ground::clear(),
     }
     if state.water_signature != Some(map) || fresh {
         state.water_signature = Some(map);

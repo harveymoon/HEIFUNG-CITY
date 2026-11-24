@@ -2977,6 +2977,75 @@ mod tests {
         assert_eq!(build_type(&SiteFacts { boxes: true, ..f(LandUse::Residential, 3, Tier::Low, None) }), BuildType::BoxStack);
     }
 
+    /// [r16-docs] The two lists in `docs/catalogue.md` ("Every good and
+    /// every kind of business"), as this catalogue makes them.
+    fn catalogue_md_lists() -> String {
+        let names = |ks: &mut dyn Iterator<Item = BusinessKind>| {
+            let v: Vec<String> = ks.map(|k| format!("{k:?}")).collect();
+            if v.is_empty() { "-".to_string() } else { v.join(", ") }
+        };
+        let goods = |gs: &[(Resource, f32)]| {
+            let v: Vec<String> = gs.iter().map(|(r, _)| format!("{r:?}")).collect();
+            if v.is_empty() { "-".to_string() } else { v.join(", ") }
+        };
+        let mut s = String::from("| Good | Label | Category | Unit | Made by |
+|---|---|---|---|---|
+");
+        for g in GOODS.iter() {
+            s += &format!("| `{:?}` | {} | {} | {} | {} |
+", g.resource, g.label, g.category.label(), g.unit.label(), names(&mut makers(g.resource)));
+        }
+        s += "
+| Kind | API key | Grows on | Uses | Makes |
+|---|---|---|---|---|
+";
+        for b in BUSINESSES.iter() {
+            let mut on: Vec<&str> = Vec::new();
+            for (list, name) in [(INDUSTRIAL, "industrial"), (COMMERCIAL, "commercial"), (ENTERTAINMENT, "leisure"), (CIVIC, "civic")] {
+                if list.contains(&b.kind) {
+                    on.push(name);
+                }
+            }
+            let on = if on.is_empty() { "- (its own system)".to_string() } else { on.join(", ") };
+            s += &format!("| `{:?}` | `{}` | {} | {} | {} |
+", b.kind, b.kind.key(), on, goods(b.inputs), goods(b.outputs));
+        }
+        s
+    }
+
+    /// [r16-docs] Doc guard: `docs/catalogue.md` lists every good and every
+    /// kind of business, as the catalogue has them, between its
+    /// `doc-guard` markers. After adding a good or a kind (or changing a
+    /// recipe's goods), rewrite the lists with
+    /// `ND_BLESS_DOCS=1 cargo test -p nd_sim catalogue_md_lists_every_good_and_kind`.
+    #[test]
+    fn catalogue_md_lists_every_good_and_kind() {
+        const START: &str = "<!-- doc-guard: catalogue lists start -->
+";
+        const END: &str = "<!-- doc-guard: catalogue lists end -->";
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/catalogue.md");
+        let doc = std::fs::read_to_string(&path).expect("docs/catalogue.md").replace("
+", "
+");
+        let a = doc.find(START).expect("docs/catalogue.md has no doc-guard start marker") + START.len();
+        let b = a + doc[a..].find(END).expect("docs/catalogue.md has no doc-guard end marker");
+        let want = catalogue_md_lists();
+        if doc[a..b] != want {
+            if std::env::var_os("ND_BLESS_DOCS").is_some() {
+                std::fs::write(&path, format!("{}{}{}", &doc[..a], want, &doc[b..])).expect("write docs/catalogue.md");
+                return;
+            }
+            panic!("docs/catalogue.md's lists of goods and kinds are out of date; run with ND_BLESS_DOCS=1 to rewrite them. Wanted:
+{want}");
+        }
+        for r in Resource::ALL {
+            assert!(doc.contains(&format!("| `{r:?}` |")), "{r:?} not listed");
+        }
+        for k in BusinessKind::ALL {
+            assert!(doc.contains(&format!("| `{k:?}` |")), "{k:?} not listed");
+        }
+    }
+
     /// [r14-materials] The table of example bills, for the docs and the
     /// report: `cargo test -p nd_sim print_example_bills -- --nocapture`.
     #[test]

@@ -112,7 +112,10 @@ Every example is the POST body; the reply always carries `"ok"`.
 `add_interchange` (`interchange`); `airlift` (`chinook`); `audio` (`sound`); `building_notes` (`notes`); `cable` (`cable_car`, `gondola`, `cablecar`); `campus` (`university`); `city_name` (`city_identity`); `cleanup` (`clean_up`); `committee_meeting` (`meeting`); `connectivity` (`stranded`, `no_route`); `containers` (`boxes`); `corps` (`corp`, `megacorp`); `dirt_at` (`contamination_at`); `district` (`districts`); `estate` (`land_market`); `favourite` (`favorite`); `foot_wear` (`worn_paths`); `frame_stats` (`frames`); `get` (`dump`); `graphics` (`quality`); `grounds_junctions` (`park_junctions`); `heat_vision` (`heat`); `islands` (`ferry_islands`); `ledger` (`money`, `books`); `level_crossings` (`level_crossing`, `crossings`, `rail_crossings`); `lot_memory` (`what_stood_here`, `lot_history`); `megablock` (`megablocks`, `arcology`); `photo_mode` (`photo`); `pressure` (`pressures`); `pressure_where` (`show_where`); `replay` (`trip_replay`); `road_use` (`set_road`, `road_edit`); `roads` (`road_condition`, `road_budget`); `shore` (`waterfront`); `skyline` (`towers`, `height_limit`); `stadium_game` (`game_day`); `street_events` (`nights`); `subway` (`metro`); `talk` (`chat`); `taxes` (`tax`); `tiles` (`land_tiles`); `timetable` (`timetables`, `schedule`); `tolls` (`toll`); `tourism` (`tourists`); `tow_car` (`tow`, `boot`); `food_trucks` (`trucks`, `street_vendors`); `under_decks` (`undercroft`, `bays`); `walk_crossings` (`crossing_use`); `walk_networks` (`walknets`, `pedestrian_networks`); `yards` (`out_front`, `yard_props`); `zoom_to` (`zoom`).
 
 `help` is checked against the dispatcher by a unit test (`remote::dispatch_tests`): every command
-it runs is documented in `help` or named as an alias, and nothing else is.
+it runs is documented in `help` or named as an alias, and nothing else is. [r16-docs] And this file
+against `help`: `remote_md_documents_every_command_and_alias` fails when a command is not named here
+(in backticks, or as a `###` heading) or when the list of other names above differs from the registry's
+aliases. Add the command's row (and its aliases above) when you add one.
 
 ### Overview and time
 

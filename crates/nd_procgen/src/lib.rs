@@ -24,6 +24,8 @@ pub mod hash;
 pub mod hill_plinth;
 /// [p2-look] Holes cut through the ground (a strip mine's pit).
 pub mod holes;
+/// [r16-ground] The ground as drawn, to set things on.
+pub mod drawn_ground;
 /// [r15-hillside] Lots cut out of the coarse ground mesh, floored at their
 /// pads, their sides walled or banked.
 pub mod lot_ground;

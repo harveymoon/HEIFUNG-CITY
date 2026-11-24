@@ -1514,6 +1514,44 @@ mod dispatch_tests {
         }
     }
 
+    /// [r16-docs] Doc guard: `docs/REMOTE.md` documents every command
+    /// `help` lists (its name in backticks, as `name`, `name {...}` or
+    /// `name field`, or as a `###` heading), and its "Other names"
+    /// paragraph lists exactly the registry's aliases, each under its
+    /// command. Round 13 found 9 commands and 27 aliases missing from it.
+    #[test]
+    fn remote_md_documents_every_command_and_alias() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/REMOTE.md");
+        let doc = std::fs::read_to_string(&path).expect("docs/REMOTE.md").replace("
+", "
+");
+        let documented = |n: &str| {
+            [format!("`{n}`"), format!("`{n} "), format!("`{n}{{")].iter().any(|p| doc.contains(p.as_str()))
+                || doc.lines().any(|l| l.starts_with('#') && l.trim_start_matches('#').split_whitespace().next() == Some(n))
+        };
+        let missing: Vec<&str> = COMMANDS.iter().map(|c| c.name).filter(|n| !documented(n)).collect();
+        assert!(missing.is_empty(), "commands missing from docs/REMOTE.md: {missing:?}");
+        // The "Other names" paragraph: `command` (`alias`, `alias`); ...
+        let start = doc.find("**Other names.**").expect("REMOTE.md has an \"Other names\" paragraph");
+        let para = &doc[start..start + doc[start..].find("
+
+").unwrap_or(doc.len() - start)];
+        let mut listed: Vec<(String, String)> = Vec::new();
+        for entry in para.split(';') {
+            let Some(open) = entry.rfind(" (") else { continue };
+            let Some(cmd) = entry[..open].rsplit('`').nth(1) else { continue };
+            for alias in entry[open..].split('`').skip(1).step_by(2) {
+                listed.push((alias.to_string(), cmd.to_string()));
+            }
+        }
+        listed.sort();
+        let mut want: Vec<(String, String)> = COMMANDS.iter().flat_map(|c| c.aliases.iter().map(|a| (a.to_string(), c.name.to_string()))).collect();
+        want.sort();
+        let extra: Vec<_> = listed.iter().filter(|x| !want.contains(x)).collect();
+        let absent: Vec<_> = want.iter().filter(|x| !listed.contains(x)).collect();
+        assert!(extra.is_empty() && absent.is_empty(), "REMOTE.md \"Other names\" vs the registry (alias, command): not in the registry {extra:?}; missing from the docs {absent:?}");
+    }
+
     /// [photo] `photo_mode` sets, toggles and reports the flag the UI's
     /// drawing reads; a bad `size` is refused and changes nothing; with no
     /// window (as here) the reply's `window` is null.
