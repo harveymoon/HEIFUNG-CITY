@@ -25,7 +25,8 @@ fn main() {
     if std::env::var("ND_DAY").is_ok() {
         // A day run from the save, with the water kept open and as before
         // r15-water: population and treasury.
-        for keep in [false, true] {
+        let modes = if std::env::var("ND_DAY_SAME").is_ok() { [true, true] } else { [false, true] };
+        for keep in modes {
             nd_sim::landscape::KEEP_WATER_OPEN.store(keep, std::sync::atomic::Ordering::Relaxed);
             let mut w = World::read_save(path).expect("load");
             let mut minds = nd_minds::RuleBasedMind::default();

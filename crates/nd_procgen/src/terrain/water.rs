@@ -193,6 +193,7 @@ mod water_tests {
         let c = super::super::heightfield::LandColours::for_climate(w.landscape.params.climate, &Palette::default());
         let spot = |d: f32| super::super::heightfield::GroundSpot { v: 0.5, d, hot: None };
         let lum = |c: [f32; 3]| c[0] + c[1] + c[2];
-        assert!(lum(c.rgb(spot(1.0), 0.3)) < 0.8 * lum(c.rgb(spot(13.0), 1.6)));
+        assert!(lum(c.rgb(spot(1.0), 0.3)) < 0.8 * lum(c.rgb(spot(1.0), 1.6)), "low ground at the water darker than the bank");
+        assert!(lum(c.rgb(spot(13.0), 0.3)) > 0.9 * lum(c.rgb(spot(13.0), 1.6)), "dry away from the water");
     }
 }

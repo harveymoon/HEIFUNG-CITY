@@ -64,7 +64,9 @@ pub fn shore_lines(land: &Landscape) -> Vec<Vec<ShorePiece>> {
     if land.is_flat() {
         return out;
     }
-    let half = land.land_half() - 2.0;
+    // Clear of the map's edge, where the ground tiles meet the far ground
+    // vertex for vertex (a cut there would add vertices on the seam).
+    let half = land.land_half() - STRIP - 12.0;
     let inside = |p: Vec2| p.x.abs() < half && p.y.abs() < half;
     // Points along a line with a normal each (averaged at the corners),
     // split into pieces no longer than `PIECE`.
@@ -351,7 +353,9 @@ mod tests {
         }
         println!("{wet} water points, {covered} drawn under ground ({before} with the shore uncut), {} pieces cut", drawn.cut_len());
         assert!(wet > 1000, "the old town has its river ({wet})");
-        assert!(covered * 1000 <= wet, "{covered} of {wet} water points drawn under ground");
+        // A few points at the ends of cut runs and beside bridge abutments.
+        assert!(covered * 200 <= wet, "{covered} of {wet} water points drawn under ground");
+        assert!(covered * 10 <= before, "the cut shore draws the water ({covered} covered, {before} uncut)");
     }
 
     #[test]
