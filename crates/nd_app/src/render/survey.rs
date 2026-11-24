@@ -140,6 +140,7 @@ pub(super) fn sync_land_layer(
     mut st: Local<SurveyState>,
     q: Query<Entity, With<LandLayerTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_land_layer");
     let w = &sim.world;
     let Some(layer) = overlays.land else {
         if st.shown.take().is_some() {

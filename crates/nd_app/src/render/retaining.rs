@@ -26,6 +26,7 @@ pub(super) fn sync_retaining(
     existing: Query<Entity, With<RetainingTag>>,
     mut last: Local<Option<u64>>,
 ) {
+    let _t = crate::frame_stats::span("sync_retaining");
     let w = &sim.world;
     let mut h = DefaultHasher::new();
     for r in &w.ground.retaining {

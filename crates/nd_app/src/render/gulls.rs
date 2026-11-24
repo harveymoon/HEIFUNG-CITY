@@ -49,6 +49,7 @@ pub(super) fn gulls_for(fill: f32) -> usize {
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn sync_gulls(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, sim: Res<Sim>, time: Res<Time>, mut st: Local<GullState>, mut birds: Query<(&Gull, &mut Transform)>) {
+    let _t = crate::frame_stats::span("sync_gulls");
     let w = &sim.world;
     if st.mesh.is_none() {
         // A gull from above: a thin swept wing and a body.

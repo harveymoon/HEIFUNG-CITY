@@ -470,6 +470,7 @@ pub(super) fn sync_foot_wear(
     mut state: Local<WearState>,
     tagged: Query<Entity, With<FootWearTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_foot_wear");
     // `ND_FOOT_WEAR=0` draws none (to compare frame times).
     if std::env::var("ND_FOOT_WEAR").is_ok_and(|v| v == "0") {
         return;
@@ -570,6 +571,7 @@ pub(super) fn sync_foot_wear_layer(
     time: Res<Time>,
     mut state: Local<WearState>,
 ) {
+    let _t = crate::frame_stats::span("sync_foot_wear_layer");
     let on = overlays.foot_wear && !lighting.heat;
     let now = time.elapsed_secs();
     if !on {

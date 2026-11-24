@@ -68,6 +68,7 @@ pub(super) fn district_mesh(grid: &DistrictGrid, colour_of: impl Fn(u16) -> Opti
 }
 
 pub(super) fn sync_district_layer(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, mats: Res<Materials>, overlays: Res<Overlays>, mut state: ResMut<DistrictRender>, q: Query<Entity, With<DistrictLayerTag>>) {
+    let _t = crate::frame_stats::span("sync_district_layer");
     let w = &sim.world;
     if !overlays.districts {
         if state.shown.is_some() {
@@ -111,6 +112,7 @@ pub(super) fn sync_tourists(
     mut images: ResMut<Assets<Image>>,
     mut q: Query<(&mut Transform, &mut Visibility, &mut Mesh3d), With<TouristTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_tourists");
     let w = &sim.world;
     if sim.full_rebuild {
         // Ids are reused by a loaded world.

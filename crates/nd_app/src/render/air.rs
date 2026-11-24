@@ -86,6 +86,7 @@ pub(super) fn sync_air(
     mut q: Query<(&mut Transform, &mut Visibility), With<AirTag>>,
     mut spots: Query<&mut SpotLight, With<AirTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_air");
     let w = &sim.world;
     let st = &mut state.0;
     if sim.full_rebuild {

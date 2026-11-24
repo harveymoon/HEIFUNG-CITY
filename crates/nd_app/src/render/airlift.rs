@@ -172,6 +172,7 @@ pub(super) fn sync_airlifts(
     mut load_mats: Local<HashMap<u8, Handle<StandardMaterial>>>,
     mut q: Query<(&mut Transform, &mut Visibility), With<AirliftTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_airlifts");
     let w = &sim.world;
     let lifts = w.airlifts();
     if lifts.is_empty() && drawn.is_empty() {

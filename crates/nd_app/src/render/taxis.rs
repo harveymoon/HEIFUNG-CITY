@@ -25,6 +25,7 @@ pub(super) struct TaxiRender {
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn sync_taxis(mut commands: Commands, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, mut tr: ResMut<TaxiRender>, mut vr: ResMut<VehicleRender>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    let _t = crate::frame_stats::span("sync_taxis");
     let w = &sim.world;
     let companies = w.taxi_companies();
     let key = (w.clock.tick, w.taxis.cabs.len(), companies.len());

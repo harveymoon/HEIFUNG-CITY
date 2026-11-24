@@ -104,6 +104,7 @@ pub(super) fn sync_stunts(
     mut vr: ResMut<VehicleRender>,
     game: Res<GameAssets>,
 ) {
+    let _t = crate::frame_stats::span("sync_stunts");
     let w = &sim.world;
     if sim.full_rebuild {
         despawn_all(&mut commands, &mut st);

@@ -132,6 +132,7 @@ pub(super) fn sync_lamp_lights(
     mut near: Local<Vec<(f32, Vec3)>>,
     mut spawned: Local<usize>,
 ) {
+    let _t = crate::frame_stats::span("sync_lamp_lights");
     let want = lamp_pool(stats.graphics.tier);
     if *spawned < want {
         for _ in *spawned..want {
@@ -413,6 +414,7 @@ pub(super) fn wet_look(wet: f32) -> (f32, f32) {
 }
 
 pub(super) fn sync_wet_roads(sim: Res<Sim>, time: Res<Time>, lighting: Res<Lighting>, mats: Res<Materials>, mut materials: ResMut<Assets<StandardMaterial>>, mut wet: Local<f32>, mut applied: Local<Option<i32>>) {
+    let _t = crate::frame_stats::span("sync_wet_roads");
     let rain = super::climate::precip_shown(&sim.world, &lighting).filter(|(k, _)| *k == "rain").map(|(_, i)| i).unwrap_or(0.0);
     let dt = time.delta_secs().min(0.25);
     *wet = if rain > *wet { (*wet + dt / WET_UP_S).min(rain.max(0.35)) } else { (*wet - dt / DRY_S).max(rain) };
@@ -511,6 +513,7 @@ pub(super) fn fog_short_of_edge((start, end): (f32, f32), edge: f32) -> (f32, f3
 }
 
 pub(super) fn sync_fog_reach(sim: Res<Sim>, look: Res<sky::SkyLook>, mode: Res<CameraMode>, lighting: Res<Lighting>, cams: Query<(&OrbitCamera, &GlobalTransform)>, mut fogs: Query<&mut DistanceFog, With<OrbitCamera>>) {
+    let _t = crate::frame_stats::span("sync_fog_reach");
     if lighting.heat {
         return;
     }

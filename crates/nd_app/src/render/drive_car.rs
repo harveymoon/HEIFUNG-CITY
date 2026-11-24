@@ -36,6 +36,7 @@ pub(super) fn sync_drive_car(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut q: Query<(&mut Transform, &mut Visibility), With<DriveCarTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_drive_car");
     let car = drive.car.filter(|_| *mode == crate::camera::CameraMode::Drive);
     let Some(car) = car else {
         for &e in &dr.ents {

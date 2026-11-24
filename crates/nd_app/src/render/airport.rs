@@ -745,6 +745,7 @@ pub(super) fn sync_airports(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut q: Query<(&mut Transform, &mut Visibility), With<AirportTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_airports");
     let w = &sim.world;
     let st = &mut *state;
     if sim.full_rebuild {

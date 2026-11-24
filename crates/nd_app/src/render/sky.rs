@@ -149,6 +149,7 @@ pub(super) fn sync_sky(
     mut dome: Query<(&Mesh3d, &mut Transform, &mut Visibility), With<SkyDome>>,
     mut painted: Local<Option<u64>>,
 ) {
+    let _t = crate::frame_stats::span("sync_sky");
     let Ok((mesh, mut tf, mut vis)) = dome.single_mut() else {
         let data = dome_mesh(&look);
         let mat = materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, fog_enabled: false, cull_mode: None, ..default() });

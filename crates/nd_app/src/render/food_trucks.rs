@@ -24,6 +24,7 @@ pub(super) struct FoodTruckRender {
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn sync_food_trucks(mut commands: Commands, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, mut fr: ResMut<FoodTruckRender>, mut vr: ResMut<VehicleRender>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    let _t = crate::frame_stats::span("sync_food_trucks");
     let w = &sim.world;
     let key = (w.clock.tick, w.food_trucks.trucks.len());
     if fr.key == Some(key) && !sim.full_rebuild {

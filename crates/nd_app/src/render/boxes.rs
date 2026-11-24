@@ -120,6 +120,7 @@ pub(super) fn stand(w: &nd_sim::World, faces: &[BoxFace], slots: &[nd_procgen::B
 /// what it holds changes.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn sync_depot_boxes(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, mut bm: ResMut<BoxMeshes>, mut state: ResMut<DepotBoxRender>) {
+    let _t = crate::frame_stats::span("sync_depot_boxes");
     let w = &sim.world;
     if sim.full_rebuild {
         for (_, d) in state.depots.drain() {

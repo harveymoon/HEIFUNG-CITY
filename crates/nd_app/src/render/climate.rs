@@ -156,6 +156,7 @@ pub(super) fn sync_precipitation(
     cams: Query<&GlobalTransform, With<crate::camera::OrbitCamera>>,
     mut blocks: Query<(&Precipitation, &mut Transform, &mut Visibility, &mut Mesh3d)>,
 ) {
+    let _t = crate::frame_stats::span("sync_precipitation");
     let w = &sim.world;
     let now = precip_shown(w, &lighting).filter(|_| stats.graphics.tier != Quality::Low && !lighting.heat);
     let Some((kind, intensity)) = now else {
@@ -258,6 +259,7 @@ pub(super) fn sync_steam(
     cams: Query<&GlobalTransform, With<crate::camera::OrbitCamera>>,
     mut puffs: Query<(&Steam, &mut Transform, &mut MeshMaterial3d<StandardMaterial>, &mut Visibility, Option<&super::swap::SwapOriginal>)>,
 ) {
+    let _t = crate::frame_stats::span("sync_steam");
     let w = &sim.world;
     if state.quad.is_none() {
         state.quad = Some(meshes.add(Rectangle::new(1.0, 1.0)));

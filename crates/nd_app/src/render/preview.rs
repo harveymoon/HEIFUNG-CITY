@@ -222,6 +222,7 @@ pub(super) fn sync_ring_preview(
     mut last: Local<Option<(i64, i64, i64, u8, u64, u64)>>,
     existing: Query<Entity, With<RingPreviewTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_ring_preview");
     let w = &sim.world;
     let ring = tools.ring_preview();
     let key = ring.map(|r| ((r.center.x * 4.0).round() as i64, (r.center.y * 4.0).round() as i64, (r.radius * 4.0).round() as i64, r.lanes, w.plan_version ^ (r.level.to_bits() as u64) << 32, w.lots.len() as u64 ^ w.roads.version << 20));

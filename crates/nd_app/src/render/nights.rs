@@ -204,6 +204,7 @@ pub(super) fn sync_road_wear(
     cracks: Query<Entity, With<CrackTag>>,
     layer: Query<Entity, With<WearLayerTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_road_wear");
     let w = &sim.world;
     let key = (w.road_wear.version, w.roads.version, w.road_wear.wear.len());
     if sim.full_rebuild || st.cracks != Some(key) {
@@ -269,6 +270,7 @@ pub(super) fn sync_raves(
     mut tf: Query<&mut Transform, With<RaveTag>>,
     mut lights: Query<&mut PointLight, With<RaveTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_raves");
     let w = &sim.world;
     let party = w.race().filter(|r| r.stage == RaceStage::Party);
     let want: Option<(u32, Vec3, f32, usize)> = if let Some(r) = w.rave() {

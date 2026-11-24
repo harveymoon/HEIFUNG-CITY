@@ -18,6 +18,7 @@ pub struct FootbridgeTag;
 
 /// Footbridges, rebuilt when the walk graph or the roads change.
 pub(super) fn sync_footbridges(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, mut last: Local<Option<u64>>, existing: Query<Entity, With<FootbridgeTag>>) {
+    let _t = crate::frame_stats::span("sync_footbridges");
     let w = &sim.world;
     let mut h = std::collections::hash_map::DefaultHasher::new();
     (w.walk.version, w.roads.version, w.walk.footbridges.len(), w.relief).hash(&mut h);

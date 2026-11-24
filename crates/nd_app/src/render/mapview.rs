@@ -186,6 +186,7 @@ fn map_signature(w: &World) -> u64 {
 /// drop it when it goes off.
 #[allow(clippy::too_many_arguments)]
 fn sync_map(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, sim: Res<Sim>, overlays: Res<Overlays>, existing: Query<Entity, With<MapTag>>, mut built: Local<Option<u64>>, mut mat: Local<Option<Handle<StandardMaterial>>>, mut gate: Local<super::Gate<(u64, u64, u64, bool)>>) {
+    let _t = crate::frame_stats::span("sync_map");
     if !overlays.map {
         if built.is_some() {
             despawn_all(&mut commands, &existing);

@@ -159,6 +159,7 @@ pub(super) fn sync_trawlers(
     mut st: Local<FishingRender>,
     mut q: Query<(&mut Transform, &mut Visibility), With<TrawlerTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_trawlers");
     let w = &sim.world;
     if w.fishing.fleets.is_empty() && st.boats.is_empty() {
         return;

@@ -104,6 +104,7 @@ pub(super) fn sync_carriers(
     mut state: ResMut<CarrierRender>,
     mut q: Query<&mut Transform, With<CarrierTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_carriers");
     let w = &sim.world;
     if sim.full_rebuild {
         for (_, c) in state.carriers.drain() {

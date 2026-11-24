@@ -59,13 +59,48 @@ pub(super) fn lift_spawned(
             }
         }
     }
-    let lie = |p: SVec2| lie_height(w, p);
+    // [r16-speed] A big mesh's vertices on several threads (each vertex is
+    // lifted alone, so the result is the same): after a load every lot
+    // fill, park and overlay comes through here at once (1.1 s on the
+    // frame on Harvey's 17,000-person city).
+    // The positions are taken out of the meshes, lifted together, and put
+    // back; a mesh two entities share is lifted twice, as before.
+    use bevy::mesh::VertexAttributeValues as Vav;
+    let mut taken: Vec<(AssetId<Mesh>, Vec<[f32; 3]>, u32)> = Vec::new();
+    let mut at: HashMap<AssetId<Mesh>, usize> = HashMap::new();
     for m in &q {
+        if let Some(&k) = at.get(&m.0.id()) {
+            taken[k].2 += 1;
+            continue;
+        }
         let Some(mut mesh) = meshes.get_mut(&m.0) else { continue };
-        if let Some(bevy::mesh::VertexAttributeValues::Float32x3(pos)) = mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION) {
-            for p in pos.iter_mut() {
-                p[1] += lie(SVec2::new(p[0], p[2]));
+        match mesh.remove_attribute(Mesh::ATTRIBUTE_POSITION) {
+            Some(Vav::Float32x3(pos)) => {
+                at.insert(m.0.id(), taken.len());
+                taken.push((m.0.id(), pos, 1));
             }
+            Some(other) => mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, other),
+            None => {}
+        }
+    }
+    // Work in slices of vertices, whichever mesh they belong to.
+    let mut jobs: Vec<(&mut [[f32; 3]], u32)> = Vec::new();
+    for (_, pos, times) in taken.iter_mut() {
+        for c in pos.chunks_mut(2048) {
+            jobs.push((c, *times));
+        }
+    }
+    super::mesh_util::par_slices(&mut jobs, 4, |(c, times)| {
+        for p in c.iter_mut() {
+            for _ in 0..*times {
+                p[1] += lie_height(w, SVec2::new(p[0], p[2]));
+            }
+        }
+    });
+    drop(jobs);
+    for (id, pos, _) in taken {
+        if let Some(mut mesh) = meshes.get_mut(id) {
+            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
         }
     }
     for mut tf in &mut signals {

@@ -357,6 +357,7 @@ pub(super) fn sync_weather_materials(
     mut weather_mats: ResMut<Assets<WeatherMaterial>>,
     mut climate: Local<Option<(nd_sim::Climate, i32)>>,
 ) {
+    let _t = crate::frame_stats::span("sync_weather_materials");
     // [r14-photofix] And the temperature, in 2 degree steps (the green of
     // the weeds and moss follows it).
     let now = sim.world.landscape.params.climate;

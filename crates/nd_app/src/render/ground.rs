@@ -14,6 +14,7 @@ pub(super) fn sync_terrain(
     mut ways: Local<Vec<(SVec2, SVec2, f32)>>,
     mut pits: Local<u64>,
 ) {
+    let _t = crate::frame_stats::span("sync_terrain");
     // A landscape's ground is drawn by `sync_landscape`.
     if !sim.world.landscape.is_flat() {
         return;
@@ -97,6 +98,7 @@ pub(super) fn sync_scatter(
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<ScatterTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_scatter");
     let w = &sim.world;
     let signature = (w.roads.version, w.zones.len());
     if state.scatter_signature == Some(signature) && !assets.palette_changed && !sim.full_rebuild {

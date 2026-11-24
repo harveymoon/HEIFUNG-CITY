@@ -43,6 +43,7 @@ fn guard_mesh() -> MeshData {
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn sync_convoys(mut commands: Commands, sim: Res<Sim>, mats: Res<Materials>, mut cr: ResMut<ConvoyRender>, mut meshes: ResMut<Assets<Mesh>>, time: Res<Time>, mut q: Query<(&mut Transform, &mut Mesh3d), With<ConvoyTag>>) {
+    let _t = crate::frame_stats::span("sync_convoys");
     let w = &sim.world;
     if w.estate.convoys.is_empty() && w.estate.elites.is_empty() && cr.lit.is_empty() && cr.guards.is_empty() {
         return;

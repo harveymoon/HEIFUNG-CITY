@@ -439,6 +439,7 @@ pub(super) fn sync_bots(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut q: Query<&mut Transform, With<BotTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_bots");
     vr.ensure_materials(&mut materials);
     if sim.full_rebuild {
         // Bot ids are reused by a loaded world; the livery would be stale.

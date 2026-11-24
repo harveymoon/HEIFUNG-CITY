@@ -74,6 +74,7 @@ pub(super) fn sync_game_days(
     bays: Query<&GameBays>,
     mut cars: Local<HashMap<BuildingId, (u32, Entity)>>,
 ) {
+    let _t = crate::frame_stats::span("sync_game_days");
     let w = &sim.world;
     if sim.full_rebuild {
         for (_, (_, e)) in cars.drain() {

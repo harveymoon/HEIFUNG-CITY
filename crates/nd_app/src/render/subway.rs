@@ -94,6 +94,7 @@ pub(super) fn sync_platform_figures(
     mut pool: Local<Vec<Entity>>,
     mut q: Query<(&mut Transform, &mut Visibility), With<PlatformFigure>>,
 ) {
+    let _t = crate::frame_stats::span("sync_platform_figures");
     if sim.full_rebuild {
         for e in pool.drain(..) {
             commands.entity(e).despawn();
@@ -142,6 +143,7 @@ pub(super) fn sync_platform_figures(
 
 /// Redraw the tunnels when the subway changes.
 pub(super) fn sync_metro_tunnels(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, mut state: Local<Option<u64>>, existing: Query<Entity, With<MetroTunnelTag>>) {
+    let _t = crate::frame_stats::span("sync_metro_tunnels");
     let w = &sim.world;
     // Bumped on every edit; the line count guards a load (version restarts).
     let version = w.subway.version.wrapping_add(w.subway.lines.len() as u64 * 7919);
@@ -169,6 +171,7 @@ pub(super) fn sync_metro_tunnels(mut commands: Commands, mut meshes: ResMut<Asse
 /// Metro trains: a set of cars along the line, blended between ticks,
 /// on the bore of their direction.
 pub(super) fn sync_metro_trains(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, mut state: Local<MetroState>, mut q: Query<&mut Transform, With<MetroCarTag>>) {
+    let _t = crate::frame_stats::span("sync_metro_trains");
     let w = &sim.world;
     let sub = &w.subway;
     if sim.full_rebuild {

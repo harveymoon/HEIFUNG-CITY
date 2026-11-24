@@ -27,6 +27,7 @@ pub(super) fn sync_moored_boats(
     existing: Query<Entity, With<MooredTag>>,
     mut last: Local<Option<u64>>,
 ) {
+    let _t = crate::frame_stats::span("sync_moored_boats");
     let w = &sim.world;
     let mut h = DefaultHasher::new();
     for p in w.ports.ports.values().filter(|p| p.kind.is_marina()) {
@@ -52,6 +53,7 @@ pub(super) fn sync_boardwalks(
     existing: Query<Entity, With<BoardwalkTag>>,
     mut last: Local<Option<u64>>,
 ) {
+    let _t = crate::frame_stats::span("sync_boardwalks");
     let w = &sim.world;
     let mut h = DefaultHasher::new();
     for l in w.lots.values().filter(|l| l.shore.beach) {

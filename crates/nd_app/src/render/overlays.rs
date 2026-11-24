@@ -145,6 +145,7 @@ pub(super) fn sync_overlay(
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<OverlayTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_overlay");
     let lv = &sim.world.land_value;
     if overlays.land_value == state.overlay_shown && lv.version == state.overlay_version && !assets.palette_changed && !sim.full_rebuild {
         return;
@@ -182,6 +183,7 @@ pub(super) fn sync_paths(
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<PathsTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_paths");
     let walk = &sim.world.walk;
     if overlays.paths == state.paths_shown && walk.version == state.paths_version && !sim.full_rebuild {
         return;
@@ -227,6 +229,7 @@ pub(super) fn sync_walk_networks(
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<WalkNetTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_walk_networks");
     let w = &sim.world;
     let nets = &w.walk_networks;
     let key = (w.walk.version, nets.list.iter().map(|n| n.id as u64).sum::<u64>() ^ (nets.list.len() as u64) << 32);

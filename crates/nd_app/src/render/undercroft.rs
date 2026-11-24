@@ -59,6 +59,7 @@ fn look(w: &World, b: &Bay, hour: u8) -> BayLook {
 }
 
 pub(super) fn sync_undercroft(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, mut state: ResMut<UndercroftRender>) {
+    let _t = crate::frame_stats::span("sync_undercroft");
     let w = &sim.world;
     let hour = w.clock.hour() as u8;
     let mut h = DefaultHasher::new();
@@ -124,6 +125,7 @@ pub(super) fn sync_under_lights(
     mut spawned: Local<usize>,
     mut near: Local<Vec<(f32, Vec3)>>,
 ) {
+    let _t = crate::frame_stats::span("sync_under_lights");
     let want = (super::street_look::lamp_pool(stats.graphics.tier) / 3).min(12);
     if *spawned < want {
         for _ in *spawned..want {

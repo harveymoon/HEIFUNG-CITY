@@ -668,6 +668,7 @@ fn sync_sky_reflections(
     mut images: ResMut<Assets<Image>>,
     mut cams: Query<(Entity, Option<&mut EnvironmentMapLight>), With<OrbitCamera>>,
 ) {
+    let _t = crate::frame_stats::span("sync_sky_reflections");
     let Ok((cam, env)) = cams.single_mut() else { return };
     if off("env") {
         return;
@@ -732,6 +733,7 @@ fn sync_fog_volume(
     mut cams: Query<(&OrbitCamera, Option<&mut VolumetricFog>)>,
     mut haze: Query<(Entity, &mut Transform, &mut FogVolume), With<HazeVolume>>,
 ) {
+    let _t = crate::frame_stats::span("sync_fog_volume");
     let Ok((cam, vol)) = cams.single_mut() else { return };
     let wanted = applied.0.is_some_and(|fx| fx.volumetric.is_some()) && !off("haze");
     if !wanted {

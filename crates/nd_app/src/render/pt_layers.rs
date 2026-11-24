@@ -345,6 +345,7 @@ fn trail_mesh(trails: &HashMap<u64, Trail>) -> Mesh {
 /// The Trails layer: sample, rebuild the ribbons, show them; all gone when
 /// the layer is off.
 fn sync_trails(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, sim: Res<Sim>, overlays: Res<Overlays>, time: Res<Time>, mut st: ResMut<Trails>) {
+    let _t = crate::frame_stats::span("sync_trails");
     if !overlays.trails {
         if let Some(e) = st.entity.take() {
             commands.entity(e).despawn();

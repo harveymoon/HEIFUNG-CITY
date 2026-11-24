@@ -476,6 +476,7 @@ pub(super) fn sync_parks(
     mats: Res<Materials>,
     mut state: ResMut<RenderState>,
 ) {
+    let _t = crate::frame_stats::span("sync_parks");
     let w = &sim.world;
     let rebuild_all = assets.palette_changed || assets.rules_changed || sim.full_rebuild;
     if state.parks_gate.same((sim.generation, w.lots.version())) && !rebuild_all {
@@ -536,6 +537,7 @@ pub(super) fn sync_vacant(
     mats: Res<Materials>,
     mut state: ResMut<RenderState>,
 ) {
+    let _t = crate::frame_stats::span("sync_vacant");
     let w = &sim.world;
     let rebuild_all = assets.palette_changed || sim.full_rebuild;
     // [r11-lot-memory] Old slabs follow the lot history and fade by the day.

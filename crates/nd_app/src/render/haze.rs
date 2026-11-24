@@ -136,6 +136,7 @@ pub(super) fn sync_haze(
     cams: Query<&GlobalTransform, With<crate::camera::OrbitCamera>>,
     mut puffs: Query<(&Puff, &mut Transform, &mut MeshMaterial3d<StandardMaterial>, &mut Visibility, Option<&super::swap::SwapOriginal>)>,
 ) {
+    let _t = crate::frame_stats::span("sync_haze");
     let w = &sim.world;
     if state.quad.is_none() {
         state.quad = Some(meshes.add(Rectangle::new(1.0, 1.0)));

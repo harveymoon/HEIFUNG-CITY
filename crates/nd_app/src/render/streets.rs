@@ -95,6 +95,7 @@ pub(super) fn sync_lane_arrows(
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<LaneArrowsTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_lane_arrows");
     let net = &sim.world.traffic.net;
     let w = &sim.world;
     let inputs = (sim.generation, net.arrows_version, net.version, w.roads.version(), w.ground.version(), w.relief);
@@ -185,6 +186,7 @@ pub(super) fn sync_transit(
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<TransitTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_transit");
     let w = &sim.world;
     let inputs = (sim.generation, w.transit.version, w.roads.version());
     if w.transit.version == state.transit_version && !assets.palette_changed && !sim.full_rebuild {
@@ -235,6 +237,7 @@ pub(super) fn sync_tolls(
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<TollTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_tolls");
     let w = &sim.world;
     let version = w.tolls.version + 1;
     if version == state.toll_version && !assets.palette_changed && !sim.full_rebuild {

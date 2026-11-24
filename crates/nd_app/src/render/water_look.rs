@@ -259,6 +259,7 @@ impl WaterLook {
 
 /// Every frame: the waves' clock, and the sky the water mirrors.
 pub(super) fn sync_water_look(time: Res<Time>, sky: Res<SkyLook>, look: Res<WaterLook>, mut materials: ResMut<Assets<WaterMaterial>>) {
+    let _t = crate::frame_stats::span("sync_water_look");
     let Some(h) = &look.mat else { return };
     let Some(mut m) = materials.get_mut(h) else { return };
     let v3 = |c: [f32; 3], w: f32| Vec4::new(c[0], c[1], c[2], w);

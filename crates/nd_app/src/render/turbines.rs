@@ -60,6 +60,7 @@ pub(super) fn sync_turbines(
     mut state: Local<TurbineState>,
     mut q: Query<(&TurbineRotor, &mut Transform)>,
 ) {
+    let _t = crate::frame_stats::span("sync_turbines");
     let w = &sim.world;
     if state.meshes.is_empty() {
         let g = wind_rotor(0.0);

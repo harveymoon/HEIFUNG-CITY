@@ -104,6 +104,7 @@ pub(super) fn sync_crossings(
     mut lamps: Query<(&CrossingLamp, &mut MeshMaterial3d<StandardMaterial>, Option<&super::swap::SwapOriginal>)>,
     mut arms: Query<(&CrossingArm, &mut Transform)>,
 ) {
+    let _t = crate::frame_stats::span("sync_crossings");
     let w = &sim.world;
     let pal = &assets.palette;
     if state.meshes.is_none() {
@@ -206,6 +207,7 @@ pub(super) fn sync_crossing_lights(
     mut near: Local<Vec<(f32, Vec3)>>,
     mut spots: Local<Vec<Vec3>>,
 ) {
+    let _t = crate::frame_stats::span("sync_crossing_lights");
     let want = (super::street_look::lamp_pool(stats.graphics.tier) / 3).min(8);
     if *spawned < want {
         for _ in *spawned..want {

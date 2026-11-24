@@ -330,8 +330,24 @@ impl LandscapeTiles {
         let (raw, kept) = landscape_heights(world, cell, n);
         let holes = crate::holes::HoleSet::new(crate::holes::ground_holes(world));
         let mut t = Self { half, cell, n, per_side, colours: LandColours::new(world, palette), spots: ground_spots(world, cell, n), raw, kept, holes, meshes: Vec::new() };
-        t.meshes = (0..per_side * per_side).map(|k| t.build_tile(k)).collect();
+        let all: Vec<usize> = (0..per_side * per_side).collect();
+        t.meshes = t.build_tiles(&all);
         t
+    }
+
+    /// [r16-speed] `build_tile` for each of `tiles`, on up to 8 threads
+    /// (the same meshes, in the same order): a load drew 841 tiles one by
+    /// one on the frame.
+    fn build_tiles(&self, tiles: &[usize]) -> Vec<MeshData> {
+        let threads = std::thread::available_parallelism().map_or(1, |t| t.get()).clamp(1, 8);
+        if tiles.len() < 16 || threads == 1 {
+            return tiles.iter().map(|&k| self.build_tile(k)).collect();
+        }
+        let per = tiles.len().div_ceil(threads);
+        std::thread::scope(|s| {
+            let parts: Vec<_> = tiles.chunks(per).map(|c| s.spawn(move || c.iter().map(|&k| self.build_tile(k)).collect::<Vec<_>>())).collect();
+            parts.into_iter().flat_map(|h| h.join().expect("landscape tiles")).collect()
+        })
     }
 
     /// Re-read the graded ground and rebuild the tiles it changed; returns
@@ -377,8 +393,8 @@ impl LandscapeTiles {
         self.raw = raw;
         self.kept = kept;
         let changed: Vec<usize> = (0..dirty.len()).filter(|&t| dirty[t]).collect();
-        for &t in &changed {
-            self.meshes[t] = self.build_tile(t);
+        for (&t, m) in changed.iter().zip(self.build_tiles(&changed)) {
+            self.meshes[t] = m;
         }
         changed
     }

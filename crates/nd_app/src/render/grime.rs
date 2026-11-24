@@ -133,6 +133,7 @@ pub(super) fn sync_grime(
     mut puffs: Query<(&DirtyPuff, &mut Transform, &mut MeshMaterial3d<StandardMaterial>, &mut Visibility, Option<&super::swap::SwapOriginal>)>,
     stains: Query<Entity, With<StainTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_grime");
     let w = &sim.world;
     let now = time.elapsed_secs();
     if state.quad.is_none() {

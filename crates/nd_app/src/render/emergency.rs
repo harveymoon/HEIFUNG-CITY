@@ -279,6 +279,7 @@ pub(super) fn sync_emergency(
     mut cars: Query<&mut Visibility, (With<CarTag>, Without<EmergencyTag>)>,
     mut parts: Query<&mut Transform, (With<RigPart>, Without<EmergencyTag>, Without<CarTag>)>,
 ) {
+    let _t = crate::frame_stats::span("sync_emergency");
     let w = &sim.world;
     let s = &w.services;
     if sim.full_rebuild {

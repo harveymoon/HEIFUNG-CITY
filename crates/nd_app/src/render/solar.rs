@@ -60,6 +60,7 @@ pub(super) fn sync_solar(
     mut state: Local<SolarState>,
     mut q: Query<&mut Transform, With<SolarPanel>>,
 ) {
+    let _t = crate::frame_stats::span("sync_solar");
     let w = &sim.world;
     if state.meshes.is_empty() {
         let g = solar_head();

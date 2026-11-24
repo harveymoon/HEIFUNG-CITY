@@ -26,6 +26,7 @@ pub(super) struct ParkedTag;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn sync_parked_cars(mut commands: Commands, sim: Res<Sim>, assets: Res<GameAssets>, mut pr: ResMut<ParkedRender>, mut vr: ResMut<VehicleRender>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    let _t = crate::frame_stats::span("sync_parked_cars");
     let w = &sim.world;
     let key = (w.clock.tick, w.vehicles.cars.len());
     if pr.key == Some(key) && !sim.full_rebuild {

@@ -269,6 +269,7 @@ pub fn sync_draw_hologram(
     mut last: Local<Option<u64>>,
     existing: Query<Entity, With<DrawHoloTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_draw_hologram");
     let w = &sim.world;
     let drawn = drawn_road(&tools, &sim, cursor.ground);
     let key = drawn.as_ref().map(|(pts, levels)| {
@@ -369,6 +370,7 @@ pub fn sync_plan_holograms(
     existing: Query<Entity, With<PlanHoloTag>>,
     mut tools: ResMut<ToolState>,
 ) {
+    let _t = crate::frame_stats::span("sync_plan_holograms");
     let w = &sim.world;
     let key = Some((w.plan_version, w.roads.version, overlays.projects));
     if key == *last && !assets.palette_changed && !sim.full_rebuild {
@@ -618,6 +620,7 @@ pub fn sync_tunnel_hints(
     mut built: Local<Option<(u64, u64)>>,
     mut q: Query<(Entity, &mut Visibility), With<TunnelHintTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_tunnel_hints");
     let show = tunnel_hints_wanted(&tools);
     let w = &sim.world;
     let key = (w.roads.version, sim.generation);

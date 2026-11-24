@@ -21,6 +21,7 @@ pub(super) struct JettyRender {
 }
 
 pub(super) fn sync_jetties(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, mats: Res<Materials>, mut state: ResMut<JettyRender>) {
+    let _t = crate::frame_stats::span("sync_jetties");
     let w = &sim.world;
     let night = !(7..20).contains(&w.clock.hour());
     let mut h = DefaultHasher::new();
@@ -119,6 +120,7 @@ pub(super) fn sync_coasters(
     mut st: Local<CoasterState>,
     mut q: Query<(&mut Transform, &mut Visibility), With<CoasterTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_coasters");
     let w = &sim.world;
     let quays: Vec<(BuildingId, &nd_sim::shore::Jetty)> = w.shore.jetties.iter().filter(|(_, j)| j.kind == nd_sim::shore::JettyKind::Cargo).map(|(b, j)| (*b, j)).collect();
     if quays.is_empty() && st.boats.is_empty() {

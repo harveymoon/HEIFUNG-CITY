@@ -184,6 +184,7 @@ pub(super) fn sync_freight(
     mut state: ResMut<FreightRender>,
     mut q: Query<&mut Transform, Or<(With<FreightBoxTag>, With<YardCraneTag>)>>,
 ) {
+    let _t = crate::frame_stats::span("sync_freight");
     let w = &sim.world;
     if sim.full_rebuild {
         for (_, m) in state.boxes.drain() {

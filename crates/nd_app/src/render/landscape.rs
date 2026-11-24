@@ -179,13 +179,19 @@ pub(super) fn sync_landscape(
     // The ground: every tile afresh for a new map or palette, else only
     // the tiles the edit moved.
     let dirt = mats.surface(Surface::Dirt);
-    let spawn_tile = |commands: &mut Commands, meshes: &mut Assets<Mesh>, m: &nd_procgen::MeshData| (!m.is_empty()).then(|| commands.spawn((Mesh3d(meshes.add(to_mesh(m, true))), MeshMaterial3d(dirt.clone()), Transform::IDENTITY, TerrainTag)).id());
+    // [r16-speed] The tiles' meshes (and their tangents) are made on
+    // several threads, then added and spawned in order.
+    let spawn_tiles = |commands: &mut Commands, meshes: &mut Assets<Mesh>, tiles: &nd_procgen::terrain::LandscapeTiles, which: &[usize]| -> Vec<Option<Entity>> {
+        let data: Vec<&nd_procgen::MeshData> = which.iter().map(|&t| tiles.mesh(t)).filter(|m| !m.is_empty()).collect();
+        let mut made = super::mesh_util::to_meshes(&data, true).into_iter();
+        which.iter().map(|&t| (!tiles.mesh(t).is_empty()).then(|| commands.spawn((Mesh3d(meshes.add(made.next().expect("one mesh a tile"))), MeshMaterial3d(dirt.clone()), Transform::IDENTITY, TerrainTag)).id())).collect()
+    };
     let reuse = !fresh && state.water_signature == Some(map);
     match state.tiles.as_mut().filter(|_| reuse) {
         Some(tiles) => {
             let changed = tiles.update(w);
-            let made: Vec<(usize, Option<Entity>)> = changed.iter().map(|&t| (t, spawn_tile(&mut commands, &mut meshes, tiles.mesh(t)))).collect();
-            for (t, e) in made {
+            let ents = spawn_tiles(&mut commands, &mut meshes, tiles, &changed);
+            for (t, e) in changed.into_iter().zip(ents) {
                 if let Some(old) = std::mem::replace(&mut state.tile_ents[t], e) {
                     commands.entity(old).despawn();
                 }
@@ -194,7 +200,8 @@ pub(super) fn sync_landscape(
         None => {
             despawn_all(&mut commands, &terrain);
             let tiles = nd_procgen::terrain::LandscapeTiles::new(w, &assets.palette, 8.0);
-            state.tile_ents = (0..tiles.len()).map(|t| spawn_tile(&mut commands, &mut meshes, tiles.mesh(t))).collect();
+            let all: Vec<usize> = (0..tiles.len()).collect();
+            state.tile_ents = spawn_tiles(&mut commands, &mut meshes, &tiles, &all);
             state.tiles = Some(tiles);
         }
     }
@@ -228,6 +235,7 @@ pub(super) fn sync_ships(
     mut decks: Local<HashMap<nd_sim::ports::ShipId, (Vec<nd_sim::containers::BoxId>, Vec<Entity>)>>,
     mut q: Query<&mut Transform, With<ShipTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_ships");
     let ships = &sim.world.ports.ships;
     if ships.is_empty() && state.ships.is_empty() {
         decks.clear();
@@ -310,6 +318,7 @@ pub(super) fn sync_port_cranes(
     mut q: Query<(&mut Transform, &mut Visibility, &mut Mesh3d), With<CraneGear>>,
     mut boxes_q: Query<&mut Transform, (With<QuayBoxTag>, Without<CraneGear>)>,
 ) {
+    let _t = crate::frame_stats::span("sync_port_cranes");
     let w = &sim.world;
     if sim.full_rebuild {
         hooked.clear();
@@ -495,6 +504,7 @@ const BOOM_Y: f32 = 31.0;
 /// a quay crane reaches (`nd_sim::ports::Port::crane_hinge`): level while a
 /// freighter lies alongside, raised otherwise, moving between the two.
 pub(super) fn sync_port_booms(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, time: Res<Time>, mut state: Local<BoomState>, mut q: Query<&mut Transform, With<CraneBoom>>) {
+    let _t = crate::frame_stats::span("sync_port_booms");
     let w = &sim.world;
     if sim.full_rebuild {
         for (_, (ents, _)) in state.booms.drain() {

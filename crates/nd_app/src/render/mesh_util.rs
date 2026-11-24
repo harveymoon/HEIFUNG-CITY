@@ -19,6 +19,39 @@ pub fn to_mesh(data: &MeshData, tangents: bool) -> Mesh {
 /// lamps). These keep their CPU copy: Bevy computes an entity's bounds from
 /// the main-world mesh when the entity is spawned, and movers are spawned
 /// long after the mesh was first uploaded.
+/// [r16-speed] `to_mesh` for many meshes at once, on up to 8 threads (the
+/// same meshes, in order): the ground's 841 tiles after a load each had
+/// their tangents generated one after another on the frame.
+pub(super) fn to_meshes(data: &[&MeshData], tangents: bool) -> Vec<Mesh> {
+    let threads = std::thread::available_parallelism().map_or(1, |t| t.get()).clamp(1, 8);
+    if data.len() < 8 || threads == 1 {
+        return data.iter().map(|m| to_mesh(m, tangents)).collect();
+    }
+    let per = data.len().div_ceil(threads);
+    std::thread::scope(|s| {
+        let parts: Vec<_> = data.chunks(per).map(|c| s.spawn(move || c.iter().map(|m| to_mesh(m, tangents)).collect::<Vec<_>>())).collect();
+        parts.into_iter().flat_map(|h| h.join().expect("meshes")).collect()
+    })
+}
+
+/// [r16-speed] Run `f` over `items` in up to 8 slices on as many threads
+/// (in place; for work on the frame that is the same item by item, such
+/// as lifting a big mesh's vertices onto the ground).
+pub(super) fn par_slices<T: Send>(items: &mut [T], min: usize, f: impl Fn(&mut T) + Sync) {
+    let threads = std::thread::available_parallelism().map_or(1, |t| t.get()).clamp(1, 8);
+    if items.len() < min.max(2) || threads == 1 {
+        items.iter_mut().for_each(&f);
+        return;
+    }
+    let per = items.len().div_ceil(threads);
+    let f = &f;
+    std::thread::scope(|s| {
+        for c in items.chunks_mut(per) {
+            s.spawn(move || c.iter_mut().for_each(f));
+        }
+    });
+}
+
 pub(super) fn shared_mesh(data: &MeshData, tangents: bool) -> Mesh {
     mesh_with_usage(data, tangents, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
 }

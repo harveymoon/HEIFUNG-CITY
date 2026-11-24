@@ -331,6 +331,7 @@ pub(super) fn sync_cable(
     mut cabins: Query<(&mut Transform, &mut Visibility), (With<CabinTag>, Without<WheelTag>)>,
     mut wheels: Query<&mut Transform, (With<WheelTag>, Without<CabinTag>)>,
 ) {
+    let _t = crate::frame_stats::span("sync_cable");
     let w = &sim.world;
     let cw = &w.cable;
     if sim.full_rebuild {

@@ -92,6 +92,7 @@ pub(super) fn sync_fire_scene(
     mut st: Local<FireSceneState>,
     mut q: Query<(&mut Transform, &mut Visibility, &mut Mesh3d), With<FireSceneTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_fire_scene");
     let w = &sim.world;
     if sim.full_rebuild {
         for (_, s) in st.scenes.drain() {

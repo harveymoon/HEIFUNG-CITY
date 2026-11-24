@@ -76,6 +76,7 @@ pub fn sync_shell(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    let _t = crate::frame_stats::span("sync_shell");
     let w = &sim.world;
     let want = match *sel {
         Selection::Building(b) if tools.depth != crate::tools::Depth::Underground && !mode.street() => crate::tools::building_prism(w, &sim.building_tops, b).map(|p| (b, p)),

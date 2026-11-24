@@ -88,6 +88,7 @@ fn diggers(radius: f32) -> usize {
 }
 
 pub(super) fn sync_cleanup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, mats: Res<Materials>, time: Res<Time>, mut state: ResMut<CleanupRender>, mut digs: Query<(&Digger, &mut Transform)>) {
+    let _t = crate::frame_stats::span("sync_cleanup");
     // Swing the arms every frame.
     let t = time.elapsed_secs();
     for (d, mut tf) in &mut digs {
