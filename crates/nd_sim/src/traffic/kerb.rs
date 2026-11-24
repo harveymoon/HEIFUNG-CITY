@@ -20,7 +20,8 @@ impl Traffic {
         // where others already wait to pull out (lorries sent off from one
         // depot's gate, cars from one door): behind them, never on top of
         // them. Up to 36 lorries stood on one point at a cargo hub's gate.
-        if self.net.lanes[lane as usize].right.is_none() {
+        // (Lorries only: cars leave from their own spaces.)
+        if cargo.is_some() && self.net.lanes[lane as usize].right.is_none() {
             let s = self.kerb_room(lane, id);
             if (s - s_start).abs() > 0.01 {
                 let (p, d) = self.net.lanes[lane as usize].point_at(s);

@@ -281,8 +281,9 @@ fn lorries_setting_off_from_one_kerb_point_line_up() {
     // A queue already in the lane at the gate, so nobody can pull out yet.
     let blocker = t.spawn_car(CitizenId::default(), None, vec![lane], 150.0, len - 1.0, 0);
     t.cars[blocker].hold = 1.0e6;
+    let load = Some(Cargo { from: BuildingId::default(), to: BuildingId::default(), resource: crate::market::Resource::Goods, amount: 1.0, price: 0.0 });
     let ids: Vec<CarId> = (0..8)
-        .map(|_| t.spawn_car(CitizenId::default(), None, vec![lane], 150.0, len - 1.0, 0))
+        .map(|_| t.spawn_car(CitizenId::default(), load, vec![lane], 150.0, len - 1.0, 0))
         .collect();
     let apart = |t: &Traffic| {
         for (i, &a) in ids.iter().enumerate() {
