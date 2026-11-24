@@ -64,6 +64,13 @@ pub struct ServiceStats {
     /// Calls that gave up unanswered today, per kind, by why nobody came.
     #[serde(deserialize_with = "crate::economy::padded")]
     pub unanswered_why_today: [UnansweredWhy; IncidentKind::SLOTS],
+    /// [r17-fixes] Yesterday's most calls waiting at once and unanswered
+    /// calls by why, kept at midnight for the saturated alert of the first
+    /// hours of the day (which speaks of yesterday then).
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub queue_max_yesterday: [u32; IncidentKind::SLOTS],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub unanswered_why_yesterday: [UnansweredWhy; IncidentKind::SLOTS],
     /// Mutual aid from the next town while every unit was busy, today.
     pub mutual_aid_today: u32,
     /// Units pulled off a lower-priority call for a more urgent one, today.

@@ -562,6 +562,54 @@ pub(crate) fn clear_of_parked_cars(w: &nd_sim::World, p: Vec2) -> Vec2 {
     p
 }
 
+/// [r17-fixes] (photo 2026-11-24 F8) Where a walk eye put down at `p` (sim
+/// x, z) stands: on the nearest footway (a pavement, a park path, a
+/// crossing; at grade) within [`WALK_SNAP`] metres, as a walker would. A
+/// spot in a park or a lot (inside a tree crown) or on a lake moves to the
+/// path or the shore's pavement beside it. Nowhere near a footway, the
+/// spot stands, unless it is on water: then the nearest dry ground.
+pub(crate) fn walk_footing(w: &nd_sim::World, p: Vec2) -> Vec2 {
+    let g = &w.walk;
+    let near = g.nearest(p, WALK_SNAP).and_then(|i| {
+        let a = g.nodes.get(i as usize)?;
+        let mut best = (a.pos.distance_squared(p), a.pos);
+        for e in g.adj.get(i as usize).into_iter().flatten() {
+            let Some(b) = g.nodes.get(e.to as usize) else { continue };
+            if e.raised || b.level != 0.0 || b.deck {
+                continue;
+            }
+            let ab = b.pos - a.pos;
+            let t = if ab.length_squared() > 1e-6 { ((p - a.pos).dot(ab) / ab.length_squared()).clamp(0.0, 1.0) } else { 0.0 };
+            let q = a.pos + ab * t;
+            let d = q.distance_squared(p);
+            if d < best.0 {
+                best = (d, q);
+            }
+        }
+        Some(best.1)
+    });
+    if let Some(q) = near.filter(|q| !w.landscape.is_water(*q) || w.landscape.is_flat()) {
+        return q;
+    }
+    if w.landscape.is_flat() || !w.landscape.is_water(p) {
+        return p;
+    }
+    // On water with no footway near: out along rings to the first dry spot.
+    for r in 1..=40 {
+        let r = r as f32 * 5.0;
+        for k in 0..24 {
+            let q = p + Vec2::from_angle(k as f32 / 24.0 * std::f32::consts::TAU) * r;
+            if !w.landscape.is_water(q) {
+                return q;
+            }
+        }
+    }
+    p
+}
+
+/// [r17-fixes] How far a walk eye looks for a footway to stand on (metres).
+pub const WALK_SNAP: f32 = 40.0;
+
 /// The walk camera's yaw (forward = (sin, cos) in x, z) for a sim heading.
 fn yaw_of_heading(h: f32) -> f32 {
     h.cos().atan2(h.sin())
@@ -714,7 +762,8 @@ pub(crate) fn control_camera(
                         // projection so lamps and shelters are not in the face.
                         (q + right * side * (hw + 2.1) + d * 4.0, d.x.atan2(d.y))
                     }
-                    None => (target, 0.0),
+                    // [r17-fixes] No street near: on a path, not in a tree or the lake.
+                    None => (walk_footing(&sim.world, target), 0.0),
                 };
                 let p = clear_of_parked_cars(&sim.world, p);
                 walk.pos = Vec3::new(p.x, EYE_HEIGHT, p.y);

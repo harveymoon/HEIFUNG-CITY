@@ -1065,7 +1065,12 @@ fn saturated_alerts(w: &World) -> Vec<Alert> {
     let mut out = Vec::new();
     for kind in IncidentKind::ALL {
         let k = kind.index();
-        let busy_min = st.saturated_min_today[k].max(if w.clock.minute_of_day() < 180 { st.saturated_min_yesterday[k] } else { 0 });
+        // [r17-fixes] In the first 3 h of a day, a saturated yesterday is
+        // still news: say "yesterday" with yesterday's queue and unanswered
+        // calls (r16 photo F2: "13.1 h today" at 00:30 with today's zeros).
+        let today = st.saturated_min_today[k];
+        let yday = w.clock.minute_of_day() < 180 && today < SATURATED_ALERT_MIN && st.saturated_min_yesterday[k] >= SATURATED_ALERT_MIN;
+        let busy_min = if yday { st.saturated_min_yesterday[k] } else { today };
         if busy_min < SATURATED_ALERT_MIN {
             continue;
         }
@@ -1088,9 +1093,8 @@ fn saturated_alerts(w: &World) -> Vec<Alert> {
         } else {
             format!("build another {} or upgrade the tier", service.label())
         };
-        let waited = st.queue_max_today[k];
-        let gave_up = st.unanswered_why_today[k].all_units_busy;
-        a.message = format!("all {crewed} {label}s busy for {span} today (up to {waited} calls waiting at once, {gave_up} unanswered calls today because every unit was out): {fix}");
+        let (waited, gave_up, when) = if yday { (st.queue_max_yesterday[k], st.unanswered_why_yesterday[k].all_units_busy, "yesterday") } else { (st.queue_max_today[k], st.unanswered_why_today[k].all_units_busy, "today") };
+        a.message = format!("all {crewed} {label}s busy for {span} {when} (up to {waited} calls waiting at once, {gave_up} unanswered calls {when} because every unit was out): {fix}");
         out.push(a);
     }
     let no_route: u32 = st.unanswered_why_today.iter().map(|u| u.no_route).sum::<u32>() + st.unreachable_today;

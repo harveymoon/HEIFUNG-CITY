@@ -257,6 +257,16 @@ pub fn strip_mall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras) {
         g.part(Metal).slab(a, b, 1.1, 0.2, rgba(mul(pal.steel, 0.55)));
     }
     for face in c.faces(&poly).iter().filter(|x| !x.is_front && x.len > 6.0) {
+        // [r17-fixes] (photo 2026-11-24 F5) The offices upstairs have
+        // windows on every side, and the shops a back door: a three-storey
+        // strip mall seen from its end read as a blank box.
+        for k in 1..floors {
+            band_windows(g, c, rng, face, ground_h + (k - 1) as f32 * fh, 1, fh);
+        }
+        if face.len > 8.0 {
+            face.decal(g, f, Matte, face.len * 0.25, 1.1, 0.05, 1.0, 2.2, DARK);
+            face.bx(g, f, Metal, face.len * 0.25, 2.45, 0.12, Vec3::new(1.4, 0.08, 0.5), mul(pal.steel, 0.6));
+        }
         grime(g, c, rng, face, 0.0, height, 1.5);
     }
     // The car park: bays, cars, lamps, a pylon sign by the street.
