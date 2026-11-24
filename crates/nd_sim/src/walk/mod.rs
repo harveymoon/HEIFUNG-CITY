@@ -54,7 +54,14 @@ const INTERIOR_FACTOR: f32 = 1.15;
 /// paints them.
 pub const CROSSWALK_BACK: f32 = 3.3;
 /// A roundabout arm's zebra is further out, past the splitter island.
-pub const RING_CROSSWALK_BACK: f32 = 7.5;
+/// [r17-roundabouts] Two car lengths out from where the arm's lanes begin
+/// (was 7.5 m, one short car): a car leaving the ring that stops for
+/// walkers, and the one behind it, stand on the arm, not across the ring
+/// (Harvey's east-road rings queued behind cars held at their exits'
+/// zebras). The middle of the zebra is this far beyond the widest half
+/// width at the ring node; its near edge about 10 m beyond the node's
+/// radius.
+pub const RING_CROSSWALK_BACK: f32 = 13.0;
 /// Half the depth of a zebra along the street.
 pub const CROSSWALK_HALF: f32 = 1.2;
 /// The longest straight a junction corner's rounded kerb takes along each

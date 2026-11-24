@@ -94,6 +94,17 @@ impl Ring {
         Self { center, radius: radius.clamp(RING_MIN_RADIUS, RING_MAX_RADIUS), lanes: lanes.clamp(1, RING_MAX_LANES), level: 0.0 }
     }
 
+    /// [r17-roundabouts] `ring` with `lanes` ring lanes and its outer
+    /// edge (the kerb and pavement round it) where it was: the radius to
+    /// the middle of the road moves in or out by the change in half
+    /// width, within the radius limits.
+    pub fn widened(ring: Ring, lanes: u8) -> Ring {
+        let lanes = lanes.clamp(1, RING_MAX_LANES);
+        let outer = ring.radius + ring.half_width();
+        let hw = half_width_spec(RoadKind::Street, lanes, 0);
+        Ring::new(ring.center, outer - hw, lanes).at_level(ring.level)
+    }
+
     /// [w1-roads] The ring at `level` metres above the ground.
     pub fn at_level(self, level: f32) -> Self {
         Self { level: if level.is_finite() { level } else { 0.0 }, ..self }

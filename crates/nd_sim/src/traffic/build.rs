@@ -336,9 +336,15 @@ impl LaneNetwork {
                 for &(out, out_seg) in &outgoing {
                     let Some(&(_, angle)) = exits.iter().find(|&&(s, _)| s == out_seg) else { continue };
                     let (j, m) = (lane_index(&self.lanes[out as usize]), width(&outgoing, out_seg));
+                    // [r17-roundabouts] An arm narrower than the ring it
+                    // joins also reaches the next ring lane in from its
+                    // side: a one-lane arm onto a two-lane ring enters
+                    // either lane (outer for the first exits, inner for
+                    // later ones and U-turns; `apply_roundabouts`).
+                    let onto_ring = n < m && !roads.segment(inc_seg).ring && roads.segment(out_seg).ring;
                     let ok = match turn(angle) {
-                        -1 => j == i.min(m - 1),
-                        1 => j == m - 1 - (n - 1 - i).min(m - 1),
+                        -1 => j == i.min(m - 1) || (onto_ring && i + 1 == n && j == i + 1),
+                        1 => j == m - 1 - (n - 1 - i).min(m - 1) || (onto_ring && i == 0 && j + 2 == m - (n - 1).min(m - 1)),
                         _ => {
                             let lo = i * m / n.max(1);
                             let hi = ((i + 1) * m).div_ceil(n.max(1)).saturating_sub(1).max(lo);

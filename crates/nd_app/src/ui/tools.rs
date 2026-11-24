@@ -57,7 +57,7 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
         ui.horizontal_wrapped(|ui| {
             let mut d = tools.ring_radius * 2.0;
             if ui.add(egui::Slider::new(&mut d, nd_sim::roads::RING_MIN_RADIUS * 2.0..=nd_sim::roads::RING_MAX_RADIUS * 2.0).step_by(2.0).suffix(" m").text("across [Ctrl+wheel]")).changed() {
-                tools.ring_radius = d * 0.5;
+                tools.set_ring_radius(d * 0.5);
             }
             ui.separator();
             for n in 1..=nd_sim::roads::RING_MAX_LANES {
@@ -481,7 +481,11 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
             ui.horizontal_wrapped(|ui| {
                 changed |= ui.add(egui::Slider::new(&mut d, nd_sim::roads::RING_MIN_RADIUS * 2.0..=nd_sim::roads::RING_MAX_RADIUS * 2.0).step_by(2.0).suffix(" m").text("across")).changed();
                 for k in 1..=nd_sim::roads::RING_MAX_LANES {
-                    if ui.selectable_label(n == k, format!("{k} lane{}", super::fmt::s(k))).clicked() && n != k {
+                    // [r17-roundabouts] More or fewer lanes keep the
+                    // ring's outer edge: the lane comes out of (or goes
+                    // back to) the island, so nothing round it is taken.
+                    if ui.selectable_label(n == k, format!("{k} lane{}", super::fmt::s(k))).on_hover_text("Ring lanes; the outer edge stays, the island gives or takes the room").clicked() && n != k {
+                        d = nd_sim::roads::Ring::widened(nd_sim::roads::Ring::new(center, d * 0.5, n).at_level(lv), k).radius * 2.0;
                         n = k;
                         changed = true;
                     }

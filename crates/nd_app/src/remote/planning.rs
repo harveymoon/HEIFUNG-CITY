@@ -398,6 +398,47 @@ pub(super) fn add_roundabout(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String
     Ok(v)
 }
 
+/// [r17-roundabouts] `widen_roundabout {at | center, lanes?, implement?}`:
+/// give the roundabout nearest `at` (centre within 30 m) more ring lanes
+/// (default one more; `radius` picks among rings nested round one centre,
+/// else the smallest), keeping its outer edge (the new lane comes out of
+/// the island, so nothing around it is taken). Pending in the project
+/// unless `implement`.
+pub(super) fn widen_roundabout(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let at = match (opt_vec2(cmd, "at")?, opt_vec2(cmd, "center")?) {
+        (Some(p), _) | (None, Some(p)) => p,
+        _ => req_point(cmd)?,
+    };
+    let radius = opt_f32(cmd, "radius")?;
+    let w = &ctx.sim.world;
+    let key = |r: &nd_sim::roads::Ring| ((r.center.distance(at) * 10.0) as i64, ((r.radius - radius.unwrap_or(0.0)).abs() * 10.0) as i64);
+    let before = w.effective_plan().roundabouts().filter(|(_, r)| r.center.distance(at) < 30.0).min_by_key(|(_, r)| key(r)).map(|(_, r)| r).ok_or_else(|| format!("no roundabout within 30 m of ({:.0}, {:.0})", at.x, at.y))?;
+    let lanes = match opt_u64(cmd, "lanes")? {
+        Some(n) => u8::try_from(n).unwrap_or(u8::MAX),
+        None => before.lanes + 1,
+    };
+    if !(1..=nd_sim::roads::RING_MAX_LANES).contains(&lanes) {
+        return Err("a roundabout has 1, 2 or 3 ring lanes".into());
+    }
+    let id = ctx.sim.world.widen_roundabout(before.center, Some(before.radius), lanes)?;
+    let ring = ctx.sim.world.gesture(id).and_then(|g| g.ring()).ok_or("roundabout not in the plan")?;
+    let takes: Vec<Value> = ctx.sim.world.roundabout_takes(ring).into_iter().filter_map(|l| ctx.sim.world.lots.get(l).and_then(|x| x.building)).map(|b| json!(key_str(b))).collect();
+    let implemented = opt_bool(cmd, "implement")?.unwrap_or(false);
+    if implemented {
+        ctx.sim.world.implement();
+    }
+    ctx.tools.status = format!("Roundabout at ({:.0}, {:.0}) set to {} lanes by remote{}", ring.center.x, ring.center.y, ring.lanes, if implemented { " and implemented" } else { " (pending)" });
+    let mut v = project_state(ctx);
+    v["gesture_id"] = json!(id.0);
+    v["implemented"] = json!(implemented && ctx.sim.world.implement_refused.is_none());
+    v["roundabout"] = json!({
+        "center": [ring.center.x, ring.center.y], "radius": ring.radius, "lanes": ring.lanes,
+        "was": { "radius": before.radius, "lanes": before.lanes },
+        "takes_buildings": takes,
+    });
+    Ok(v)
+}
+
 /// [interchange] `add_interchange {from, to, lanes_fwd?, lanes_bwd?, check?,
 /// implement?}`: a diamond interchange for a cross street drawn from `from`
 /// to `to` across the highway, as the Road tool's Interchange preset lays

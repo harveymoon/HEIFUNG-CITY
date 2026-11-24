@@ -460,6 +460,31 @@ impl World {
         Ok(self.add_gesture(Gesture::Roundabout { center: ring.center, radius: ring.radius, lanes: ring.lanes, level: ring.level }))
     }
 
+    /// [r17-roundabouts] Give the roundabout nearest `near` (its centre
+    /// within 30 m; of rings nested round one centre, the one whose radius
+    /// is nearest `radius`, else the smallest) `lanes` ring lanes, in the
+    /// active project (one undo step; implement to build it). Its outer
+    /// edge stays where it is: the new lanes come out of the island, so
+    /// nothing more around it is taken (a ring too small for that grows
+    /// outward instead, to the smallest radius). Errors when there is no
+    /// ring there or it already has those lanes.
+    pub fn widen_roundabout(&mut self, near: Vec2, radius: Option<f32>, lanes: u8) -> Result<GestureId, String> {
+        let lanes = lanes.clamp(1, crate::roads::RING_MAX_LANES);
+        let key = |r: &crate::roads::Ring| ((r.center.distance(near) * 10.0) as i64, ((r.radius - radius.unwrap_or(0.0)).abs() * 10.0) as i64);
+        let (id, ring) = self
+            .effective_plan()
+            .roundabouts()
+            .filter(|(_, r)| r.center.distance(near) < 30.0)
+            .min_by_key(|(_, r)| key(r))
+            .ok_or_else(|| format!("no roundabout within 30 m of ({:.0}, {:.0})", near.x, near.y))?;
+        if ring.lanes == lanes {
+            return Err(format!("the roundabout already has {lanes} lane{}", if lanes == 1 { "" } else { "s" }));
+        }
+        let wider = crate::roads::Ring::widened(ring, lanes);
+        self.set_gesture(id, Gesture::Roundabout { center: wider.center, radius: wider.radius, lanes: wider.lanes, level: wider.level }, true);
+        Ok(id)
+    }
+
     /// Where a roundabout centre dropped at `p` lands: on a junction within
     /// 12 m (that junction becomes the roundabout), else on a street within
     /// 6 m, else `p`.

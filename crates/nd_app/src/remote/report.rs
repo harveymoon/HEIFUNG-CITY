@@ -1132,6 +1132,17 @@ pub struct Alert {
 }
 
 impl Alert {
+    /// [r17-roundabouts] Where each case is (a ring's centre for
+    /// `roundabout_over_capacity`).
+    pub fn points(&self) -> &[SVec2] {
+        &self.points
+    }
+
+    /// Ids of the first cases (`ring 7` for a roundabout).
+    pub fn examples(&self) -> &[String] {
+        &self.examples
+    }
+
     pub(super) fn new(kind: &'static str, severity: u8, hint: &'static str) -> Self {
         Self { kind, severity, count: 0, message: String::new(), hint, points: Vec::new(), examples: Vec::new() }
     }
