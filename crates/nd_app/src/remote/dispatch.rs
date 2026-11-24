@@ -1608,6 +1608,8 @@ mod dispatch_tests {
         crate::sim_thread::plant_failure(4_000_000_007, false);
         // `step` stops at the failed tick; the sim pauses and says why.
         assert_eq!(status, 200, "{body}");
+        assert!(body["stopped"].as_str().is_some_and(|s| s.contains("tick failed")), "{body}");
+        assert_eq!(body["ticks"], 7, "{body}");
         let sim = app.world().resource::<Sim>();
         assert!(sim.paused);
         assert!(sim.fault.as_deref().is_some_and(|f| f.contains("planted failure")), "{:?}", sim.fault);

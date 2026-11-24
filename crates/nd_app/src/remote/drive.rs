@@ -94,7 +94,9 @@ pub(super) fn drive(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             // tick runs (and predicts it on from there), then the car
             // drives through the seconds that tick shows.
             ctx.drive.tell_traffic(&mut ctx.sim);
-            ctx.sim.step_ticks(1);
+            if !ctx.sim.step_ticks(1) {
+                break;
+            }
             ctx.drive.tell_traffic(&mut ctx.sim);
             held_max = held_max.max(ctx.sim.world.traffic.player_held.len());
             for _ in 0..steps {

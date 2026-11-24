@@ -248,15 +248,17 @@ impl Sim {
     /// Advance the world `n` ticks right now, paused or not: the remote API's
     /// `step`. The events stay in `World::events` for `step_sim` to drain
     /// this frame, so renderers see them exactly as they see a normal tick.
-    pub fn step_ticks(&mut self, n: u32) {
+    /// [r16-crash] False when a tick failed (the game paused, see `fault`).
+    pub fn step_ticks(&mut self, n: u32) -> bool {
         if n > 0 && (self.player_car.is_some() || self.world.traffic.player.is_some()) {
             self.world.traffic.player = self.player_car.clone();
         }
         for _ in 0..n {
             if !self.tick_here() {
-                break;
+                return false;
             }
         }
+        true
     }
 
     /// [r16-crash] One tick on the screen's city, here. A panic in it is
