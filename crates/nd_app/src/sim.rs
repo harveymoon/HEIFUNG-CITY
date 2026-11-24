@@ -277,7 +277,12 @@ impl Sim {
     pub fn load(&mut self, path: &str) -> Result<(), String> {
         crate::crash::note_io("loading", Path::new(path));
         // [saves] Compressed or plain RON (saves from before compression).
-        self.world.replace(World::read_save(path)?);
+        let t = std::time::Instant::now();
+        let world = World::read_save(path)?;
+        // [r16-speed] What a load costs on the frame, beside what the
+        // renderers' rebuild costs on the next (`frame_stats`).
+        bevy::log::info!("load: {path} read, parsed and set up in {:.0} ms", t.elapsed().as_secs_f32() * 1000.0);
+        self.world.replace(world);
         crate::crash::note_io("loaded", Path::new(path));
         self.city_replaced();
         self.saved_tick = Some(self.world.clock.tick);

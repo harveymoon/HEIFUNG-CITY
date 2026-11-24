@@ -24,6 +24,10 @@
 //!   there when it is due and nothing waits for it.
 //! - Copies the screen lets go (the city a batch replaced, a stale batch)
 //!   are dropped on a third thread: freeing a big city takes tens of ms.
+//! - [r16-speed] The copy itself is `World::exact_copy`: the exact clone,
+//!   its biggest parts (the citizens, the walk graph, the traffic, ...)
+//!   cloned on three more threads beside the rest (Harvey's 17,000-person
+//!   city: ~100 ms on one core, ~35 ms this way).
 //!
 //! `ND_SIM_THREAD=0` ticks in the frame as before (see `Sim::advance`).
 
