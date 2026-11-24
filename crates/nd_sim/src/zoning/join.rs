@@ -231,7 +231,7 @@ pub fn join_parcels(polys: &[Vec<Vec2>], lu: LandUse, roads: &RoadNetwork) -> Ve
 /// folded into. Left alone, each was a landlocked lot of its own: dead
 /// ground beside a street, or a shard of pad by a building.
 fn fold_scraps(groups: &mut [Option<(Vec<usize>, Vec<Vec2>)>], lu: LandUse, roads: &RoadNetwork) {
-    if lu == LandUse::Park {
+    if lu == LandUse::Park || std::env::var("R15_NOFOLD").is_ok() {
         return;
     }
     let max_area = backland_max_area(lu);

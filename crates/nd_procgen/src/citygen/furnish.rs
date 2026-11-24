@@ -229,11 +229,7 @@ impl Ctx<'_> {
         // the stub joins nothing).
         let own: Vec<Vec2> = self.w.ports.port_of(b).and_then(|p| p.stub).map(|s| s.to_vec()).unwrap_or_default();
         for end in self.w.stub_ends_of(b) {
-            // [r15-lots] Not a few metres along from another junction (a
-            // T 12 m from a crossing): a node clear of them first.
-            let junctions: Vec<Vec2> = self.w.roads.nodes.iter().filter(|n| n.segments.iter().filter(|&&x| self.w.roads.try_segment(x).is_some_and(|x| x.alive && x.is_street())).count() > 2).map(|n| n.pos).collect();
-            let crowded = |q: &Vec2| junctions.iter().any(|j| j.distance(*q) > 0.5 && j.distance(*q) < 16.0);
-            let to = self.street_nodes_near(end, 240.0).into_iter().filter(|q| q.distance(end) > 3.0 && own.iter().all(|o| o.distance(*q) > 1.0)).min_by(|a, c| (crowded(a), a.distance(end)).partial_cmp(&(crowded(c), c.distance(end))).unwrap_or(std::cmp::Ordering::Equal));
+            let to = self.street_nodes_near(end, 240.0).into_iter().filter(|q| q.distance(end) > 3.0 && own.iter().all(|o| o.distance(*q) > 1.0)).min_by(|a, c| a.distance(end).total_cmp(&c.distance(end)));
             if let Some(to) = to {
                 self.w.add_road(&[end, to], 1, 1);
             }

@@ -60,14 +60,14 @@ pub(crate) fn rectangular_enough(poly: &[Vec2], axis: Vec2) -> bool {
 }
 
 /// [r15-lots] (F9) A flat roof on an odd hall: a deck over the whole
-/// footprint, a parapet round it and a row of roof lights.
+/// footprint with a roof light in the middle (where it fits inside).
 fn flat_hall_roof(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y: f32, color: [f32; 3]) {
-    extrude(g, &c.frame, Metal, poly, y, y + 0.2, mul(color, 0.8));
-    parapet(g, c, poly, y + 0.2, 0.7, 0.25, Metal, color);
+    extrude(g, &c.frame, Metal, poly, y, y + 0.3, mul(color, 0.8));
     let centre = poly_center(poly);
-    if point_in_polygon(centre, poly) {
-        let r = (inradius(poly) * 0.6).clamp(0.8, 6.0);
-        extrude(g, &c.frame, Glass, &rect(centre.x, centre.y, r, r * 0.35), y + 0.2, y + 0.6, [0.55, 0.6, 0.62]);
+    let r = (inradius(poly) * 0.6).clamp(0.8, 6.0);
+    let light = rect(centre.x, centre.y, r, r * 0.35);
+    if light.iter().all(|p| point_in_polygon(*p, poly)) {
+        extrude(g, &c.frame, Glass, &light, y + 0.3, y + 0.7, [0.55, 0.6, 0.62]);
     }
 }
 
