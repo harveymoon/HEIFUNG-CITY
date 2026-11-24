@@ -67,7 +67,7 @@ impl World {
         };
         let name = {
             const NAMES: [&str; 12] = ["Kessler", "Morrow", "Saltmarsh", "Greyhaven", "Tideway", "Ironbank", "Halcyon", "Wharfside", "Neon Bay", "Driftmoor", "Calloway", "Ashgate"];
-            let n = *NAMES.choose(&mut self.rng).unwrap();
+            let n = *NAMES.choose(&mut self.rng).expect("NAMES is not empty");
             match kind {
                 PortKind::ShippingPort => format!("Port of {n}"),
                 PortKind::FerryTerminal => format!("{n} Ferry"),

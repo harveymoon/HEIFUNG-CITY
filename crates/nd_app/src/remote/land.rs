@@ -191,7 +191,7 @@ pub fn summary(w: &World) -> Value {
     let rivers: Vec<Value> = land
         .rivers
         .iter()
-        .map(|r| json!({ "kind": r.kind().label(), "width": round(r.width), "current_mps": round(r.current), "hydro_ok": r.current >= MIN_HYDRO_CURRENT, "source": v2(r.points[0]), "mouth": v2(*r.points.last().unwrap()), "length": round(nd_sim::geom::path_length(&r.points)) }))
+        .map(|r| json!({ "kind": r.kind().label(), "width": round(r.width), "current_mps": round(r.current), "hydro_ok": r.current >= MIN_HYDRO_CURRENT, "source": r.points.first().copied().map(v2), "mouth": r.points.last().copied().map(v2), "length": round(nd_sim::geom::path_length(&r.points)) }))
         .collect();
     let bridges: Vec<(f32, bool)> = w.roads.alive_segments().filter(|(_, s)| s.bridge).map(|(id, s)| (w.roads.segment_points(id).0.distance(w.roads.segment_points(id).1), s.is_highway())).collect();
     let (entries, exits) = w.highway_ends();

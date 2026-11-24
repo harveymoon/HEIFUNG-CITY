@@ -95,8 +95,8 @@ impl WalkGraph {
             let away = roads.away_dir(s, nid);
             let ends: Vec<u32> = e.iter().filter(|x| x.1 == s).map(|x| x.0).collect();
             let side = |n: &u32| away.perp_dot(self.nodes[*n as usize].pos - centre);
-            let ccw = *ends.iter().max_by(|x, y| side(x).total_cmp(&side(y))).unwrap();
-            let cw = *ends.iter().min_by(|x, y| side(x).total_cmp(&side(y))).unwrap();
+            let ccw = *ends.iter().max_by(|x, y| side(x).total_cmp(&side(y))).expect("a node with ends");
+            let cw = *ends.iter().min_by(|x, y| side(x).total_cmp(&side(y))).expect("a node with ends");
             arms.push(Arm { seg: s, ang: away.y.atan2(away.x), ccw, cw, street: roads.segment(s).is_street() });
         }
         arms.sort_by(|x, y| x.ang.total_cmp(&y.ang).then(x.seg.cmp(&y.seg)));

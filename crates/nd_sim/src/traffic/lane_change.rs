@@ -140,7 +140,7 @@ impl Traffic {
                     // wait for a gap. Two cars there each wanting the
                     // other's lane used to stand side by side for good.
                     let here = c.route[c.idx];
-                    let (goal, s_end, s) = (*c.route.last().unwrap(), c.s_end, c.s);
+                    let (goal, s_end, s) = (*c.route.last().expect("route[idx] is there"), c.s_end, c.s);
                     // [r2-traffic] Not back into ways it gave up on, queues
                     // and turning back weighed (out and back down a dead
                     // end into the same jam: K52).
@@ -190,7 +190,7 @@ impl Traffic {
             }
             let acc_here = c.idm(v0, gap, c.v - l.v);
             let gain = OVERTAKE_GAIN * ((1.2 - aggr) / 0.7).max(0.15);
-            let (goal, s_end, s) = (*c.route.last().unwrap(), c.s_end, c.s);
+            let (goal, s_end, s) = (*c.route.last().expect("route[idx] is there"), c.s_end, c.s);
             let old_len = self.net.route_length(&c.route[c.idx..], s);
             for target in [lane.left, lane.right].into_iter().flatten() {
                 let Some(acc) = self.change_ok(id, target, safe_brake) else { continue };

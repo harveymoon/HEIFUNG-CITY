@@ -530,7 +530,7 @@ impl PlaceBook {
             Some(i) => i,
             None => {
                 if self.places.len() >= MAX_PLACES {
-                    let worst = (0..self.places.len()).min_by(|&x, &y| self.places[x].value(now).total_cmp(&self.places[y].value(now))).unwrap();
+                    let worst = (0..self.places.len()).min_by(|&x, &y| self.places[x].value(now).total_cmp(&self.places[y].value(now))).expect("only when the list is full");
                     self.places.remove(worst);
                 }
                 self.places.push(PlaceMemory { place: b, land_use: lu, visits: 0, last_visit: now, score: 0.0, best: experience, worst: experience, regular: false, never: false });
@@ -575,7 +575,7 @@ impl PlaceBook {
             return;
         }
         if self.acquaintances.len() >= MAX_ACQUAINTANCES {
-            let k = (0..self.acquaintances.len()).min_by_key(|&k| (self.acquaintances[k].times, self.acquaintances[k].last)).unwrap();
+            let k = (0..self.acquaintances.len()).min_by_key(|&k| (self.acquaintances[k].times, self.acquaintances[k].last)).expect("only when the list is full");
             self.acquaintances.remove(k);
         }
         self.acquaintances.push(Acquaintance { who, place, times: 1, last: now });

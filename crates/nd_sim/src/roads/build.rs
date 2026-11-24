@@ -691,11 +691,11 @@ impl RoadNetwork {
 
         let mut chain = vec![a];
         for (_, n) in cuts {
-            if *chain.last().unwrap() != n {
+            if *chain.last().expect("a chain starts with its first node") != n {
                 chain.push(n);
             }
         }
-        if *chain.last().unwrap() != b {
+        if *chain.last().expect("a chain starts with its first node") != b {
             chain.push(b);
         }
         chain.windows(2).map(|w| self.link(w[0], w[1], lanes_fwd, lanes_bwd, kind)).collect()

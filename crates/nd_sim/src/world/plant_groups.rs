@@ -117,7 +117,7 @@ impl World {
     }
 
     fn make_group(&self, kind: PowerPlantKind, members: &[(BuildingId, LotId)]) -> PlantGroup {
-        let founder = members.iter().map(|&(id, _)| id).min_by_key(|&id| (self.buildings[id].built_tick, self.buildings[id].lot)).unwrap();
+        let founder = members.iter().map(|&(id, _)| id).min_by_key(|&id| (self.buildings[id].built_tick, self.buildings[id].lot)).expect("a group has members");
         PlantGroup {
             kind,
             name: group_name(kind, founder),
@@ -232,7 +232,7 @@ impl World {
         let base: f32 = members.iter().map(|&(id, _)| kind.capacity_mw() * self.plant_scale(&self.buildings[id])).sum::<f32>() + kind.capacity_mw() * kind.size_scale(area);
         let joins = (!members.is_empty()).then(|| {
             // The name the joined park keeps: the oldest member's.
-            let founder = members.iter().map(|&(id, _)| id).min_by_key(|&id| (self.buildings[id].built_tick, self.buildings[id].lot)).unwrap();
+            let founder = members.iter().map(|&(id, _)| id).min_by_key(|&id| (self.buildings[id].built_tick, self.buildings[id].lot)).expect("a group has members");
             group_name(kind, founder)
         });
         Some(PlantJoin {
@@ -307,7 +307,7 @@ impl World {
             }
         }
         for gi in order {
-            let mut row = folded[gi].take().unwrap();
+            let mut row = folded[gi].take().expect("each group is taken once");
             row.air /= row.capacity_mw.max(0.01);
             row.cost_per_mwh = (row.mean_mw > 0.05).then(|| row.upkeep_per_day / (row.mean_mw * 24.0));
             out.push(row);

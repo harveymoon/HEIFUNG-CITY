@@ -417,7 +417,7 @@ impl World {
         let mut done = vec![false; zoning.len()];
         for &lid in &keep {
             let m = members_of[&lid].clone();
-            let first = *m.iter().min().unwrap();
+            let first = *m.iter().min().expect("not empty");
             let Some((lu, gid)) = zoning[first] else { continue };
             let zid = match zone_of.get(&gid) {
                 Some(z) => *z,

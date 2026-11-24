@@ -213,7 +213,7 @@ impl World {
                 let lane = *c.route.get(c.idx)?;
                 let l = net.lanes.get(lane as usize)?;
                 // Mid-block, not at the junction or just past it.
-                (matches!(l.kind, LaneKind::Road { .. }) && c.s > 8.0 && l.length - c.s > 12.0).then(|| (id, lane, c.s, c.pos, c.heading, *c.route.last().unwrap(), c.s_end))
+                (matches!(l.kind, LaneKind::Road { .. }) && c.s > 8.0 && l.length - c.s > 12.0).then(|| (id, lane, c.s, c.pos, c.heading, *c.route.last().expect("route[idx] is there"), c.s_end))
             })
             .collect();
         for (id, lane, s, pos, heading, goal, s_end) in cands {

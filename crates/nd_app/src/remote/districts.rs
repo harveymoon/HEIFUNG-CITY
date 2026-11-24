@@ -172,7 +172,7 @@ pub fn district(cmd: &Value, w: &mut World, overlays: &mut Overlays, tools: &mut
                 name: opt_str(cmd, "rename")?.or(if field(cmd, "id").is_some() { opt_str(cmd, "name")? } else { None }).map(str::to_string),
             };
             w.set_district_policy(id, change)?;
-            let d = w.districts.get(id).unwrap();
+            let d = w.districts.get(id).ok_or("no such district")?;
             json!({ "id": id, "name": d.name, "policy": d.policy_label(), "story": d.story.map(|s| s.key()), "policies": d.policies.summary() })
         }
         "remove" | "delete" => {

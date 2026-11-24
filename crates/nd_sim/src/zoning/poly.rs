@@ -59,7 +59,7 @@ pub fn clip_halfplane(poly: &[Vec2], origin: Vec2, normal: Vec2) -> Vec<Vec2> {
 
 pub(super) fn dedupe(mut poly: Vec<Vec2>) -> Vec<Vec2> {
     poly.dedup_by(|a, b| a.distance(*b) < 0.05);
-    if poly.len() > 1 && poly[0].distance(*poly.last().unwrap()) < 0.05 {
+    if poly.len() > 1 && poly[0].distance(*poly.last().expect("len > 1")) < 0.05 {
         poly.pop();
     }
     poly
@@ -89,7 +89,7 @@ pub(super) fn to_geo(poly: &[Vec2]) -> Polygon<f64> {
 /// Exterior ring as a counter-clockwise polygon without the closing point.
 pub(super) fn from_geo(p: &Polygon<f64>) -> Vec<Vec2> {
     let mut pts: Vec<Vec2> = p.exterior().0.iter().map(|c| Vec2::new(c.x as f32, c.y as f32)).collect();
-    if pts.len() > 1 && pts[0].distance(*pts.last().unwrap()) < 1e-3 {
+    if pts.len() > 1 && pts[0].distance(*pts.last().expect("len > 1")) < 1e-3 {
         pts.pop();
     }
     ccw(&dedupe(pts))

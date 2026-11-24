@@ -1034,7 +1034,7 @@ impl World {
                 let c = &mut self.citizens[cid];
                 let name = self.buildings[g].name.clone();
                 c.remember(tick, format!("Bought a painting at {name}."));
-                let z = self.buildings[g].business.as_mut().unwrap();
+                let z = self.buildings[g].business.as_mut().expect("a gallery: a business");
                 z.take(Resource::Art, 1.0);
                 z.revenue_today += price;
                 z.deals += 1;
@@ -1051,7 +1051,7 @@ impl World {
                     let c = &mut self.citizens[cid];
                     let name = self.buildings[g].name.clone();
                     c.remember(tick, format!("Loved the opening at {name}. Gave {gift:.0} towards the next show."));
-                    let z = self.buildings[g].business.as_mut().unwrap();
+                    let z = self.buildings[g].business.as_mut().expect("a gallery: a business");
                     z.revenue_today += gift;
                     z.donations += gift;
                     self.scene.donations_total += gift;
@@ -1163,7 +1163,7 @@ impl World {
                 BusinessKind::CargoHub => "The city built it to bring in freight in bulk.".to_string(),
                 BusinessKind::Grocery => "The town needs grocers for everyone's groceries.".to_string(),
                 k if k.industry().is_some() => {
-                    let ik = k.industry().unwrap();
+                    let ik = k.industry().expect("matched on industry().is_some()");
                     format!("The ground and the neighbours here favour {} ({}).", ik.label(), k.label())
                 }
                 k => format!("The market said {} would pay its way here.", crate::names::a(k.label())),

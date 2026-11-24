@@ -208,7 +208,7 @@ impl Circle {
             }
         }
         self.ties.push(Tie::new(who, tick, met, at));
-        self.ties.last_mut().unwrap()
+        self.ties.last_mut().expect("pushed on the line above")
     }
 
     pub fn note(&mut self, n: TalkNote) {

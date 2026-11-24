@@ -869,7 +869,7 @@ impl Containers {
                 let r = &self.boxes[id];
                 let ok = r.slot.is_some_and(|s| !taken.contains(&s) && (!r.forty || (s % 2 == 0 && !taken.contains(&(s + 1)))));
                 if ok {
-                    let s = r.slot.unwrap();
+                    let s = r.slot.expect("ok: it has a slot");
                     taken.insert(s);
                     if r.forty {
                         taken.insert(s + 1);

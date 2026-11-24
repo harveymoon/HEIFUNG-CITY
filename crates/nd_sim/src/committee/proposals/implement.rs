@@ -64,7 +64,7 @@ impl World {
         p.status = ProjectStatus::Pending;
         p.log.push(format!("day {}: the mayor picked option {}", self.committee_today() + 1, pick + 1));
         self.stage_zoning(&mut p);
-        *self.committee.project_mut(id).unwrap() = p;
+        *self.committee.project_mut(id).ok_or("the project went away while its site was staged")? = p;
         Ok(())
     }
 
@@ -80,7 +80,7 @@ impl World {
         p.log.push(format!("day {}: sites looked for again, {} found", self.committee_today() + 1, p.options.len()));
         self.stage_zoning(&mut p);
         let n = p.options.len();
-        *self.committee.project_mut(id).unwrap() = p;
+        *self.committee.project_mut(id).ok_or("the project went away while its sites were staged")? = p;
         Ok(n)
     }
 
@@ -94,7 +94,7 @@ impl World {
         if let Some(w) = p.world_project {
             self.delete_project(w);
         }
-        let q = self.committee.project_mut(id).unwrap();
+        let q = self.committee.project_mut(id).ok_or("the project went away")?;
         q.world_project = None;
         q.status = ProjectStatus::Dismissed { day: today };
         q.log.push(format!("day {}: dismissed by the mayor", today + 1));
@@ -111,7 +111,7 @@ impl World {
             return Err(format!("{} is {}", p.name, p.status.key()));
         }
         let result = self.carry_out(&p);
-        let q = self.committee.project_mut(id).unwrap();
+        let q = self.committee.project_mut(id).ok_or("the project went away while it was carried out")?;
         match &result {
             Ok(done) => {
                 q.status = ProjectStatus::Implemented { day: today };

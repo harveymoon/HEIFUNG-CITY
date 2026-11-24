@@ -51,7 +51,7 @@ pub fn smooth_track(points: &[Vec2], roads: &RoadNetwork) -> Vec<Vec2> {
         eased.push(b - d1 * tangent);
         eased.push(b + d2 * tangent);
     }
-    eased.push(*pts.last().unwrap());
+    eased.push(*pts.last().expect("a track has points"));
     eased.dedup_by(|a, b| a.distance(*b) < 0.5);
     // Long legs get waypoints so the spline runs straight between the
     // bends instead of bulging towards the next control point.

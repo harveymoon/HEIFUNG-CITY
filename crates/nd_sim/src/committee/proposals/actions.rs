@@ -260,7 +260,7 @@ impl Action {
             }
             Action::Remediate { area: a } => {
                 let name = area(a, "area")?;
-                let ar = find_area(&areas, &name).unwrap();
+                let ar = find_area(&areas, &name).ok_or_else(|| format!("no area {name}"))?;
                 let dirt = area_contamination(w, &areas, ar);
                 if dirt < 0.5 {
                     return Err(format!("the ground in {name} is clean enough (contamination {dirt:.1})"));

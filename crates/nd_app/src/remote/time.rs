@@ -79,8 +79,14 @@ pub(super) fn step(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     while left > 0 {
         let r = ctx.sim.world.clock.tick % 60;
         let chunk = left.min(if r < 59 { 59 - r } else { 60 });
-        ctx.sim.step_ticks(chunk as u32);
+        let from = ctx.sim.world.clock.tick;
+        let whole = ctx.sim.step_ticks(chunk as u32);
         ctx.history.observe(&ctx.sim.world);
+        if !whole {
+            // [r16-crash] A tick failed: the game paused; stop here.
+            left -= ctx.sim.world.clock.tick - from;
+            break;
+        }
         left -= chunk;
         if crate::committee::daily(&mut ctx.sim, &mut ctx.committee, &mut ctx.flags) {
             meeting = true;
@@ -90,6 +96,9 @@ pub(super) fn step(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let mut v = json!({ "ticks": n - left, "clock": clock(&ctx.sim), "took_ms": start.elapsed().as_millis() as u64 });
     if meeting {
         v["stopped"] = json!("the committee meets: the city is paused for the meeting (committee_meeting to run it)");
+    }
+    if left > 0 && !meeting {
+        v["stopped"] = json!(format!("a tick failed and the game paused: {}", ctx.sim.fault.as_deref().unwrap_or("")));
     }
     Ok(v)
 }

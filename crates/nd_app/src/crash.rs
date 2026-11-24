@@ -30,6 +30,8 @@ static LAST_IO: Mutex<Option<String>> = Mutex::new(None);
 static RESERVE_PTR: AtomicPtr<u8> = AtomicPtr::new(std::ptr::null_mut());
 static IN_OOM: AtomicBool = AtomicBool::new(false);
 static INSTALLED: AtomicBool = AtomicBool::new(false);
+/// [r16-crash] Where contained panics were logged this session.
+static LOGGED_AT: Mutex<std::collections::BTreeSet<String>> = Mutex::new(std::collections::BTreeSet::new());
 
 /// The system allocator, watched for failures (see the module notes). The
 /// game's only `#[global_allocator]`: with the `heap-count` feature it also
@@ -175,10 +177,19 @@ pub fn install() {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         // [r15-polish] A panic `contain` catches is not a crash: one line
-        // on stderr, no crash log.
-        if CONTAINING.with(|c| c.get()) {
+        // on stderr, no crash log. [r16-crash] One `contain_logged`
+        // catches is our own bug the game survived: the crash log too.
+        let mode = CONTAINING.with(|c| c.get());
+        if mode != NOT {
             let at = info.location().map_or_else(|| "unknown".to_string(), |l| format!("{}:{}", l.file(), l.line()));
             eprintln!("contained panic at {at}: {}", message(info));
+            // Once per place a session: a client repeating a bad call must
+            // not rotate the real crash logs away.
+            if mode == LOGGED && LOGGED_AT.lock().is_ok_and(|mut seen| seen.insert(at.clone())) {
+                let what = WHAT.with(|w| w.get());
+                write_log(&format!("contained ({what}): the game carried on
+{}", panic_text(info)));
+            }
             return;
         }
         write_log(&panic_text(info));
@@ -186,18 +197,42 @@ pub fn install() {
     }));
 }
 
+/// How a panic on this thread is taken: a crash, contained quietly
+/// (`contain`) or contained with a crash log (`contain_logged`).
+const NOT: u8 = 0;
+const QUIET: u8 = 1;
+const LOGGED: u8 = 2;
+
 thread_local! {
-    /// Set while `contain` runs `f` on this thread.
-    static CONTAINING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set while `contain` or `contain_logged` runs `f` on this thread.
+    static CONTAINING: std::cell::Cell<u8> = const { std::cell::Cell::new(NOT) };
+    /// What `contain_logged` was running, for its log.
+    static WHAT: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
 }
 
 /// [r15-polish] Run `f`, catching a panic in it instead of letting it
 /// take the game down: for third-party code that can panic on a bad
 /// device (gilrs, the gamepad library). `Err` holds the panic's message.
 pub fn contain<R>(f: impl FnOnce() -> R) -> Result<R, String> {
-    let was = CONTAINING.with(|c| c.replace(true));
+    run_contained(QUIET, "", f)
+}
+
+/// [r16-crash] Run `f` (`what`: "a sim tick", "the remote command
+/// \"inspect\"", ...), catching a panic in it: the panic is written to
+/// the crash log as usual, marked contained, and `Err` holds its message
+/// so the caller can carry on (keep the old city, refuse the command).
+/// For our own code on the paths that must not take the game down: the
+/// sim tick, loading a save, the remote API.
+pub fn contain_logged<R>(what: &'static str, f: impl FnOnce() -> R) -> Result<R, String> {
+    run_contained(LOGGED, what, f)
+}
+
+fn run_contained<R>(mode: u8, what: &'static str, f: impl FnOnce() -> R) -> Result<R, String> {
+    let was = CONTAINING.with(|c| c.replace(mode));
+    let was_what = WHAT.with(|w| w.replace(what));
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
     CONTAINING.with(|c| c.set(was));
+    WHAT.with(|w| w.set(was_what));
     r.map_err(|p| p.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| p.downcast_ref::<String>().cloned()).unwrap_or_else(|| "(no message)".to_string()))
 }
 
@@ -233,7 +268,12 @@ mod tests {
         let v: Vec<u8> = Vec::new();
         let r = contain(|| v[0]);
         assert!(r.is_err_and(|m| m.contains("index out of bounds")));
-        assert!(!CONTAINING.with(|c| c.get()));
+        assert_eq!(CONTAINING.with(|c| c.get()), NOT);
+        // [r16-crash] Logged containment nests inside a quiet one and
+        // puts the outer mode back.
+        let r = contain(|| contain_logged("a test", || -> u8 { panic!("boom") }));
+        assert_eq!(r, Ok(Err("boom".to_string())));
+        assert_eq!(CONTAINING.with(|c| c.get()), NOT);
     }
 
     #[test]
