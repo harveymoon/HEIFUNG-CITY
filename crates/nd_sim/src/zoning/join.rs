@@ -222,8 +222,8 @@ pub fn join_parcels(polys: &[Vec<Vec2>], lu: LandUse, roads: &RoadNetwork) -> Ve
     groups.into_iter().flatten().collect()
 }
 
-/// [r15-lots] (F1, F8) Scraps folded into a neighbour: a piece that is no
-/// lot for `lu` by its shape (a sliver, a sharp inward corner, under 8 m
+/// [r15-lots] (F1, F8) Scraps folded into a neighbour (homes, shops and
+/// clubs): a piece that is no lot for `lu` by its shape (a sliver, a sharp inward corner, under 8 m
 /// across: the thin radial wedges between the lots round a circus) or a
 /// small piece of backland (under 60% of a lot) joins the usable lot
 /// beside it that shares the longest boundary, when the two together make
@@ -231,7 +231,9 @@ pub fn join_parcels(polys: &[Vec<Vec2>], lu: LandUse, roads: &RoadNetwork) -> Ve
 /// folded into. Left alone, each was a landlocked lot of its own: dead
 /// ground beside a street, or a shard of pad by a building.
 fn fold_scraps(groups: &mut [Option<(Vec<usize>, Vec<Vec2>)>], lu: LandUse, roads: &RoadNetwork) {
-    if lu == LandUse::Park || std::env::var("R15_NOFOLD").is_ok() {
+    // Works yards and civic grounds join parcels and take backland their
+    // own way (above); a park is walked into whatever its shape.
+    if lu == LandUse::Park || lu.takes_backland() {
         return;
     }
     let max_area = backland_max_area(lu);

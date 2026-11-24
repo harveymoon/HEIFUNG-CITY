@@ -115,7 +115,8 @@ fn make_lot_shaped(zone_id: ZoneId, lu: LandUse, poly: Vec<Vec2>, center: Vec2, 
     // [r15-lots] (F1) A zoned lot the raw outline would kill loses its
     // hairline spikes (a lot that was fine keeps its outline as it was).
     let raw_dead = reflex_vertex(&poly, 0.6).is_some() || polygon_area(&poly) / perimeter(&poly).powi(2) < MIN_COMPACTNESS;
-    let poly = if strict_shape && raw_dead { cut_spikes(&poly) } else { poly };
+    // (A park is walked into whatever its shape: judged as it always was.)
+    let poly = if strict_shape && raw_dead && lu != LandUse::Park { cut_spikes(&poly) } else { poly };
     #[cfg(test)]
     let area = polygon_area(&poly);
     let (fi, road) = frontage_edge(&poly, roads, lu.fronts_paths());
@@ -137,7 +138,7 @@ fn make_lot_shaped(zone_id: ZoneId, lu: LandUse, poly: Vec<Vec2>, center: Vec2, 
     ];
     let has_frontage = road.is_some() && frontage_long_enough(&poly, fi, lu, roads);
     // [r15-lots] (F1) The shape is judged without the booleans' crumbs.
-    let shape = shape_outline(&poly);
+    let shape = if lu == LandUse::Park { poly.clone() } else { shape_outline(&poly) };
     let compact = polygon_area(&shape) / perimeter(&shape).powi(2);
     let sharp = reflex_vertex(&shape, 0.6).is_some();
     let landlocked = !has_frontage || (strict_shape && (sharp || compact < MIN_COMPACTNESS)) || (u1 - u0) < 8.0 || (v1 - v0) < 8.0;
@@ -197,6 +198,7 @@ fn make_lot_shaped(zone_id: ZoneId, lu: LandUse, poly: Vec<Vec2>, center: Vec2, 
 /// squared perimeter under [`MIN_COMPACTNESS`]) or `"narrow"` (under 8 m
 /// across its frontage rectangle). None: usable by shape.
 pub fn landlocked_why(lu: LandUse, poly: &[Vec2], roads: &RoadNetwork) -> Option<&'static str> {
+    let judged = |p: &[Vec2]| if lu == LandUse::Park { p.to_vec() } else { shape_outline(p) };
     if poly.len() < 3 {
         return Some("sliver");
     }
@@ -208,9 +210,9 @@ pub fn landlocked_why(lu: LandUse, poly: &[Vec2], roads: &RoadNetwork) -> Option
     let (v0, v1) = extents(poly, inward);
     if road.is_none() || !frontage_long_enough(poly, fi, lu, roads) {
         Some("no_frontage")
-    } else if reflex_vertex(&shape_outline(poly), 0.6).is_some() {
+    } else if reflex_vertex(&judged(poly), 0.6).is_some() {
         Some("sharp_corner")
-    } else if { let s = shape_outline(poly); polygon_area(&s) / perimeter(&s).powi(2) < MIN_COMPACTNESS } {
+    } else if { let s = judged(poly); polygon_area(&s) / perimeter(&s).powi(2) < MIN_COMPACTNESS } {
         Some("sliver")
     } else if (u1 - u0) < 8.0 || (v1 - v0) < 8.0 {
         Some("narrow")
