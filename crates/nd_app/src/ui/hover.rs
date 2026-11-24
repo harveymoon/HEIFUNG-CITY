@@ -67,6 +67,13 @@ pub fn card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor) {
                 if lot.landlocked && !is_park(lot) { "  ·  landlocked" } else { "" },
                 if lot.park.is_some() { "  ·  park" } else { "" }
             )));
+            // [r15-lots] (F1) Why nothing can be built here.
+            if lot.building.is_none() && !is_park(lot) {
+                if let Some(why) = w.lot_landlocked_why(lot_id) {
+                    let tail = if why.starts_with("backland") { "; a meadow until a neighbour's site takes it in" } else { "" };
+                    ui.label(small(format!("{why}{tail}")));
+                }
+            }
             if let Some(a) = access {
                 ui.label(small(format!("{}  ·  {:+.2} for homes", access_text.clone().unwrap_or_else(|| a.describe()), a.value)));
             }
@@ -111,7 +118,8 @@ fn ground_label(lot: &nd_sim::Lot) -> &'static str {
     } else if is_park(lot) {
         "Park"
     } else if lot.landlocked {
-        "Unusable ground"
+        // [r15-lots] (F1) a meadow now, not dead earth
+        "Backland meadow"
     } else {
         "Vacant lot"
     }

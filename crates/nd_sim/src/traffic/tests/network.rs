@@ -214,4 +214,13 @@ fn a_pocket_fed_only_by_one_way_streets_is_never_routed_into() {
     }
     // A vehicle already in there still finds its way about it.
     assert!(net.route_lanes(pocket_lanes[0], 0.0, pocket_lanes[1], 1.0).is_some());
+    // [r15-lots] (F10) A building site's lorry may go in (Clucky's
+    // Drive-Thru, waiting for days on "no deliveries"); nothing else.
+    let p = net.lanes[pocket_lanes[0] as usize].points[0].lerp(net.lanes[pocket_lanes[0] as usize].points[1], 0.5);
+    assert!(net.find_route(main, Vec2::new(-200.0, 0.0), pocket[0], p).is_none());
+    assert!(net.find_route_into_pocket(main, Vec2::new(-200.0, 0.0), pocket[0], p).is_some(), "the site's lorry gets in");
+    // Into a pocket only when the goal is in one: a goal on the main road
+    // is never reached through a pocket.
+    let (r, _, _) = net.find_route_into_pocket(main, Vec2::new(-200.0, 0.0), main, Vec2::new(250.0, 0.0)).unwrap();
+    assert!(r.iter().all(|&l| !net.trap[l as usize]));
 }

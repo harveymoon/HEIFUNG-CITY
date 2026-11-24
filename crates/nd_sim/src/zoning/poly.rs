@@ -227,3 +227,98 @@ pub(super) fn simplify_collinear(poly: &[Vec2]) -> Vec<Vec2> {
         }
     }
 }
+
+/// [r15-lots] (F1) The outline a lot's shape is judged by: the crumbs the
+/// polygon booleans leave taken out. First the tips of thin spikes
+/// pointing out (under 15 degrees, their triangle under 3% of the lot: a
+/// hairline tail left where a shore or corridor cut slid past) are cut
+/// off; then the outline is simplified so that every vertex of it stays
+/// within 0.6 m of the result (Douglas-Peucker, measured against the
+/// outline as it was, so a curve is never flattened step by step): a
+/// metre-long zig where two cuts nearly met goes, a real notch (an L), a
+/// slit cut in or a real shard stays. Judged on the raw outline, a
+/// 3,500 m2 waterfront lot with a 45 m tail and house plots with a step
+/// in the back fence read as "sharp" or "sliver" and were dead ground.
+pub fn shape_outline(poly: &[Vec2]) -> Vec<Vec2> {
+    simplify_ring(&cut_spikes(poly), 0.6)
+}
+
+/// [r15-lots] (F1) An outline with the tips of its thin spikes pointing
+/// out cut off (under 15 degrees, each under 3% of the area). A zoned lot
+/// is this outline ([`make_lot`]): its frontage rectangle, which the
+/// building fills, then does not run out along the hairline.
+pub fn cut_spikes(poly: &[Vec2]) -> Vec<Vec2> {
+    let area = polygon_area(poly).abs();
+    let mut pts = poly.to_vec();
+    loop {
+        let n = pts.len();
+        if n <= 3 {
+            return pts;
+        }
+        let mut best: Option<(f32, usize)> = None;
+        for i in 0..n {
+            let (a, b, c) = (pts[(i + n - 1) % n], pts[i], pts[(i + 1) % n]);
+            let tri = ((b - a).perp_dot(c - a) * 0.5).abs();
+            let (ba, bc) = ((a - b).normalize_or_zero(), (c - b).normalize_or_zero());
+            let convex = (b - a).perp_dot(c - b) > 0.0;
+            if convex && ba != Vec2::ZERO && bc != Vec2::ZERO && ba.dot(bc) > 15f32.to_radians().cos() && tri < area * 0.03 && best.is_none_or(|(t, _)| tri < t) {
+                best = Some((tri, i));
+            }
+        }
+        match best {
+            Some((_, i)) => {
+                pts.remove(i);
+            }
+            None => return pts,
+        }
+    }
+}
+
+/// [r15-lots] Douglas-Peucker on a closed ring: the fewest vertices that
+/// keep every vertex of `ring` within `tol` of the result.
+fn simplify_ring(ring: &[Vec2], tol: f32) -> Vec<Vec2> {
+    let n = ring.len();
+    if n <= 3 {
+        return ring.to_vec();
+    }
+    // Start at the vertex farthest from the middle (a real corner, never a
+    // crumb), split there and at the vertex farthest from it.
+    let mid = ring.iter().fold(Vec2::ZERO, |a, p| a + *p) / n as f32;
+    let first = (0..n).max_by(|&a, &b| ring[a].distance(mid).total_cmp(&ring[b].distance(mid))).unwrap_or(0);
+    let ring: Vec<Vec2> = (0..n).map(|k| ring[(first + k) % n]).collect();
+    let ring = ring.as_slice();
+    let far = (1..n).max_by(|&a, &b| ring[a].distance(ring[0]).total_cmp(&ring[b].distance(ring[0]))).unwrap_or(n / 2);
+    fn seg_dist(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+        let ab = b - a;
+        let l2 = ab.length_squared();
+        let t = if l2 < 1e-9 { 0.0 } else { ((p - a).dot(ab) / l2).clamp(0.0, 1.0) };
+        p.distance(a + ab * t)
+    }
+    fn dp(pts: &[Vec2], tol: f32, keep: &mut Vec<bool>, lo: usize, hi: usize) {
+        if hi <= lo + 1 {
+            return;
+        }
+        let (mut worst, mut at) = (0.0, lo);
+        for k in lo + 1..hi {
+            let d = seg_dist(pts[k], pts[lo], pts[hi]);
+            if d > worst {
+                worst = d;
+                at = k;
+            }
+        }
+        if worst > tol {
+            keep[at] = true;
+            dp(pts, tol, keep, lo, at);
+            dp(pts, tol, keep, at, hi);
+        }
+    }
+    let mut chain: Vec<Vec2> = ring.to_vec();
+    chain.push(ring[0]);
+    let mut keep = vec![false; n + 1];
+    keep[0] = true;
+    keep[far] = true;
+    dp(&chain, tol, &mut keep, 0, far);
+    dp(&chain, tol, &mut keep, far, n);
+    let out: Vec<Vec2> = (0..n).filter(|&i| keep[i]).map(|i| ring[i]).collect();
+    if out.len() < 3 { ring.to_vec() } else { out }
+}

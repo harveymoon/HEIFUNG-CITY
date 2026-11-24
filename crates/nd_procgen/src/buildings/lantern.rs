@@ -425,7 +425,9 @@ pub fn alley_walkups(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let fh = c.fh();
     let site = site(c, 0.6);
     let (lo, hi) = bounds(&site);
-    if hi.x - lo.x < 11.0 || hi.y - lo.y < 8.0 {
+    // [r15-lots] A wedge or a triangle of a site is no pair of blocks
+    // either side of an alley (their window bands ran out past its slant).
+    if hi.x - lo.x < 11.0 || hi.y - lo.y < 8.0 || polygon_area(&site).abs() < 0.8 * (hi.x - lo.x) * (hi.y - lo.y) {
         return shophouses(g, c, rng);
     }
     let aw = rng.random_range(2.6..3.4);

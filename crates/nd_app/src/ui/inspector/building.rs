@@ -204,12 +204,15 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
 
     // ── The business ──
     if let Some(bz) = &b.business {
-        section(ui, if bz.closed { "BUSINESS  ·  CLOSED" } else { "BUSINESS" });
+        // [r15-lots] (F10) A site's business is not open yet, and the
+        // people on its payroll are the building crew, not its staff.
+        let site = b.construction.is_some();
+        section(ui, if site { "BUSINESS  ·  OPENS WHEN BUILT" } else if bz.closed { "BUSINESS  ·  CLOSED" } else { "BUSINESS" });
         ui.horizontal_wrapped(|ui| {
             figure(ui, "cash", format!("{:.0}", bz.money), if bz.money < 0.0 { WARN } else { IVORY });
             figure(ui, "today in", format!("+{:.0}", bz.revenue_today), GOOD);
             figure(ui, "today out", format!("-{:.0}", bz.spend_today), WARN);
-            figure(ui, "staff", format!("{}/{}", b.workers.len(), b.jobs), IVORY);
+            figure(ui, if site { "site crew" } else { "staff" }, format!("{}/{}", b.workers.len(), b.jobs), IVORY);
         });
         cashflow(ui, &bz.books, (bz.revenue_today, bz.spend_today));
         // [ledger] Its rent and its account.
