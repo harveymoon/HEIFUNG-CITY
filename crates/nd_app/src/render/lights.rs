@@ -254,9 +254,7 @@ pub(super) fn tag_windows(g: &mut Geometry, slot: Option<u32>) {
 
 /// A stable per-building number for its turn and its pace.
 fn building_hash(slot: u32) -> u64 {
-    let mut h = (slot as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    h ^= h >> 31;
-    h.wrapping_mul(0xBF58_476D_1CE4_E5B9) >> 17
+    nd_sim::hash::step31((slot as u64).wrapping_mul(nd_sim::hash::PHI)) >> 17
 }
 
 /// Recount who is in every building every `UPDATE_EVERY_TICKS` sim minutes

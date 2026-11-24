@@ -24,6 +24,10 @@ use crate::rail::BoxKind;
 use crate::vehicle::BodyType;
 use crate::zoning::LandUse;
 use crate::food_trucks::{SpotKind, TruckKind};
+use crate::companies::Specialty;
+use crate::shore::JettyKind;
+use crate::tax::TaxCategory;
+use crate::vehicle::Livery;
 
 use BusinessKind as K;
 use Resource as R;
@@ -679,6 +683,78 @@ pub struct BusinessRow {
     /// becomes the pollution clause for the dirty ones. `None`: the
     /// inspector says it by its industry.
     pub about: Option<&'static str>,
+    // ── [r16-tidy] facts that were lists keyed on the kind elsewhere ──
+    /// Its vans' livery (was `vehicle.rs` `Livery::for_business`).
+    pub livery: Livery,
+    /// Runs vehicles of its own (cabs, tow trucks, bin lorries, trucking)
+    /// besides the liveried vans (`companies::runs_fleet` is this or a
+    /// livery).
+    pub fleet: bool,
+    /// Grows a yard of vehicles: a bigger yard first, then depots across
+    /// town (was `companies::yard_trade`).
+    pub grows_yards: bool,
+    /// A shop that grows a store into a chain (was `companies::shop_chain`).
+    pub chain: bool,
+    /// Least lot area its site needs, m² (a forecourt of cars, a yard; was
+    /// `companies::min_area`).
+    pub min_area: f32,
+    /// The specialty of a corp grown out of it (was
+    /// `Specialty::of_origin`).
+    pub specialty: Specialty,
+    /// Tied to its ground (a farm, a well, a port, a mine): never packs up
+    /// to move when its building is bought out (was `world/relocate.rs`
+    /// `rooted`).
+    pub rooted: bool,
+    /// Fits a shop unit in a tenanted building (was `world/tenants.rs`
+    /// `fits_shopfront`).
+    pub shopfront: bool,
+    /// One of the places to eat or go out (was the `leisure::EATERIES` and
+    /// `NIGHTS_OUT` lists, now read off this column).
+    pub leisure: LeisureGroup,
+    /// Its line in the business tax schedule (was
+    /// `TaxCategory::of_business`).
+    pub tax: TaxLine,
+    /// The jetty it builds on the water (was `World::jetty_kind_for`).
+    pub jetty: Option<JettyKind>,
+}
+
+/// [r16-tidy] Which of the places to eat or go out a kind is
+/// (`crate::leisure`; the nightclub, `Venue`, keeps its own rules).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LeisureGroup {
+    None,
+    /// A place to eat (`leisure::EATERIES`).
+    Eatery,
+    /// A place to go out (`leisure::NIGHTS_OUT`).
+    NightOut,
+}
+
+/// [r16-tidy] A kind's line in the business tax schedule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaxLine {
+    /// Not taxed as a business (homes, the city's own places).
+    None,
+    /// Always this line.
+    Fixed(TaxCategory),
+    /// The nightlife line of its building's tier.
+    Nightlife,
+}
+
+/// [r16-tidy] The kinds of a [`LeisureGroup`], in `BusinessKind` order (`N`
+/// must be their count: checked at compile time).
+pub const fn kinds_in<const N: usize>(g: LeisureGroup) -> [BusinessKind; N] {
+    let mut out = [K::Office; N];
+    let (mut i, mut n) = (0, 0);
+    while i < BusinessKind::COUNT {
+        if BUSINESSES[i].leisure as u8 == g as u8 {
+            assert!(n < N, "more kinds in the group than N");
+            out[n] = BUSINESSES[i].kind;
+            n += 1;
+        }
+        i += 1;
+    }
+    assert!(n == N, "fewer kinds in the group than N");
+    out
 }
 
 const BASE: BusinessRow = BusinessRow {
@@ -710,6 +786,18 @@ const BASE: BusinessRow = BusinessRow {
     land_value_lift: None,
     sign: None,
     about: None,
+    livery: Livery::None,
+    fleet: false,
+    grows_yards: false,
+    chain: false,
+    min_area: 0.0,
+    // (Every row sets its own.)
+    specialty: Specialty::Industry,
+    rooted: false,
+    shopfront: false,
+    leisure: LeisureGroup::None,
+    tax: TaxLine::None,
+    jetty: None,
 };
 
 // Inspector lines shared by several kinds.
@@ -729,6 +817,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         hours: Hours::new(6, 22),
         food: true,
         about: Some(FARMING),
+        livery: Livery::Grocery,
+        specialty: Specialty::Food,
+        rooted: true,
+        tax: TaxLine::Fixed(TaxCategory::Farming),
         ..BASE
     },
     BusinessRow {
@@ -738,6 +830,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         hours: Hours::new(6, 22),
         food: true,
         about: Some(FARMING),
+        livery: Livery::Utility,
+        specialty: Specialty::Food,
+        rooted: true,
+        tax: TaxLine::Fixed(TaxCategory::Farming),
         ..BASE
     },
     BusinessRow {
@@ -748,6 +844,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         hours: Hours::new(6, 22),
         food: true,
         about: Some(FARMING),
+        livery: Livery::Grocery,
+        specialty: Specialty::Food,
+        rooted: true,
+        tax: TaxLine::Fixed(TaxCategory::Farming),
         ..BASE
     },
     BusinessRow {
@@ -758,6 +858,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         hours: Hours::new(6, 22),
         food: true,
         about: Some(FARMING),
+        livery: Livery::Grocery,
+        specialty: Specialty::Food,
+        rooted: true,
+        tax: TaxLine::Fixed(TaxCategory::Farming),
         ..BASE
     },
     // Milling is automated: a hand runs six of grain an hour. At two the mill added too little to
@@ -770,6 +874,11 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         hours: Hours::new(6, 22),
         food: true,
         about: Some(FOOD_PROCESSING),
+        livery: Livery::Utility,
+        specialty: Specialty::Food,
+        rooted: true,
+        tax: TaxLine::Fixed(TaxCategory::Farming),
+        jetty: Some(JettyKind::Cargo),
         ..BASE
     },
     BusinessRow {
@@ -777,6 +886,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         label: "parts fab",
         outputs: &[(R::Parts, 1.0)],
         hours: Hours::new(6, 22),
+        livery: Livery::Utility,
+        specialty: Specialty::Industry,
+        tax: TaxLine::Fixed(TaxCategory::Manufacturing),
+        jetty: Some(JettyKind::Cargo),
         ..BASE
     },
     // Two parts (18 at base) make 0.8 electronics (36); at 0.4 the plant added nothing to what it
@@ -787,6 +900,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         inputs: &[(R::Parts, 2.0)],
         outputs: &[(R::Electronics, 0.8)],
         hours: Hours::new(6, 22),
+        livery: Livery::Parcels,
+        specialty: Specialty::Logistics,
+        tax: TaxLine::Fixed(TaxCategory::Tech),
+        jetty: Some(JettyKind::Cargo),
         ..BASE
     },
     // Shops pay town wages, so what a job adds to its inputs at base price covers its share of
@@ -804,6 +921,11 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         food: true,
         home_order: Some((R::Groceries, 4.0)),
         about: Some(CORNER_SHOP),
+        livery: Livery::Grocery,
+        chain: true,
+        specialty: Specialty::Food,
+        shopfront: true,
+        tax: TaxLine::Fixed(TaxCategory::Grocery),
         ..BASE
     },
     BusinessRow {
@@ -819,6 +941,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         student_trade: true,
         home_order: Some((R::BakedGoods, 2.0)),
         about: Some(CORNER_SHOP),
+        livery: Livery::Pizza,
+        specialty: Specialty::Food,
+        shopfront: true,
+        tax: TaxLine::Fixed(TaxCategory::Bakery),
         ..BASE
     },
     BusinessRow {
@@ -833,6 +959,11 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         student_trade: true,
         home_order: Some((R::Goods, 1.0)),
         about: Some("Sells to the people round about; its customers come on foot and by car."),
+        livery: Livery::Parcels,
+        chain: true,
+        specialty: Specialty::Logistics,
+        shopfront: true,
+        tax: TaxLine::Fixed(TaxCategory::GadgetShop),
         ..BASE
     },
     BusinessRow {
@@ -845,6 +976,8 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         outing: true,
         loudness: 0.9,
         about: Some(GOING_OUT),
+        specialty: Specialty::Leisure,
+        tax: TaxLine::Nightlife,
         ..BASE
     },
     BusinessRow {
@@ -852,6 +985,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         label: "office",
         hours: Hours::new(8, 18),
         about: Some("Office work: steady, well-paid jobs. Its staff buy lunch and coffee nearby."),
+        specialty: Specialty::Property,
         ..BASE
     },
     BusinessRow {
@@ -859,6 +993,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         label: "parking",
         hours: Hours::ALWAYS,
         about: Some("Drivers coming to this street pay to park here instead of circling the block."),
+        specialty: Specialty::Motors,
+        rooted: true,
+        tax: TaxLine::Fixed(TaxCategory::Parking),
         ..BASE
     },
     BusinessRow {
@@ -867,6 +1004,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         outputs: &[(R::Crude, 2.5)],
         hours: Hours::ALWAYS,
         fouls_air: true,
+        specialty: Specialty::Energy,
+        rooted: true,
+        tax: TaxLine::Fixed(TaxCategory::Oil),
         ..BASE
     },
     BusinessRow {
@@ -876,6 +1016,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         outputs: &[(R::Fuel, 0.8), (R::Plastics, 0.4)],
         hours: Hours::new(6, 22),
         fouls_air: true,
+        specialty: Specialty::Energy,
+        tax: TaxLine::Fixed(TaxCategory::Refinery),
+        jetty: Some(JettyKind::Cargo),
         ..BASE
     },
     // Fuel is burnt by the hour in `World::industry_hourly`, which also pays the handling and bay
@@ -886,6 +1029,11 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         inputs: &[(R::Fuel, 0.15)],
         hours: Hours::ALWAYS,
         about: Some("Stores and loads containers for the freight trade: handling fees, and lorries in and out."),
+        fleet: true,
+        min_area: 500.0,
+        specialty: Specialty::Logistics,
+        tax: TaxLine::Fixed(TaxCategory::Logistics),
+        jetty: Some(JettyKind::Cargo),
         ..BASE
     },
     BusinessRow {
@@ -895,6 +1043,11 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         hours: Hours::ALWAYS,
         truck_lot: true,
         about: Some("Parks idle lorries and buses for a fee, with fuel and noise from the yard."),
+        fleet: true,
+        grows_yards: true,
+        min_area: 500.0,
+        specialty: Specialty::Logistics,
+        tax: TaxLine::Fixed(TaxCategory::Logistics),
         ..BASE
     },
     BusinessRow {
@@ -904,6 +1057,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         hours: Hours::new(4, 16),
         food: true,
         about: Some("Boats landing fish for the processing plants and markets: part of the local fishing economy."),
+        specialty: Specialty::Food,
+        rooted: true,
+        tax: TaxLine::Fixed(TaxCategory::Fishing),
+        jetty: Some(JettyKind::Fishing),
         ..BASE
     },
     BusinessRow {
@@ -914,6 +1071,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         hours: Hours::new(6, 22),
         food: true,
         about: Some(FISH_PROCESSING),
+        specialty: Specialty::Food,
+        rooted: true,
+        tax: TaxLine::Fixed(TaxCategory::Fishing),
+        jetty: Some(JettyKind::Fishing),
         ..BASE
     },
     BusinessRow {
@@ -921,6 +1082,11 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         label: "tow company",
         hours: Hours::ALWAYS,
         about: Some("Tows broken-down and illegally parked cars to its pound; owners pay to get them back."),
+        fleet: true,
+        grows_yards: true,
+        min_area: 500.0,
+        specialty: Specialty::Motors,
+        tax: TaxLine::Fixed(TaxCategory::Logistics),
         ..BASE
     },
     // [tourism] Breakfast: a little of the town's groceries. Rooms are paid for by the night
@@ -932,6 +1098,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         hours: Hours::ALWAYS,
         lodging: true,
         about: Some("Rooms for visitors: tourists sleep here and spend in the shops, bars and sights round it."),
+        specialty: Specialty::Leisure,
         ..BASE
     },
     // Lives on fares (`world/taxis.rs`).
@@ -940,6 +1107,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         label: "taxi company",
         hours: Hours::ALWAYS,
         about: Some("Runs taxis: people without a car get a ride, for a fare."),
+        fleet: true,
+        specialty: Specialty::Motors,
+        rooted: true,
         ..BASE
     },
     // Handling fees (`world/cargo_hubs.rs`).
@@ -949,6 +1119,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         hours: Hours::ALWAYS,
         truck_lot: true,
         about: Some("Freight terminal: businesses nearby import through it in shared trucks instead of one lorry each."),
+        livery: Livery::Parcels,
+        specialty: Specialty::Logistics,
+        rooted: true,
+        jetty: Some(JettyKind::Cargo),
         ..BASE
     },
     // [economy] Services paid by the job (`world/pressure.rs`), car and bike sales
@@ -960,6 +1134,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         max_floors: Some(1),
         needs_site: true,
         about: Some("Fixes the town's cars."),
+        min_area: 350.0,
+        specialty: Specialty::Motors,
+        tax: TaxLine::Fixed(TaxCategory::GadgetShop),
         ..BASE
     },
     BusinessRow {
@@ -969,6 +1146,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         max_floors: Some(1),
         needs_site: true,
         about: Some("Sells cars: more people drive, and more cars need parking."),
+        min_area: 700.0,
+        specialty: Specialty::Motors,
+        tax: TaxLine::Fixed(TaxCategory::GadgetShop),
         ..BASE
     },
     BusinessRow {
@@ -978,6 +1158,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         max_floors: Some(1),
         needs_site: true,
         about: Some("A private hauler: empties the bins of whoever pays."),
+        fleet: true,
+        grows_yards: true,
+        specialty: Specialty::Industry,
+        tax: TaxLine::Fixed(TaxCategory::Logistics),
         ..BASE
     },
     BusinessRow {
@@ -988,6 +1172,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         max_floors: Some(1),
         needs_site: true,
         about: Some("Sells and mends bikes: more people ride."),
+        specialty: Specialty::Motors,
+        shopfront: true,
+        tax: TaxLine::Fixed(TaxCategory::GadgetShop),
         ..BASE
     },
     // A job adds about 50 a day at base prices (7 an hour of value added at `JOB_RATE`), like the
@@ -1002,6 +1189,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         food: true,
         needs_site: true,
         about: Some(FARMING),
+        specialty: Specialty::Food,
+        rooted: true,
+        tax: TaxLine::Fixed(TaxCategory::Farming),
         ..BASE
     },
     BusinessRow {
@@ -1014,6 +1204,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         food: true,
         needs_site: true,
         about: Some(FARMING),
+        specialty: Specialty::Food,
+        rooted: true,
+        tax: TaxLine::Fixed(TaxCategory::Farming),
         ..BASE
     },
     BusinessRow {
@@ -1027,6 +1220,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         needs_site: true,
         fouls_air: true,
         about: Some(FOOD_PROCESSING),
+        specialty: Specialty::Food,
+        rooted: true,
+        tax: TaxLine::Fixed(TaxCategory::Farming),
         ..BASE
     },
     // Sold out of town at the export discount.
@@ -1038,6 +1234,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         max_floors: Some(1),
         needs_site: true,
         fouls_air: true,
+        specialty: Specialty::Industry,
+        rooted: true,
+        tax: TaxLine::Fixed(TaxCategory::Oil),
         ..BASE
     },
     // Berth fees (`world/waterfront.rs`).
@@ -1050,6 +1249,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         needs_site: true,
         tab: 1.3,
         about: Some("Lets berths to boat owners and keeps a cafe on the water: a place to go out."),
+        specialty: Specialty::Leisure,
+        rooted: true,
+        tax: TaxLine::Nightlife,
         ..BASE
     },
     BusinessRow {
@@ -1060,6 +1262,8 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         food: true,
         needs_site: true,
         about: Some("Adds to the local fishing economy and provides a dock for the fishing fleet: its trawlers land fish for the gutting sheds and markets."),
+        specialty: Specialty::Food,
+        rooted: true,
         ..BASE
     },
     BusinessRow {
@@ -1072,6 +1276,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         food: true,
         needs_site: true,
         about: Some(FISH_PROCESSING),
+        specialty: Specialty::Food,
+        rooted: true,
+        tax: TaxLine::Fixed(TaxCategory::Fishing),
+        jetty: Some(JettyKind::Fishing),
         ..BASE
     },
     BusinessRow {
@@ -1084,6 +1292,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         food: true,
         needs_site: true,
         about: Some(FISH_PROCESSING),
+        specialty: Specialty::Food,
+        rooted: true,
+        tax: TaxLine::Fixed(TaxCategory::Fishing),
+        jetty: Some(JettyKind::Fishing),
         ..BASE
     },
     BusinessRow {
@@ -1098,6 +1310,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         food: true,
         needs_site: true,
         about: Some("Sells the catch to the public: fresh fish for the neighbourhood."),
+        specialty: Specialty::Food,
+        tax: TaxLine::Fixed(TaxCategory::Grocery),
+        jetty: Some(JettyKind::Fishing),
         ..BASE
     },
     // Diners and golfers pay at the door (`World::venue_tabs`).
@@ -1113,6 +1328,8 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         needs_site: true,
         tab: 1.5,
         about: Some(GOING_OUT),
+        specialty: Specialty::Leisure,
+        tax: TaxLine::Nightlife,
         ..BASE
     },
     // hours: Floodlit until late.
@@ -1126,6 +1343,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         needs_site: true,
         tab: 1.7,
         about: Some(GOING_OUT),
+        min_area: 2800.0,
+        specialty: Specialty::Leisure,
+        tax: TaxLine::Nightlife,
         ..BASE
     },
     BusinessRow {
@@ -1136,6 +1356,8 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         max_floors: Some(2),
         needs_site: true,
         about: Some("Artists make art in cheap space here; the galleries nearby sell it."),
+        specialty: Specialty::Leisure,
+        tax: TaxLine::Fixed(TaxCategory::GadgetShop),
         ..BASE
     },
     // Hangs art bought from the studios; sells it to visitors.
@@ -1152,6 +1374,8 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         needs_site: true,
         tab: 0.4,
         about: Some("Hangs and sells art and holds openings: a place to go out, free at the door."),
+        specialty: Specialty::Leisure,
+        tax: TaxLine::Nightlife,
         ..BASE
     },
     // [dirty-industry] One and a half of ore (9 at base) and a little fuel make an ingot (75):
@@ -1167,6 +1391,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         needs_site: true,
         start_capital: 5.0,
         fouls_air: true,
+        specialty: Specialty::Industry,
+        tax: TaxLine::Fixed(TaxCategory::Refinery),
+        jetty: Some(JettyKind::Cargo),
         ..BASE
     },
     // Intensive: five times the livestock per hand of a cattle farm (the whole point of it), so it
@@ -1183,6 +1410,8 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         start_capital: 5.0,
         fouls_air: true,
         about: Some("Factory farming: livestock out by the lorryload for the slaughterhouses{dirt}."),
+        specialty: Specialty::Food,
+        tax: TaxLine::Fixed(TaxCategory::Farming),
         ..BASE
     },
     BusinessRow {
@@ -1195,6 +1424,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         needs_site: true,
         start_capital: 5.0,
         fouls_air: true,
+        specialty: Specialty::Energy,
+        tax: TaxLine::Fixed(TaxCategory::Refinery),
+        jetty: Some(JettyKind::Cargo),
         ..BASE
     },
     // [waterfront] Breakfasts and the bar; rooms are paid by the night (`World::daily_tourism`).
@@ -1208,6 +1440,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         waterfront: true,
         needs_site: true,
         about: Some("Rooms down to the sand: tourists sleep here, pay well by the night and spend in town."),
+        specialty: Specialty::Leisure,
         ..BASE
     },
     // Diners, drinkers and renters pay at the door (`World::venue_tabs`).
@@ -1226,6 +1459,8 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         needs_site: true,
         tab: 2.4,
         about: Some(GOING_OUT),
+        specialty: Specialty::Leisure,
+        jetty: Some(JettyKind::Pier),
         ..BASE
     },
     // max_floors: [waterfront] Low on the shore: a resort spreads, it does not climb.
@@ -1242,6 +1477,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         needs_site: true,
         tab: 1.1,
         about: Some(GOING_OUT),
+        specialty: Specialty::Leisure,
         ..BASE
     },
     BusinessRow {
@@ -1256,6 +1492,8 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         needs_site: true,
         tab: 1.8,
         about: Some(GOING_OUT),
+        specialty: Specialty::Leisure,
+        jetty: Some(JettyKind::Pontoon),
         ..BASE
     },
     // [sweep-sim] A job adds about 9 an hour at base prices, a baker's 15 (the café sells fewer,
@@ -1274,6 +1512,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         sign: Some(b"CAFE"),
         home_order: Some((R::BakedGoods, 1.0)),
         about: Some("Coffee and pastries, a place to sit: students and office workers drop in."),
+        livery: Livery::Pizza,
+        specialty: Specialty::Food,
+        shopfront: true,
+        tax: TaxLine::Fixed(TaxCategory::Bakery),
         ..BASE
     },
     BusinessRow {
@@ -1289,6 +1531,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         student_trade: true,
         home_order: Some((R::Goods, 1.0)),
         about: Some("Books and stationery: students and downtown browsers drop in."),
+        livery: Livery::Parcels,
+        specialty: Specialty::Logistics,
+        shopfront: true,
+        tax: TaxLine::Fixed(TaxCategory::GadgetShop),
         ..BASE
     },
     // [K34] Its steel comes from the boxes it cuts up (`World::cut_up_boxes`); the trickle here is
@@ -1301,6 +1547,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         max_floors: Some(1),
         needs_site: true,
         about: Some("Cuts worn-out shipping containers (and other scrap) into steel: sold to building sites in town and out of town."),
+        specialty: Specialty::Industry,
         ..BASE
     },
     // [r4-leisure-places] Kitchens cook meals (sold as baked goods: over the counter, at lunch and
@@ -1325,6 +1572,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         land_value_lift: Some((80.0, 0.02)),
         sign: Some(b"DINER"),
         about: Some("Breakfast all day and a booth for the family: the neighbourhood drops in morning, noon and night."),
+        specialty: Specialty::Food,
+        shopfront: true,
+        leisure: LeisureGroup::Eatery,
+        tax: TaxLine::Fixed(TaxCategory::Bakery),
         ..BASE
     },
     BusinessRow {
@@ -1344,6 +1595,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         land_value_lift: Some((80.0, 0.02)),
         sign: Some(b"NOODLES"),
         about: Some("Noodles at the counter: lunch for the office crowd, a late bowl after a night out. Cooks with the mills' flour and the farms' meat and greens."),
+        specialty: Specialty::Food,
+        shopfront: true,
+        leisure: LeisureGroup::Eatery,
+        tax: TaxLine::Fixed(TaxCategory::Bakery),
         ..BASE
     },
     BusinessRow {
@@ -1362,6 +1617,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         trash: 1.6,
         sign: Some(b"PIZZA"),
         about: Some("Pizza by the slice and by the pie: families and students. Buys flour, milk and toppings from the mills and farms."),
+        specialty: Specialty::Food,
+        shopfront: true,
+        leisure: LeisureGroup::Eatery,
+        tax: TaxLine::Fixed(TaxCategory::Bakery),
         ..BASE
     },
     BusinessRow {
@@ -1381,6 +1640,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         trash: 2.0,
         sign: Some(b"BURGERS"),
         about: Some("A drive-through on the main road: cheap and quick, open till late, and its takeaway boxes fill the bins."),
+        specialty: Specialty::Food,
+        leisure: LeisureGroup::Eatery,
+        tax: TaxLine::Fixed(TaxCategory::Bakery),
         ..BASE
     },
     BusinessRow {
@@ -1400,6 +1662,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         land_value_lift: Some((120.0, 0.035)),
         sign: Some(b"FOOD HALL"),
         about: Some("Many kitchens under one roof: the lunch crowd from the offices and visitors in from out of town."),
+        specialty: Specialty::Food,
+        shopfront: true,
+        leisure: LeisureGroup::Eatery,
+        tax: TaxLine::Fixed(TaxCategory::Bakery),
         ..BASE
     },
     BusinessRow {
@@ -1417,6 +1683,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         trash: 2.0,
         sign: Some(b"EATS"),
         about: Some("Food trucks and stalls on an open lot, busiest after dark: cheap eats, visitors love it, the bins overflow."),
+        specialty: Specialty::Food,
+        leisure: LeisureGroup::Eatery,
+        tax: TaxLine::Fixed(TaxCategory::Bakery),
         ..BASE
     },
     BusinessRow {
@@ -1432,6 +1701,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         land_value_lift: Some((110.0, 0.05)),
         sign: Some(b"DINING"),
         about: Some("A long dinner for those who can pay: dates and anniversaries, rich regulars. Lifts the street's land value."),
+        specialty: Specialty::Leisure,
+        shopfront: true,
+        leisure: LeisureGroup::Eatery,
+        tax: TaxLine::Nightlife,
         ..BASE
     },
     BusinessRow {
@@ -1451,6 +1724,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         land_value_lift: Some((80.0, 0.02)),
         sign: Some(b"BOBA"),
         about: Some("Bubble tea and juice: the young, the afternoon, the walk home from school."),
+        specialty: Specialty::Food,
+        shopfront: true,
+        leisure: LeisureGroup::Eatery,
+        tax: TaxLine::Fixed(TaxCategory::Bakery),
         ..BASE
     },
     BusinessRow {
@@ -1466,6 +1743,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         trash: 1.3,
         sign: Some(b"BAR"),
         about: Some("A drink after work and into the night: drinks bought from the grocers, regulars at the bar, some noise."),
+        specialty: Specialty::Leisure,
+        shopfront: true,
+        leisure: LeisureGroup::NightOut,
+        tax: TaxLine::Nightlife,
         ..BASE
     },
     BusinessRow {
@@ -1481,6 +1762,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         trash: 1.3,
         sign: Some(b"KARAOKE"),
         about: Some("Private rooms to sing in by the hour, late into the night: friends in groups, and loud."),
+        specialty: Specialty::Leisure,
+        shopfront: true,
+        leisure: LeisureGroup::NightOut,
+        tax: TaxLine::Nightlife,
         ..BASE
     },
     BusinessRow {
@@ -1500,6 +1785,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         land_value_lift: Some((120.0, 0.035)),
         sign: Some(b"CINEMA"),
         about: Some("Films in the evening and matinees by day: families, dates. A share of each ticket goes to the film's distributor."),
+        specialty: Specialty::Leisure,
+        leisure: LeisureGroup::NightOut,
+        tax: TaxLine::Nightlife,
         ..BASE
     },
     BusinessRow {
@@ -1516,6 +1804,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         land_value_lift: Some((160.0, 0.06)),
         sign: Some(b"THEATRE"),
         about: Some("Shows booked from touring companies: older and richer theatregoers and visitors. Lifts the street round it."),
+        specialty: Specialty::Leisure,
+        leisure: LeisureGroup::NightOut,
+        tax: TaxLine::Nightlife,
         ..BASE
     },
     BusinessRow {
@@ -1534,6 +1825,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         land_value_lift: Some((160.0, 0.06)),
         sign: Some(b"LIVE"),
         about: Some("Bands every night: the young, loud, the band's share of the door paid out of town."),
+        specialty: Specialty::Leisure,
+        leisure: LeisureGroup::NightOut,
+        tax: TaxLine::Nightlife,
         ..BASE
     },
     BusinessRow {
@@ -1550,6 +1844,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         trash: 1.2,
         sign: Some(b"BOWL"),
         about: Some("Lanes for families and friends, afternoon to late, with a snack bar."),
+        specialty: Specialty::Leisure,
+        leisure: LeisureGroup::NightOut,
+        tax: TaxLine::Nightlife,
         ..BASE
     },
     // Machines wear out: a little electronics for spares.
@@ -1567,6 +1864,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         trash: 1.2,
         sign: Some(b"ARCADE"),
         about: Some("Game cabinets and VR booths: teenagers and the young after school and at night."),
+        specialty: Specialty::Leisure,
+        shopfront: true,
+        leisure: LeisureGroup::NightOut,
+        tax: TaxLine::Nightlife,
         ..BASE
     },
     BusinessRow {
@@ -1582,6 +1883,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         land_value_lift: Some((80.0, 0.02)),
         sign: Some(b"GYM"),
         about: Some("Early mornings before work and evenings after: its regulars come most days."),
+        specialty: Specialty::Leisure,
+        shopfront: true,
+        leisure: LeisureGroup::NightOut,
+        tax: TaxLine::Nightlife,
         ..BASE
     },
     BusinessRow {
@@ -1598,6 +1903,10 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         loudness: 0.4,
         sign: Some(b"COMEDY"),
         about: Some("Stand-up in a basement: couples and friends, late evenings. The comics take a share of the door."),
+        specialty: Specialty::Leisure,
+        shopfront: true,
+        leisure: LeisureGroup::NightOut,
+        tax: TaxLine::Nightlife,
         ..BASE
     },
     // [r8] Its lorries burn fuel; its trade is the fees.
@@ -1607,6 +1916,8 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         inputs: &[(R::Fuel, 0.1)],
         hours: Hours::new(6, 22),
         about: Some("A shipping company in town: leases empty containers, sends its lorries round the firms to fill each box with their exports, and ships the full boxes from the port or the freight yard, charging each firm a fee per load."),
+        fleet: true,
+        specialty: Specialty::Logistics,
         ..BASE
     },
     // [r14-builders] A builder's yard: no recipe, it lives on its contracts (`world/builders.rs`):
@@ -1620,6 +1931,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         // [r14-builders] Enough to carry its first crews until the first instalment.
         start_capital: 3.0,
         about: Some("A builder: crews, vans and lorries out of a yard. Hired per job to put up the city's buildings; buys each site's materials from the builders' merchant, the makers in town or imports, and fetches them in its own lorries or hires a haulier."),
+        livery: Livery::Construction,
+        min_area: 450.0,
+        specialty: Specialty::Property,
         ..BASE
     },
     // [r14-builders] The builders' merchant: its trade stock (every good a site bill names,
@@ -1641,6 +1955,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         // at 1.0 its first bulk order put it in the red and it never restocked.
         start_capital: 12.0,
         about: Some("A builders' merchant and hardware store: timber, bricks, steel and parts by the pallet for the builders and the trades over the trade counter, delivered by its own lorries; paint, tools and garden things for everyone else."),
+        livery: Livery::Construction,
+        min_area: 900.0,
+        specialty: Specialty::Industry,
         ..BASE
     },
     // [r14-foodtrucks] A household's truck, van, cart or stand: no lot, no
@@ -1661,6 +1978,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         trash: 1.5,
         sign: Some(b"EATS"),
         about: Some("A food truck run by a household: buys its ingredients from the town's grocers and farms each morning, drives out to where the crowds are (parks and beaches on warm days, offices at lunch, the stadium on game nights, the bars late), parks at the kerb, opens the hatch and sells meals to whoever queues."),
+        specialty: Specialty::Food,
         ..BASE
     },
 ];

@@ -116,11 +116,8 @@ fn earth(climate: Climate, pal_dirt: [f32; 3]) -> ([f32; 3], f32) {
 const GRIME: [f32; 3] = [0.02, 0.018, 0.016];
 
 fn hash2(x: i32, y: i32, salt: u32) -> f32 {
-    let mut h = (x as u32).wrapping_mul(0x8DA6_B343) ^ (y as u32).wrapping_mul(0xD816_3841) ^ salt.wrapping_mul(0xCB1A_B31F);
-    h ^= h >> 13;
-    h = h.wrapping_mul(0x5BD1_E995);
-    h ^= h >> 15;
-    (h & 0x00FF_FFFF) as f32 / 0x0100_0000 as f32
+    use nd_sim::hash::{fin32_m2, lattice32, low24_01};
+    low24_01(fin32_m2(lattice32(x, y, salt)))
 }
 
 /// Smooth value noise in `0..1` with lattice spacing `scale` metres, fixed

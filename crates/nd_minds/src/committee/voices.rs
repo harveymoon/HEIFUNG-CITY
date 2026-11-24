@@ -180,7 +180,7 @@ pub fn diary_request(w: &World, id: CitizenId) -> Option<TurnRequest> {
 }
 
 fn id_bits(id: CitizenId) -> u64 {
-    format!("{id:?}").bytes().fold(0xCBF2_9CE4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01B3))
+    nd_sim::hash::fnv_bytes(format!("{id:?}").bytes())
 }
 
 // ── the stand-in's words ────────────────────────────────────────────────────

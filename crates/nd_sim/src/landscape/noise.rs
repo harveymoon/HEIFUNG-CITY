@@ -3,13 +3,7 @@
 use super::*;
 
 pub(super) fn hash2(seed: u64, x: i32, y: i32) -> f32 {
-    let mut h = seed ^ (x as i64 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (y as i64 as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
-    h ^= h >> 33;
-    (h >> 40) as f32 / (1u64 << 24) as f32
+    crate::hash::lattice01(seed, x as i64, y as i64)
 }
 
 /// Smooth value noise in 0..1.

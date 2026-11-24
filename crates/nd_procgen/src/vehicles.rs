@@ -375,11 +375,11 @@ fn slope_quad(mesh: &mut MeshData, p0: (f32, f32), p1: (f32, f32), hw: f32, col:
 
 fn build(m: &VehicleModel, paint: [f32; 3], detail: bool, pal: &Palette) -> VehicleMesh {
     let seed = {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut h = nd_sim::hash::Fnv::default();
         for v in [m.body as u64, m.class as u64, m.wear as u64, m.tuned as u64, livery_code(m.livery), m.paint as u64] {
-            h = (h ^ v).wrapping_mul(0x100_0000_01b3);
+            h.word(v);
         }
-        h
+        h.0
     };
     let mut b = B { m, pal, body: MeshData::default(), lights: MeshData::default(), fx: MeshData::default(), rng: rand_chacha::ChaCha8Rng::seed_from_u64(seed), detail };
     // Body colour: livery first, else paint, dulled by wear.

@@ -639,11 +639,7 @@ fn graph_cross(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> Option<(f32, f32)> {
 }
 
 fn hash01(seed: u64, p: Vec2) -> f32 {
-    let mut h = seed ^ ((p.x.round() as i64 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)) ^ ((p.y.round() as i64 as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F));
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
-    h ^= h >> 33;
-    (h >> 40) as f32 / (1u64 << 24) as f32
+    nd_sim::hash::lattice01_short(seed, p.x.round() as i64, p.y.round() as i64)
 }
 
 /// The blocks and the strips outside the outer streets, zoned.

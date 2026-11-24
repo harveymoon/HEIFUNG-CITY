@@ -499,14 +499,8 @@ impl World {
 
     /// The jetty a business on the water builds for itself, if any.
     pub fn jetty_kind_for(kind: BusinessKind) -> Option<JettyKind> {
-        use BusinessKind as B;
-        Some(match kind {
-            B::Fishery | B::FishPlant | B::FishGutting | B::FishStickFactory | B::FishMarket => JettyKind::Fishing,
-            B::ContainerYard | B::Refinery | B::Smelter | B::ChemicalWorks | B::Mill | B::Assembly | B::Fab | B::CargoHub => JettyKind::Cargo,
-            B::PierRestaurant => JettyKind::Pier,
-            B::BoatRental => JettyKind::Pontoon,
-            _ => return None,
-        })
+        // [r16-tidy] A column of the catalogue now.
+        crate::catalogue::business(kind).jetty
     }
 
     /// Businesses on the water that have none yet build their jetty (the

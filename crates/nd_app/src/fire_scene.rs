@@ -171,9 +171,7 @@ fn heading_of(v: SVec2) -> f32 {
 
 /// A stable small hash for looks of crews with nobody on the payroll.
 fn hash(a: u64) -> u64 {
-    let mut x = a.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    x ^= x >> 29;
-    x.wrapping_mul(0xBF58_476D_1CE4_E5B9)
+    nd_sim::hash::step29(a.wrapping_mul(nd_sim::hash::PHI))
 }
 
 /// The ground (or the deck) at `p`.

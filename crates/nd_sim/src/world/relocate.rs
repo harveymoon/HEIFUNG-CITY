@@ -17,7 +17,6 @@
 
 use super::*;
 use crate::estate::Moving;
-use crate::industry::IndustryKind;
 
 /// How far a business will move, m.
 pub const RELOCATE_REACH: f32 = 1500.0;
@@ -33,8 +32,8 @@ pub fn move_cost(jobs: u16) -> f32 {
 /// Kinds that are tied to their ground (fields, wells, the water) or are
 /// the city's own kind of place: they close rather than move.
 fn rooted(kind: BusinessKind) -> bool {
-    matches!(kind, BusinessKind::Parking | BusinessKind::TaxiCompany | BusinessKind::CargoHub | BusinessKind::Marina | BusinessKind::FishingPort | BusinessKind::StripMine)
-        || kind.industry().is_some_and(|k| matches!(k, IndustryKind::Farming | IndustryKind::OilExtraction | IndustryKind::Fishing))
+    // [r16-tidy] A column of the catalogue now.
+    crate::catalogue::business(kind).rooted
 }
 
 impl World {

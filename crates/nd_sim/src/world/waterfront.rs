@@ -49,12 +49,7 @@ pub fn boat_dwell(kind: ShipKind) -> u32 {
     }
 }
 
-fn hash(a: u64, b: u64) -> u64 {
-    let mut x = a.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ b.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
-    x ^= x >> 31;
-    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x ^ (x >> 29)
-}
+use crate::hash::mix2 as hash;
 
 fn rotate(v: Vec2, a: f32) -> Vec2 {
     let (s, c) = a.sin_cos();

@@ -257,7 +257,7 @@ impl World {
             homes.push((id, felt, worst, soil));
         }
         // A different few speak up each day.
-        homes.sort_by_key(|(id, ..)| (slotmap::Key::data(id).as_ffi() ^ day.wrapping_mul(0x9E37_79B9)).wrapping_mul(0xBF58_476D_1CE4_E5B9));
+        homes.sort_by_key(|(id, ..)| crate::hash::quick_by(slotmap::Key::data(id).as_ffi(), day, crate::hash::PHI32 as u64));
         let tick = self.clock.tick;
         let mut said = 0;
         for (id, felt, worst, soil) in homes {

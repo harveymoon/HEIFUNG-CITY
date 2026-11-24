@@ -53,9 +53,7 @@ const TAR: [f32; 3] = [0.07, 0.065, 0.06];
 /// Soot of a chimney breast.
 const SOOT: [f32; 3] = [0.14, 0.12, 0.11];
 
-fn h01(seed: u64, k: u64) -> f32 {
-    unit(mix2(seed, k))
-}
+use nd_sim::hash::mix2_01 as h01;
 
 fn at3(c: &[[f32; 3]], i: u64) -> [f32; 3] {
     c[(i % c.len() as u64) as usize]

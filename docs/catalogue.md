@@ -15,6 +15,8 @@ enums' order, and the building sites' bill of materials:
   capital, flags (food chain, outing, lodging, waterfront, needs a site, student trade, truck lot,
   fouls the air), the leisure numbers (tab, booking share, family/date spot, loudness, trash, land
   value lift, shopfront sign) and the inspector's line about it.
+  [r16-tidy] Also its van livery, fleet / yard / chain flags, least site area, a grown corp's
+  specialty, rooted, shop unit, eatery or night out (`LeisureGroup`), tax line (`TaxLine`) and jetty.
 - `INDUSTRIAL`, `COMMERCIAL`, `ENTERTAINMENT`, `CIVIC`: the kinds each land use can grow.
 - `BUILD_MIXES`, `build_type`, `site_bill`: what each kind of building is made of, stage by stage (round 14, see below).
 - `makers(r)` / `users(r)`: who makes and who uses a good, read off the recipes (never written twice).
@@ -58,26 +60,46 @@ change. Enum variants, their order and serde are unchanged: saves load as before
 | UI colours / icons per good | none exist | (add a column when the UI wants one) |
 | Map layers per good | none (layers are per land survey resource, not per good) | n/a |
 
+### Moved into the catalogue in round 16 [r16-tidy]
+
+| Fact | Was | Now |
+|---|---|---|
+| Van livery | `vehicle.rs` `Livery::for_business` match | `.livery` |
+| Runs vehicles of its own (cabs, tow, bins, trucking) | `companies.rs` `runs_fleet` list | `.fleet` (`runs_fleet` = `.fleet` or a livery) |
+| Grows a yard of vehicles, then depots | `companies.rs` `yard_trade` | `.grows_yards` |
+| A shop that grows into a chain | `companies.rs` `shop_chain` | `.chain` |
+| Least site area | `companies.rs` `min_area` match | `.min_area` |
+| A corp's specialty when grown out of it | `companies.rs` `Specialty::of_origin` match | `.specialty` |
+| Tied to its ground (never moves on a buyout) | `world/relocate.rs` `rooted` (kinds + three industries) | `.rooted` |
+| Fits a shop unit | `world/tenants.rs` `fits_shopfront` | `.shopfront` |
+| A place to eat / to go out | `leisure.rs` `EATERIES`, `NIGHTS_OUT` literal lists | `.leisure` (`LeisureGroup`); the two lists and `ALL_NIGHTS_OUT` are built from it at compile time, same order |
+| Business tax line | `tax.rs` `TaxCategory::of_business` match (+ the industry's line) | `.tax` (`TaxLine::Fixed(..)`, `Nightlife` by tier, `None`) |
+| The jetty it builds on the water | `world/shore.rs` `World::jetty_kind_for` | `.jetty` |
+
+The old functions keep their signatures as one-line reads, so no caller changed. Every value was
+checked against the old functions for every kind (a dump of all 71 kinds, before and after, identical).
+
 ### Still keyed on a kind elsewhere (on purpose)
 
 These are rules of one subsystem that happen to switch on the kind, not facts about the kind, or
-they are curves rather than values. They stay with their subsystem; most end in `_ =>` so a new
-kind gets the default. Check them when adding a kind:
+they are curves or content rather than values. They stay with their subsystem; most end in `_ =>`
+so a new kind gets the default. Check them when adding a kind:
 
-- `industry.rs` `IndustryKind::businesses` (industry sub-zones; nuisance, dirt, spill by industry);
-  `BusinessKind::dirtiness` / `spill` (chemical works override) in `business_kind.rs`.
-- `leisure.rs` `appeal`, `tourist_pull` (who likes it at what hour), `EATERIES` / `NIGHTS_OUT` lists.
-- `pressure.rs` `PressureKind::business` (which pressure opens it), `commercial.rs` `CommercialSub`
-  menus, `tax.rs` `TaxCategory::of_business`, `districts.rs` `favours`.
-- `companies.rs` (fleets, yards, min area, shop chains, specialty), `estate.rs` (expansion, site
-  cap, branches), `world/relocate.rs` `rooted`, `world/tenants.rs` `fits_shopfront`,
-  `world/stories.rs` `is_nightlife`, `world/shore.rs` `jetty_kind_for`, `world/dirt.rs`,
-  `yards.rs` (yard clutter by trade), `names.rs` `trade_words` (brand names).
-- `vehicle.rs` `Livery::for_business` (van liveries).
-- Looks: `nd_procgen/src/buildings/choose.rs` `industry_styles` and the styles' own matches,
-  `nd_app/src/audio/spots.rs`, `nd_app/src/ui/inspector/building.rs`.
-- Goods: buyers' stock caps in `waste.rs` `sell_recovered` (scrap yards 80, others 30), the
-  household shopping rules in `world/market.rs` and `bots.rs` (groceries, meals, goods).
+- `industry.rs` `IndustryKind::businesses` (which kinds an industry sub-zone grows: the zoning's
+  rule, the inverse of `BusinessKind::industry`); `BusinessKind::dirtiness` / `spill` in
+  `business_kind.rs`: the numbers are the industry's (`IndustryKind`), with one override for the
+  chemical works; they belong with the dirt model's other curves.
+- `leisure.rs` `appeal`, `tourist_pull`: curves by hour and life stage, not one value per kind.
+- `pressure.rs` `PressureKind::business` (which pressure opens which kind: the pressure's rule),
+  `commercial.rs` `CommercialSub` menus, `districts.rs` `favours` (a district look's weights).
+- `estate.rs` (expansion, site cap, branches: the estate market's rules), `world/stories.rs`
+  `is_nightlife` (by land use as much as kind), `world/dirt.rs` (who complains).
+- `names.rs` `trade_words`: naming content (the brand words), tuned with the name generator.
+- `yards.rs` (yard clutter by trade) and the looks: `nd_procgen/src/buildings/choose.rs`
+  `industry_styles` and the styles' own matches, `nd_app/src/audio/spots.rs`,
+  `nd_app/src/ui/inspector/building.rs`: drawing and sound, render side.
+- Goods: buyers' stock caps in `waste.rs` `sell_recovered` (scrap yards 80, others 30: a rule of
+  the recovered-goods trade), the household shopping rules in `world/market.rs` and `bots.rs`.
 
 ## How to add a good (round 14: building materials)
 

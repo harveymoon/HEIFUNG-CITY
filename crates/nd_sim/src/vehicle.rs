@@ -226,16 +226,8 @@ impl Livery {
 
     /// The fleet a business sends its deliveries in.
     pub fn for_business(kind: BusinessKind) -> Livery {
-        match kind {
-            BusinessKind::Bakery | BusinessKind::Cafe => Livery::Pizza,
-            BusinessKind::Bookshop => Livery::Parcels,
-            BusinessKind::Grocery | BusinessKind::VertFarm | BusinessKind::Dairy | BusinessKind::ProteinVat => Livery::Grocery,
-            BusinessKind::GadgetShop | BusinessKind::Assembly | BusinessKind::CargoHub => Livery::Parcels,
-            BusinessKind::Fab | BusinessKind::Mill | BusinessKind::GrainFarm => Livery::Utility,
-            // [r14-builders] Builders' vans and lorries, the merchant's flatbeds.
-            BusinessKind::Contractor | BusinessKind::BuildersMerchant => Livery::Construction,
-            _ => Livery::None,
-        }
+        // [r16-tidy] A column of the catalogue now.
+        crate::catalogue::business(kind).livery
     }
 }
 

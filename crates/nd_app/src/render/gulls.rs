@@ -31,11 +31,8 @@ pub(super) struct GullState {
 }
 
 fn hash01(a: u64, b: u64) -> f32 {
-    let mut x = a.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ b.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
-    x ^= x >> 29;
-    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x ^= x >> 32;
-    (x % 10_000) as f32 / 10_000.0
+    use nd_sim::hash::{tenk01, K2, PHI};
+    tenk01(a.wrapping_mul(PHI) ^ b.wrapping_mul(K2))
 }
 
 /// How many gulls a tip this full draws.

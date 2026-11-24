@@ -77,6 +77,27 @@ pub use buildings::parts::{BoxLook, ShippingLine, SHIPPING_LINES, shipping_line,
 pub use buildings::strip_mine_hole;
 pub use buildings::{battery_lights, solar_head, solar_trackers, SolarTracker, SOLAR_HUB, SOLAR_MAX_TILT, building_style, style_extras, coal_vents, incinerator_vents, CoalVent, generate_building, wind_rotor, wind_turbines, BuildingRules, PlantField, CraneRig, crane_slew, GameRig, Extras, LandUseRules, Neighbour, Style, StyleBook, Turbine, NEON_MARK, NIGHT_MARK, WINDOW_LIGHT_MARK};
 pub use mesh::MeshData;
+
+/// [r16-tidy] How many boxes depot `b`'s yard layout holds: its style's
+/// stacks (`Geometry::box_slots`, loading bays left out) as
+/// `buildings::parts::stack_room` counts them, generated as the renderer
+/// draws the building (default rules and palette; neighbours do not move
+/// the stacks). `None` for a building that is not there.
+pub fn yard_room(w: &nd_sim::World, b: nd_sim::BuildingId) -> Option<usize> {
+    let bld = w.buildings.get(b)?;
+    let lot = w.footprint(b)?;
+    let extras = style_extras(w, b, &[]);
+    let g = generate_building(&lot, bld.land_use, bld.floors, bld.tier, bld.condition, bld.seed, &BuildingRules::default(), &Palette::default(), &extras);
+    let slots: Vec<BoxSlot> = g.box_slots.iter().copied().filter(|s| s.tier != BAY_TIER).collect();
+    Some(buildings::parts::stack_room(&slots))
+}
+
+/// [r16-tidy] Hand the sim what it needs from this crate: the yard layout
+/// a depot's room comes from ([`yard_room`], `nd_sim::world::set_yard_layout`).
+/// The game calls it at start-up; so do probes that want the game's stock.
+pub fn install_sim_hooks() {
+    nd_sim::world::set_yard_layout(yard_room);
+}
 pub use palette::Palette;
 pub use surface::{Geometry, Lod, Surface, WashLine};
 pub use detail::DetailBand;

@@ -248,11 +248,7 @@ pub fn height_for_population(pop: usize) -> f32 {
     (110.0 + 0.05 * pop as f32).min(TOWER_MAX_M)
 }
 
-pub fn unit(h: u64) -> f32 {
-    let x = h.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (h >> 29);
-    let x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    ((x >> 40) as f32) / ((1u64 << 24) as f32)
-}
+pub use crate::hash::spread01 as unit;
 
 pub fn tower_name(h: u64) -> String {
     format!("{} {}", NAME_A[(h % NAME_A.len() as u64) as usize], NAME_B[((h >> 13) % NAME_B.len() as u64) as usize])

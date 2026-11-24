@@ -43,15 +43,8 @@ const INVITE_REACH: f32 = 2500.0;
 /// Within this of the shore a wealthy household might keep a boat.
 pub const NEAR_WATER: f32 = 900.0;
 
-/// A stable `u64` from a key and a salt.
-fn mix(key: u64, salt: u64) -> u64 {
-    let mut x = key ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    x ^= x >> 33;
-    x = x.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
-    x ^= x >> 29;
-    x = x.wrapping_mul(0xC4CE_B9FE_1A85_EC53);
-    x ^ (x >> 32)
-}
+// A stable `u64` from a key and a salt.
+use crate::hash::mix_pressure as mix;
 
 fn key_of<K: slotmap::Key>(k: K) -> u64 {
     k.data().as_ffi()

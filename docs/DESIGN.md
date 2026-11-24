@@ -802,8 +802,12 @@ Citizens are rendered from their simulated positions every frame.
 - **Container stock and storage yards** [r11-box-stock] (`world/box_stock.rs`): a depot's room
   is its ground's say (`box_capacity`: the port 60, a cargo hub area/45, a freight yard 24 +
   area/120, a container yard area/16) but never more than its drawn stacks hold
-  (`Containers::drawn_room`, handed over by the renderer from `stack_room`: one box per forty-foot
-  place, two tiers over the drawn stacks counted), so every box a depot holds is drawn. Each hour
+  (`Containers::layout_room`, from `stack_room`: one box per forty-foot place, two tiers over the
+  drawn stacks counted), so every box a depot holds is drawn. [r16-tidy] The sim takes that room from
+  the yard's own layout at the containers' hourly round (`World::refresh_yard_rooms`, laid out again
+  when the depot's lot or look changes), through the layout function `nd_procgen::install_sim_hooks`
+  hands it at start-up (the styles live in nd_procgen); the renderer no longer writes it. Without the
+  hook (the sim crate's own tests and probes) the saved room stands, else the ground's. Each hour
   a terminal (port, freight yard, cargo hub) over 75% of its room trucks its lines' empties (not
   those on a freighter's list, the ones going out last) to the nearest container yard with
   storage room within 6 km (85% of the yard's room), two lorries an hour through the bays; the

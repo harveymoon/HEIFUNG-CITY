@@ -76,11 +76,11 @@ impl World {
         let ron = self.to_ron()?;
         let mut lines: Vec<&str> = ron.lines().collect();
         lines.sort_unstable();
-        let mut h: u64 = 0xcbf29ce484222325;
+        let mut h: u64 = crate::hash::FNV_OFFSET;
         for l in lines {
             for b in l.bytes().chain(std::iter::once(b'\n')) {
                 h ^= b as u64;
-                h = h.wrapping_mul(0x100000001b3);
+                h = h.wrapping_mul(crate::hash::FNV_PRIME);
             }
         }
         Ok((h, ron.len()))

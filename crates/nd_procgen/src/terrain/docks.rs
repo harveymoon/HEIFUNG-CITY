@@ -421,12 +421,7 @@ pub enum BoatLook {
 /// Length and beam of a superyacht.
 pub const SUPERYACHT: (f32, f32) = (60.0, 11.0);
 
-fn mix_look(a: u64, b: u64) -> u64 {
-    let mut x = a.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ b.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
-    x ^= x >> 31;
-    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x ^ (x >> 29)
-}
+use nd_sim::hash::mix2 as mix_look;
 
 /// The look of berth `i` of a marina, by its place and how full the
 /// marina is: the fuller (the richer the town round it), the more of the

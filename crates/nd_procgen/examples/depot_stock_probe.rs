@@ -1,6 +1,8 @@
 //! [r11-box-stock] The boxes each depot holds against its room, day by
 //! day, from a save: stored (full, empty by owner, going out), its room
-//! (what its drawn stacks hold, as the renderer tells the sim), how many
+//! (what its stacks hold: [r16-tidy] the sim's own, from the yard layout
+//! `nd_procgen::install_sim_hooks` installs; `DRAWN=1` compares it with
+//! the room saved with the save), how many
 //! of them its stacks draw, the boxes kept for it at the yards, and the
 //! day's flows and trade. Not part of the game.
 //!
@@ -14,6 +16,23 @@ use std::collections::HashMap;
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let mut w = World::read_save(&a[1]).expect("load");
+    // [r16-tidy] The yard layout's room, as the game takes it; compared
+    // with the room saved (drawn by the renderer before round 16).
+    nd_procgen::install_sim_hooks();
+    if std::env::var("DRAWN").is_ok() {
+        let saved = w.containers.layout_room.clone();
+        let t = std::time::Instant::now();
+        w.containers.layout_keys.clear();
+        w.refresh_yard_rooms();
+        let ms = t.elapsed().as_secs_f64() * 1000.0;
+        let (mut same, mut diff) = (0, 0);
+        for (b, k, _) in w.box_depots() {
+            let (old, new) = (saved.get(&b).copied(), w.containers.layout_room.get(&b).copied());
+            if old == new { same += 1 } else { diff += 1 }
+            println!("   depot {:?} {:?} {}: saved room {:?}, layout room {:?}", b, k, w.buildings.get(b).map(|x| x.name.as_str()).unwrap_or(""), old, new);
+        }
+        println!("layout rooms: {same} same as saved, {diff} differ ({} depots laid out in {ms:.1} ms)", same + diff);
+    }
     let days: u64 = a.get(2).and_then(|s| s.parse().ok()).unwrap_or(4);
     println!("loaded: day {} tick {} boxes {} people {}", w.clock.day(), w.clock.tick, w.containers.boxes.len(), w.citizens.len());
     let mut slots_of: HashMap<nd_sim::BuildingId, Vec<BoxSlot>> = HashMap::new();
@@ -83,8 +102,8 @@ fn main() {
     }
 }
 
-/// Each depot's stacks as its style draws them, and their room handed to
-/// the sim, as the renderer does.
+/// Each depot's stacks as its style draws them (for the report; the sim
+/// takes their room itself).
 fn draw(w: &mut World, slots_of: &mut HashMap<nd_sim::BuildingId, Vec<BoxSlot>>) {
     let rules = BuildingRules::default();
     let pal = Palette::default();
@@ -96,7 +115,6 @@ fn draw(w: &mut World, slots_of: &mut HashMap<nd_sim::BuildingId, Vec<BoxSlot>>)
         let extras = Extras { ..nd_procgen::style_extras(w, b, &[]) };
         let g = nd_procgen::generate_building(&lot, bld.land_use, bld.floors, bld.tier, bld.condition, bld.seed, &rules, &pal, &extras);
         let slots: Vec<BoxSlot> = g.box_slots.iter().copied().filter(|s| s.tier != BAY_TIER).collect();
-        w.containers.drawn_room.insert(b, nd_procgen::buildings::parts::stack_room(&slots) as u16);
         slots_of.insert(b, slots);
     }
 }

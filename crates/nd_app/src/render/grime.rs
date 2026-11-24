@@ -109,10 +109,7 @@ pub(super) struct GrimeState {
     stain_built: f32,
 }
 
-fn hash01(a: u64, b: u64) -> f32 {
-    let h = (a ^ b.wrapping_mul(0x9E37_79B9_7F4A_7C15)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    ((h >> 40) as f32) / (1u64 << 24) as f32
-}
+use nd_sim::hash::quick01 as hash01;
 
 fn seed_of(id: BuildingId) -> u64 {
     use slotmap::Key;

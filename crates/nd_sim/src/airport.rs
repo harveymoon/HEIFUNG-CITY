@@ -886,19 +886,10 @@ pub fn daily_pax(residents: usize, tourist_demand: f32, office_jobs: u32) -> f32
     residents as f32 * RESIDENT_TRIPS + tourist_demand.max(0.0) * TOURIST_AIR_SHARE + office_jobs as f32 * BUSINESS_TRIPS
 }
 
-/// A small mixing hash for the timetable (no world RNG draws).
-pub fn mix(a: u64, b: u64) -> u64 {
-    let mut x = a ^ b.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    x ^= x >> 33;
-    x = x.wrapping_mul(0xff51_afd7_ed55_8ccd);
-    x ^= x >> 33;
-    x = x.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
-    x ^ (x >> 33)
-}
-
-fn unit(h: u64) -> f32 {
-    (h >> 40) as f32 / (1u64 << 24) as f32
-}
+/// A small mixing hash for the timetable (no world RNG draws): murmur's
+/// finaliser, [`crate::hash::mix_fmix`].
+pub use crate::hash::mix_fmix as mix;
+use crate::hash::unit;
 
 /// The day's rotations for an airport of `size`: enough seats for `pax`
 /// passengers a day each way (within the size's fewest and most), plus a

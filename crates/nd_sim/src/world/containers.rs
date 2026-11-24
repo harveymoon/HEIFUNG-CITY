@@ -1012,6 +1012,8 @@ impl World {
         if !self.containers.live {
             return;
         }
+        // [r16-tidy] Each depot's room from its yard layout.
+        self.refresh_yard_rooms();
         // Trains gone off the map with their boxes.
         let on_trains: std::collections::BTreeSet<BoxId> = self.rail.trains.values().flat_map(|t| t.boxes.iter().filter_map(|b| b.id)).collect();
         let gone: Vec<BoxId> = self.containers.boxes.iter().filter(|(id, r)| r.at == Where::Train && !on_trains.contains(id)).map(|(id, _)| id).collect();

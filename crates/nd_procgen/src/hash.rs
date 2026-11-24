@@ -13,12 +13,10 @@ pub fn hash2(a: u64, b: u64) -> u64 {
     hash2_salted(a, b, 0)
 }
 
-/// [`hash2`] with a salt folded in before the finaliser.
+/// [`hash2`] with a salt folded in before the finaliser
+/// ([`nd_sim::hash::mix2_salted`]: [r16-tidy] one body for both crates).
 pub fn hash2_salted(a: u64, b: u64, salt: u64) -> u64 {
-    let mut x = a.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ b.wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ salt;
-    x ^= x >> 31;
-    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x ^ (x >> 29)
+    nd_sim::hash::mix2_salted(a, b, salt)
 }
 
 /// A rank in `0..1` from a point in space: the bits of its coordinates,
