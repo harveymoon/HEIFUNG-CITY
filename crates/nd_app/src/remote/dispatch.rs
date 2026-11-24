@@ -1522,9 +1522,9 @@ mod dispatch_tests {
     #[test]
     fn remote_md_documents_every_command_and_alias() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/REMOTE.md");
-        let doc = std::fs::read_to_string(&path).expect("docs/REMOTE.md").replace("
-", "
-");
+        // [r16-tidy] Escapes, not literal line breaks: git turns a literal CR
+        // into nothing on commit, and a checkout with autocrlf has CRLF.
+        let doc = std::fs::read_to_string(&path).expect("docs/REMOTE.md").replace("\r\n", "\n");
         let documented = |n: &str| {
             [format!("`{n}`"), format!("`{n} "), format!("`{n}{{")].iter().any(|p| doc.contains(p.as_str()))
                 || doc.lines().any(|l| l.starts_with('#') && l.trim_start_matches('#').split_whitespace().next() == Some(n))

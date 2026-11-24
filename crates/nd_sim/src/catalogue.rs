@@ -3024,9 +3024,8 @@ mod tests {
 ";
         const END: &str = "<!-- doc-guard: catalogue lists end -->";
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/catalogue.md");
-        let doc = std::fs::read_to_string(&path).expect("docs/catalogue.md").replace("
-", "
-");
+        // [r16-tidy] Escapes, not literal line breaks (see the REMOTE.md guard).
+        let doc = std::fs::read_to_string(&path).expect("docs/catalogue.md").replace("\r\n", "\n");
         let a = doc.find(START).expect("docs/catalogue.md has no doc-guard start marker") + START.len();
         let b = a + doc[a..].find(END).expect("docs/catalogue.md has no doc-guard end marker");
         let want = catalogue_md_lists();
