@@ -433,6 +433,20 @@ pub(super) fn sync_steam(
 
 #[cfg(test)]
 mod tests {
+    /// [r17-fixes] (photo 2026-11-24 F1) Rain or snow by the air: a storm
+    /// at 8 °C rains even where the climate leans to snow, frost snows
+    /// anywhere, and the sleet band falls as either.
+    #[test]
+    fn rain_or_snow_by_the_temperature() {
+        for h in [0.0, 0.3, 0.7, 0.99] {
+            assert!(!super::snows_at(8.0, true, h), "8 °C rains on a snowy map");
+            assert!(!super::snows_at(4.0, false, h));
+            assert!(super::snows_at(-3.0, false, h), "frost snows anywhere");
+            assert!(super::snows_at(-0.5, true, h));
+        }
+        assert!(super::snows_at(1.0, false, 0.2) && !super::snows_at(1.0, false, 0.8), "the sleet band falls as either");
+    }
+
     use super::*;
 
     /// [scene-clock] Paused, the weather stands still; faster game speeds

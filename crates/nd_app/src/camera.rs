@@ -570,12 +570,15 @@ pub(crate) fn clear_of_parked_cars(w: &nd_sim::World, p: Vec2) -> Vec2 {
 /// spot stands, unless it is on water: then the nearest dry ground.
 pub(crate) fn walk_footing(w: &nd_sim::World, p: Vec2) -> Vec2 {
     let g = &w.walk;
-    let near = g.nearest(p, WALK_SNAP).and_then(|i| {
+    // A public way: a node with an edge that is not inside a lot (an
+    // alley, a yard, a gate) nor raised.
+    let public = |i: u32| g.adj.get(i as usize).is_some_and(|es| es.iter().any(|e| !e.interior && !e.raised));
+    let near = g.nearest_matching_within(p, WALK_SNAP, public).and_then(|i| {
         let a = g.nodes.get(i as usize)?;
         let mut best = (a.pos.distance_squared(p), a.pos);
         for e in g.adj.get(i as usize).into_iter().flatten() {
             let Some(b) = g.nodes.get(e.to as usize) else { continue };
-            if e.raised || b.level != 0.0 || b.deck {
+            if e.raised || e.interior || b.level != 0.0 || b.deck {
                 continue;
             }
             let ab = b.pos - a.pos;

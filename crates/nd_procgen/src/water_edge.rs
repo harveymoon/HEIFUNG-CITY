@@ -286,10 +286,15 @@ pub fn water_edges_with(world: &World, palette: &Palette, probe: &TerrainProbe, 
         if walled {
             // A quay wall: stone from under the water to a coping over the
             // bank, dark and wet below the waterline.
+            // [r17-fixes] (photo 2026-11-24 F5) A level coping along the
+            // piece, at its highest bank: following the 8 m ground cells'
+            // heights the wall's top ran up and down in a saw-tooth under
+            // the lots above.
+            let level = high.max(0.6) + 0.2;
             let wall = g.part(Surface::Stone);
             for w in top.windows(2) {
-                let ((p0, h0), (p1, h1)) = (w[0], w[1]);
-                let (t0, t1) = (h0.max(0.6) + 0.2, h1.max(0.6) + 0.2);
+                let ((p0, _), (p1, _)) = (w[0], w[1]);
+                let (t0, t1) = (level, level);
                 wall.quad_facing([v(p0, EDGE_BED), v(p1, EDGE_BED), v(p1, 0.35), v(p0, 0.35)], into3, rgba(wet));
                 wall.quad_facing([v(p0, 0.35), v(p1, 0.35), v(p1, t1), v(p0, t0)], into3, rgba(stone));
                 // The coping, half a metre back over the bank.
