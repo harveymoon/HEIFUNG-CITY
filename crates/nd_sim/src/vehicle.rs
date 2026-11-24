@@ -332,23 +332,17 @@ pub fn chassis_of(boxed: u8) -> Option<bool> {
 /// [r8] Bumper to bumper, a semi: the tractor and its chassis (or its own
 /// trailer). Kept here so the sim queues them as long as they are drawn.
 /// [r15-freight] (photo 2026-11-20 F2: lorries drawn inside one another)
-/// The room a lorry or other long body takes on the road, bumper to
-/// bumper, as it is drawn; None for a car-sized body (`CAR_LENGTH`). Every
+/// The room a semi takes on the road, bumper to bumper, as it is drawn
+/// (`semi_length`); None for the rest, which keep `CAR_LENGTH`. Every
 /// vehicle used to follow the next with a car's 4.5 m, so a queue of
-/// semis 11-17 m long was drawn trailer through cab.
+/// semis 11-17 m long was drawn trailer through cab. (Vans and box
+/// lorries, 6-8 m, still queue as cars: given their own lengths they took
+/// the kerb by homes and a resident's car parked 158 m off.)
 pub fn road_length(body: BodyType, boxed: u8) -> Option<f32> {
-    Some(match body {
-        BodyType::Semi => semi_length(boxed),
-        BodyType::BoxVan | BodyType::TowTruck => 6.4,
-        BodyType::PanelTruck => 7.6,
-        BodyType::GarbageTruck | BodyType::Mixer => 8.0,
-        BodyType::HeavyTow => 9.8,
-        BodyType::Flatbed => 8.6,
-        BodyType::Tipper => 7.4,
-        BodyType::Curtainsider => 8.4,
-        BodyType::FoodTruck => 6.2,
-        _ => return None,
-    })
+    match body {
+        BodyType::Semi => Some(semi_length(boxed)),
+        _ => None,
+    }
 }
 
 pub fn semi_length(boxed: u8) -> f32 {
