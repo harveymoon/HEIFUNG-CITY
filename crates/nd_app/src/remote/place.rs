@@ -46,7 +46,7 @@ pub(super) fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         // [tolls] Across the road at the point: not a building.
         other if nd_sim::tolls::TollSize::from_key(other).is_some() => {
-            let size = nd_sim::tolls::TollSize::from_key(other).unwrap();
+            let size = nd_sim::tolls::TollSize::from_key(other).expect("matched on is_some");
             let id = w.place_toll(p, size)?;
             let row = w.tolls.get(id).map(|b| taxes::booth_row(w, b)).unwrap_or(Value::Null);
             // [toll-fit] Priced by the lanes of its road.
@@ -58,11 +58,11 @@ pub(super) fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         // [airport] Fitted to the ground where asked (`heading` to fix it).
         other if nd_sim::airport::AirportSize::from_key(other).is_some() => {
-            let size = nd_sim::airport::AirportSize::from_key(other).unwrap();
+            let size = nd_sim::airport::AirportSize::from_key(other).expect("matched on is_some");
             return super::airports::place(cmd, ctx, size, p);
         }
         other if land::dock_of(other).is_some() => {
-            let dock = land::dock_of(other).unwrap();
+            let dock = land::dock_of(other).expect("matched on is_some");
             let id = w.place_port(dock, p)?;
             let port = w.ports.port_of(id).cloned();
             let note = match port {

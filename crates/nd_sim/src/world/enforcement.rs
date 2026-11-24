@@ -835,7 +835,7 @@ impl World {
         if let Some(bz) = spot.building.and_then(|b| self.buildings.get_mut(b)).and_then(|b| b.business.as_mut()) {
             bz.revenue_today += price;
             // [ledger] The buyer is out of town.
-            self.transfer(Account::Outside, Account::Business(spot.building.unwrap()), price, Kind::Cars);
+            self.transfer(Account::Outside, Account::Business(spot.building.expect("found above")), price, Kind::Cars);
         }
         if let Some(c) = self.citizens.get_mut(owner).filter(|c| c.car == Some(vid)) {
             c.car = None;

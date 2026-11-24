@@ -307,6 +307,23 @@ impl World {
     /// or truncated save must never index a missing building or citizen.
     pub(super) fn validate(&mut self) {
         let tick = self.clock.tick;
+        // [r16-crash] The road network's own references: a node listing a
+        // road piece that is not there, a piece whose end is not there (a
+        // cut or edited save). Such a piece is dead; nothing else changes.
+        if self.roads_need_repair() {
+            let roads = &mut *self.roads;
+            let (nodes, segments) = (roads.nodes.len(), roads.segments.len());
+            for n in roads.nodes.iter_mut() {
+                n.segments.retain(|s| (s.0 as usize) < segments);
+            }
+            for s in roads.segments.iter_mut() {
+                if s.a.0 as usize >= nodes || s.b.0 as usize >= nodes {
+                    s.alive = false;
+                    s.a = crate::roads::NodeId(0);
+                    s.b = crate::roads::NodeId(0);
+                }
+            }
+        }
         // Lots and buildings must agree about who stands where.
         for l in self.lots.values_mut() {
             if l.building.is_some_and(|b| !self.buildings.contains_key(b)) {
@@ -412,6 +429,12 @@ impl World {
                 bus.passengers.retain(|p| self.citizens.contains_key(*p));
             }
         }
+    }
+
+    /// [r16-crash] The road network names a node or piece it does not have.
+    fn roads_need_repair(&self) -> bool {
+        let (nodes, segments) = (self.roads.nodes.len(), self.roads.segments.len());
+        self.roads.nodes.iter().any(|n| n.segments.iter().any(|s| s.0 as usize >= segments)) || self.roads.segments.iter().any(|s| s.a.0 as usize >= nodes || s.b.0 as usize >= nodes)
     }
 
     /// [services] Saves from before `Errand::Through` marked through traffic

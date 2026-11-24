@@ -191,7 +191,7 @@ impl World {
         };
         let (dispatcher, delay) = self.dispatcher();
         {
-            let i = self.services.incident_mut(id).unwrap();
+            let i = self.services.incident_mut(id).expect("the incident being reported");
             i.stage = Stage::Reported;
             i.reported = Some(tick);
             i.caller = caller;
@@ -255,7 +255,7 @@ impl World {
     /// sometimes round two.)
     pub(super) fn siren_route(&self, from: (SegmentId, Vec2), to: (SegmentId, Vec2)) -> Option<(Vec<crate::traffic::LaneId>, f32, f32)> {
         let net = &self.traffic.net;
-        let length = |r: &(Vec<crate::traffic::LaneId>, f32, f32)| r.0.iter().map(|l| net.lanes[*l as usize].length).sum::<f32>() - r.1 - net.lanes[*r.0.last().unwrap() as usize].length + r.2;
+        let length = |r: &(Vec<crate::traffic::LaneId>, f32, f32)| r.0.iter().map(|l| net.lanes[*l as usize].length).sum::<f32>() - r.1 - net.lanes[*r.0.last().expect("a found route has lanes") as usize].length + r.2;
         // A point and its mirror across the street's centre line.
         let sides = |(seg, p): (SegmentId, Vec2)| -> Vec<Vec2> {
             match self.roads.nearest_street(p).filter(|(s, _, q)| *s == seg && q.distance(p) > 0.5) {
@@ -288,7 +288,7 @@ impl World {
             d.remember(tick, if mutual { format!("Every {} we have was out. Asked the next town to cover {}.", uk.label(), inc.place) } else { format!("No {} of ours to send to {}. Called the next town over.", uk.label(), inc.place) });
         }
         self.services.route_failed.remove(&id);
-        let i = self.services.incident_mut(id).unwrap();
+        let i = self.services.incident_mut(id).expect("the incident being dispatched");
         i.stage = Stage::Dispatched;
         i.dispatched = Some(tick);
         i.outside = true;
@@ -323,7 +323,7 @@ impl World {
         };
         let sname = self.buildings.get(station).map(|b| b.name.clone()).unwrap_or_default();
         let (kind, bid, dispatcher) = {
-            let i = self.services.incident_mut(id).unwrap();
+            let i = self.services.incident_mut(id).expect("the incident being dispatched");
             i.stage = Stage::Dispatched;
             i.dispatched = Some(tick);
             i.unit = Some(uid);
@@ -364,7 +364,7 @@ impl World {
         };
         let sname = self.buildings.get(station).map(|b| b.name.clone()).unwrap_or_default();
         let (bid, dispatcher) = {
-            let i = self.services.incident_mut(id).unwrap();
+            let i = self.services.incident_mut(id).expect("the incident being dispatched");
             i.second = Some(uid);
             (i.building, i.dispatcher)
         };

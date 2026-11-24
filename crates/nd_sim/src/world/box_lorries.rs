@@ -242,7 +242,7 @@ impl World {
             }
         }
         self.dress_truck(car);
-        let y = self.containers.depots.get_mut(&d).unwrap();
+        let y = self.containers.depots.get_mut(&d).expect("the depot is listed");
         match free {
             Some(k) => {
                 y.bays[k] = Some(car);
@@ -288,7 +288,7 @@ impl World {
         // Lorries gone from the road (towed, lifted off) leave their places.
         {
             let cars = &self.traffic.cars;
-            let y = self.containers.depots.get_mut(&d).unwrap();
+            let y = self.containers.depots.get_mut(&d).expect("the depot is listed");
             for b in y.bays.iter_mut() {
                 if b.is_some_and(|c| !cars.contains_key(c)) {
                     *b = None;
@@ -296,13 +296,13 @@ impl World {
             }
             y.queue.retain(|c| cars.contains_key(*c));
             if y.crane.is_some_and(|j| !cars.contains_key(j.car)) {
-                let job = y.crane.take().unwrap();
+                let job = y.crane.take().expect("checked is_some");
                 self.crane_abort(d, job);
             }
         }
         // Up from the gate into the free bays.
         loop {
-            let y = self.containers.depots.get_mut(&d).unwrap();
+            let y = self.containers.depots.get_mut(&d).expect("the depot is listed");
             let Some(k) = y.bays.iter().position(|b| b.is_none()) else { break };
             if y.queue.is_empty() {
                 break;
@@ -318,7 +318,7 @@ impl World {
         if let Some(job) = self.containers.depots[&d].crane {
             if tick >= job.start + cx::CARRIER_MINUTES {
                 self.crane_finish(d, job);
-                self.containers.depots.get_mut(&d).unwrap().crane = None;
+                self.containers.depots.get_mut(&d).expect("the depot is listed").crane = None;
                 finished = true;
             }
         }
@@ -394,12 +394,12 @@ impl World {
             self.containers.touch();
             self.dress_truck(job.car);
         }
-        self.containers.depots.get_mut(&d).unwrap().crane = Some(job);
+        self.containers.depots.get_mut(&d).expect("the depot is listed").crane = Some(job);
     }
 
     fn crane_finish(&mut self, d: BuildingId, job: CraneJob) {
         self.containers.stats.crane_moves_total += 1;
-        self.containers.depots.get_mut(&d).unwrap().moves += 1;
+        self.containers.depots.get_mut(&d).expect("the depot is listed").moves += 1;
         if job.onto_truck {
             if !self.traffic.cars.contains_key(job.car) {
                 self.box_to(job.boxid, Where::Stored(d), Event::Stored, d);

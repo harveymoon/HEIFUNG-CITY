@@ -851,7 +851,7 @@ impl World {
                 if cx.is_empty() || cx.contains(&main) || !cy.contains(&main) || !works(x) || !works(y) {
                     continue;
                 }
-                let comp = *cx.iter().min().unwrap();
+                let comp = *cx.iter().min().expect("not empty");
                 match out.iter_mut().find(|i| i.comp == comp) {
                     Some(i) => {
                         if !i.terminals.contains(&x) {

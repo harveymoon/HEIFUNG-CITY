@@ -221,7 +221,7 @@ impl World {
             let body = if bike {
                 if rng.random_bool(0.5) { BodyType::AkiraBike } else { BodyType::Motorcycle }
             } else {
-                *[BodyType::Coupe, BodyType::Coupe, BodyType::Sedan, BodyType::Suv, BodyType::Hatchback].choose(&mut rng).unwrap()
+                *[BodyType::Coupe, BodyType::Coupe, BodyType::Sedan, BodyType::Suv, BodyType::Hatchback].choose(&mut rng).expect("not empty")
             };
             let tc = &mut self.traffic.cars[car];
             tc.model = VehicleModel { class: VehicleClass::Expensive, body, wear: 0, tuned: !body.two_wheeler(), livery: Livery::None, paint: rng.random_range(0..crate::vehicle::PAINTS), boxed: 0 };

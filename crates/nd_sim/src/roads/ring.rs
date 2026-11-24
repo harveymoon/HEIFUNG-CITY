@@ -308,7 +308,7 @@ pub fn layout_rings_levels(rings: &[(Ring, u64)], roads: &[(Vec<Vec2>, Option<Ve
                 let (outside, inside) = ring.clip(&p);
                 let kept_inside: Vec<Vec<Vec2>> = if older { Vec::new() } else { inside.iter().filter(|v| v.len() >= 2 && path_len(v) > 1.0).cloned().collect() };
                 for o in outside.iter().chain(kept_inside.iter()) {
-                    for end in [o[0], *o.last().unwrap()] {
+                    for end in [o[0], *o.last().expect("o[0] is there")] {
                         if on(ring, end) {
                             joins[k].push(end);
                         }

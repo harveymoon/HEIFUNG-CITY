@@ -280,7 +280,7 @@ impl World {
                 self.resolve(id, Outcome::Gone);
                 return;
             }
-            let c = &mut self.citizens[inc.citizen.unwrap()];
+            let c = &mut self.citizens[inc.citizen.expect("here: the citizen is there")];
             c.next_decision_tick = c.next_decision_tick.max(tick + 30);
         }
         match inc.stage {
@@ -313,7 +313,7 @@ impl World {
             Stage::Dispatched if inc.outside && inc.arrive_at.is_some_and(|t| tick >= t) => self.on_scene(id),
             Stage::OnScene if inc.kind != IncidentKind::Fire => {
                 let done = {
-                    let i = self.services.incident_mut(id).unwrap();
+                    let i = self.services.incident_mut(id).expect("the incident being stepped");
                     i.work_left -= 1.0;
                     i.work_left <= 0.0
                 };

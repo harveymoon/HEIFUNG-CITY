@@ -332,7 +332,7 @@ impl World {
             self.new_tower_developer();
         }
         // The richest developer moves first.
-        let dev = (0..self.skyline.developers.len()).max_by(|a, b| self.skyline.developers[*a].capital.total_cmp(&self.skyline.developers[*b].capital).then(b.cmp(a))).unwrap();
+        let dev = (0..self.skyline.developers.len()).max_by(|a, b| self.skyline.developers[*a].capital.total_cmp(&self.skyline.developers[*b].capital).then(b.cmp(a))).expect("there are developers");
         let capital = self.skyline.developers[dev].capital;
         let demand = self.tower_demand();
         let record = self.tallest_planned();

@@ -483,7 +483,7 @@ impl LaneNetwork {
             on[root] = true;
             while let Some((v, ref ws, k)) = work.last().cloned() {
                 if k < ws.len() {
-                    work.last_mut().unwrap().2 += 1;
+                    work.last_mut().expect("pushed before").2 += 1;
                     let w = ws[k];
                     if index[w] == u32::MAX {
                         index[w] = counter;

@@ -91,7 +91,7 @@ impl LandUse {
     }
 
     pub fn index(self) -> usize {
-        LandUse::ALL.iter().position(|&l| l == self).unwrap()
+        LandUse::ALL.iter().position(|&l| l == self).expect("LandUse::ALL lists every use")
     }
 
     /// [r4-leisure] The land uses the player zones (the Build window, the

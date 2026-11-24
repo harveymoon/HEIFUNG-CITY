@@ -324,11 +324,11 @@ impl World {
             // [pt-walk] Every lot of a park laid over several.
             for &l in b.plot.extra_lots.iter() {
                 if self.lots.contains_key(l) {
-                    *kind.entry(l).unwrap().or_insert(0) |= bit;
+                    *kind.entry(l).expect("a live lot key").or_insert(0) |= bit;
                 }
             }
             if self.lots.contains_key(b.lot) {
-                *kind.entry(b.lot).unwrap().or_insert(0) |= bit;
+                *kind.entry(b.lot).expect("a live lot key").or_insert(0) |= bit;
             }
         }
         let mut parks: Vec<u32> = Vec::new();

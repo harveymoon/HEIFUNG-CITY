@@ -79,7 +79,7 @@ impl World {
                 self.parks.parks.insert(b, s);
             }
             let area: f32 = lots.iter().map(|l| self.lots[*l].area()).sum();
-            let s = self.parks.parks.get_mut(&b).unwrap();
+            let s = self.parks.parks.get_mut(&b).expect("inserted above");
             s.preserve = preserve;
             if s.members != others || s.lots != lots {
                 s.members = others.clone();
@@ -489,7 +489,7 @@ impl World {
             };
             let kept = ParkState::kept_for(trash, dealers, campers, homeless);
             let look = |t: f32, d: u8| ((t * 4.0) as u32, d);
-            let s = self.parks.parks.get_mut(&a).unwrap();
+            let s = self.parks.parks.get_mut(&a).expect("a listed park");
             if look(s.trash, s.dealers) != look(trash, dealers) {
                 changed.push(a);
                 changed.extend(s.members.iter().copied());
@@ -560,7 +560,7 @@ impl World {
         let people = moved.len();
         let tick = self.clock.tick;
         {
-            let s = self.parks.parks.get_mut(&a).unwrap();
+            let s = self.parks.parks.get_mut(&a).expect("a listed park");
             s.trash = 0.0;
             s.dealers = 0;
             s.campers = 0;

@@ -997,7 +997,7 @@ impl World {
                 r.note(tick, Event::BuiltIntoHome, b);
             }
         }
-        let h = self.containers.homes.get_mut(&b).unwrap();
+        let h = self.containers.homes.get_mut(&b).expect("inserted above");
         h.boxes = boxes;
         h.done = true;
         self.containers.stats.homes_built_total += 1;
@@ -1165,7 +1165,7 @@ impl World {
                 if r.goods.is_some() {
                     if days >= 2 {
                         // Nobody came for it: unpacked here.
-                        let r = self.containers.boxes.get_mut(id).unwrap();
+                        let r = self.containers.boxes.get_mut(id).expect("looked up above");
                         r.goods = None;
                         r.note(tick, Event::Unpacked, d);
                     }
@@ -1177,7 +1177,7 @@ impl World {
                 if r.for_scrap(day) {
                     match scrap_yards.iter().filter(|(y, _)| room.get(y).is_some_and(|n| *n > 0)).min_by(|a, b| a.1.distance_squared(pos).total_cmp(&b.1.distance_squared(pos)).then(a.0.cmp(&b.0))) {
                         Some(&(y, _)) => {
-                            *room.get_mut(&y).unwrap() -= 1;
+                            *room.get_mut(&y).expect("filtered to yards with room") -= 1;
                             to_scrap.entry((d, y)).or_default().push(id)
                         }
                         None if !scrap_yards.is_empty() => {
@@ -1211,7 +1211,7 @@ impl World {
                 if line_owned && kind == DepotKind::Yard && days >= cx::YARD_BUYS_AFTER_DAYS && wear > 0.35 {
                     // The line lets its older boxes go to the yard.
                     let price = r.price(day) * 0.6;
-                    let r = self.containers.boxes.get_mut(id).unwrap();
+                    let r = self.containers.boxes.get_mut(id).expect("looked up above");
                     r.owner = Owner::Yard(d);
                     r.note(tick, Event::BoughtByYard, d);
                     self.containers.stats.bought_by_yards_total += 1;
@@ -1444,7 +1444,7 @@ impl World {
                 let forty = crate::hash::unit(mix(h, 2)) < 0.6;
                 let at = if kind == DepotKind::Scrap { Where::Scrap(d) } else { Where::Stored(d) };
                 let id = self.make_box(kind_box, forty, at, None, Event::Counted, d);
-                let r = self.containers.boxes.get_mut(id).unwrap();
+                let r = self.containers.boxes.get_mut(id).expect("just made");
                 r.since = tick.saturating_sub((crate::hash::unit(mix(h, 3)) * 6.0 * crate::clock::MINUTES_PER_DAY as f32) as u64);
                 if kind == DepotKind::Scrap {
                     r.knocks = r.knocks.saturating_add(160);

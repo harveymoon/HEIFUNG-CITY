@@ -171,7 +171,7 @@ pub fn campus(cmd: &Value, w: &mut World) -> Result<Value, String> {
             };
             let days = cmd.get("days").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
             let n = w.campus_grow_now(b, days)?;
-            let k = w.corps.campuses.iter().find(|k| k.building == b).cloned().unwrap();
+            let k = w.corps.campuses.iter().find(|k| k.building == b).cloned().ok_or("no campus at that building")?;
             Ok(json!({ "annexes": n, "campus": campus_json(w, &k) }))
         }
         other => Err(format!("unknown campus action {other:?}: summary | grow {{building, days}}")),

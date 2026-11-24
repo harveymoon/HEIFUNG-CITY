@@ -57,7 +57,7 @@ impl World {
                             let u = &mut self.services.units[uid];
                             u.state = UnitState::Transporting;
                             u.hospital = Some(h);
-                            self.services.incident_mut(id).unwrap().stage = Stage::Transporting;
+                            self.services.incident_mut(id).expect("the incident being stepped").stage = Stage::Transporting;
                         } else {
                             self.treat_on_site(id);
                         }
@@ -76,7 +76,7 @@ impl World {
                 // may be taken in; the wrecks are towed (`World::step_driving`).
                 let suspect = inc.suspect.filter(|&s| self.citizens.contains_key(s) && !self.is_patient(s) && !self.services.in_custody(s));
                 if suspect.is_some() && self.srng().random::<f32>() < DUI_ARREST {
-                    let s = suspect.unwrap();
+                    let s = suspect.expect("checked is_some");
                     let c = &mut self.citizens[s];
                     c.remember(tick, "Arrested at the scene of my crash.");
                     c.mood = (c.mood - 0.2).max(0.0);

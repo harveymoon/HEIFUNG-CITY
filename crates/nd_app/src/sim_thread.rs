@@ -82,6 +82,10 @@ enum FromWorker {
     Batch(Batch),
     /// The run stopped because the screen's city changed under it.
     Aborted { epoch: u64 },
+    /// [r16-crash] A tick panicked (contained, crash log written): the
+    /// thread threw its half-ticked world away. `tick` is the clock the
+    /// tick started from.
+    Failed { epoch: u64, tick: u64, message: String },
 }
 
 /// A batch of ticks, finished.
@@ -166,6 +170,9 @@ pub struct SimCore {
     /// [r11-adopt-frames] Bumped whenever the screen's city may have
     /// changed: a batch taken in, a write, a replacement ([`Self::changes`]).
     changes: u64,
+    /// [r16-crash] A tick on the thread panicked: what and on which tick,
+    /// until the screen takes it ([`Self::take_fault`]).
+    fault: Option<(u64, String)>,
 }
 
 /// [r10-chunk-hitch] The world lent to readers off the main thread
@@ -225,6 +232,7 @@ impl SimCore {
             log_edits: std::env::var_os("ND_EDIT_LOG").is_some_and(|v| v != "0"),
             leases: Arc::default(),
             changes: 0,
+            fault: None,
         }
     }
 
@@ -350,6 +358,17 @@ impl SimCore {
                     self.run_out = None;
                 }
             }
+            FromWorker::Failed { epoch, tick, message } => {
+                if self.run_out == Some(epoch) {
+                    self.run_out = None;
+                }
+                // The thread has no world now: the next run starts it
+                // again from the screen's (the last whole city shown).
+                self.dirty = true;
+                if epoch == self.epoch {
+                    self.fault = Some((tick, message));
+                }
+            }
             FromWorker::Batch(b) => {
                 if self.run_out == Some(b.epoch) {
                     self.run_out = None;
@@ -378,6 +397,13 @@ impl SimCore {
             let Some(msg) = self.link.as_mut().and_then(|l| l.rx.get_mut().ok()?.try_recv().ok()) else { break };
             self.receive(msg);
         }
+    }
+
+    /// [r16-crash] A tick on the sim thread panicked since the last call:
+    /// the clock it started from and the panic's message. The screen keeps
+    /// the city it has (the last batch shown) and should pause.
+    pub fn take_fault(&mut self) -> Option<(u64, String)> {
+        self.fault.take()
     }
 
     /// A batch is waiting to be shown.
@@ -455,7 +481,7 @@ impl SimCore {
             self.stats.rebases += 1;
             let base = Arc::clone(&self.world);
             let epoch = self.epoch;
-            let link = self.link.as_ref().unwrap();
+            let link = self.link.as_ref().expect("started just above");
             link.current.store(epoch, Ordering::Release);
             if link.tx.send(ToWorker::Rebase { base, minds: m, epoch }).is_err() {
                 self.link = None;
@@ -468,7 +494,7 @@ impl SimCore {
             return true;
         }
         let epoch = self.epoch;
-        if self.link.as_ref().unwrap().tx.send(ToWorker::Run { epoch, max_ticks, budget, player }).is_err() {
+        if self.link.as_ref().expect("started just above").tx.send(ToWorker::Run { epoch, max_ticks, budget, player }).is_err() {
             self.link = None;
             return false;
         }
@@ -581,13 +607,21 @@ impl Worker {
         w.traffic.player = player;
         let t0 = Instant::now();
         let (mut ticks, mut max_ms) = (0u32, 0f32);
+        let mut failed = None;
         phase_on(1);
         while ticks < max_ticks {
             if stale() {
                 break;
             }
             let t = Instant::now();
-            w.tick(minds);
+            // [r16-crash] A panic in a tick is contained: logged, and the
+            // half-ticked world thrown away below; the screen keeps the
+            // last whole city and pauses.
+            let from = w.clock.tick;
+            if let Err(message) = crate::crash::contain_logged("a sim tick on the sim thread", || tick_once(w, minds)) {
+                failed = Some((from, message));
+                break;
+            }
             max_ms = max_ms.max(t.elapsed().as_secs_f32() * 1000.0);
             ticks += 1;
             // The screen sees every game hour's last minute (the history
@@ -598,6 +632,12 @@ impl Worker {
             }
         }
         phase_off(1);
+        if let Some((tick, message)) = failed {
+            if let Some((old, _, _)) = self.state.take() {
+                let _ = self.dropper.send(Garbage::Own(old));
+            }
+            return FromWorker::Failed { epoch, tick, message };
+        }
         let tick_ms = t0.elapsed().as_secs_f32() * 1000.0;
         if stale() {
             // The screen's city changed: a rebase is on its way.
@@ -611,6 +651,30 @@ impl Worker {
         let Some(minds) = minds.try_clone() else { return FromWorker::Aborted { epoch } };
         let copy_ms = c.elapsed().as_secs_f32() * 1000.0;
         FromWorker::Batch(Batch { epoch, world: copy, minds, ticks, events, tick_ms, max_tick_ms: max_ms, copy_ms })
+    }
+}
+
+/// One tick of `w`. [r16-crash] Tests can make the tick from a given clock
+/// panic ([`fail_tick_at`]) to check the game survives one.
+pub(crate) fn tick_once(w: &mut World, minds: &mut HybridMind) {
+    #[cfg(test)]
+    if FAIL_AT.lock().is_ok_and(|f| f.contains(&w.clock.tick)) {
+        panic!("a test's planted failure at tick {}", w.clock.tick);
+    }
+    w.tick(minds);
+}
+
+/// [r16-crash] Tests: the ticks from these clocks panic (each test plants
+/// its own, far from any other test's clock, with [`plant_failure`]).
+#[cfg(test)]
+static FAIL_AT: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+
+#[cfg(test)]
+pub(crate) fn plant_failure(tick: u64, on: bool) {
+    let mut f = FAIL_AT.lock().unwrap_or_else(|e| e.into_inner());
+    f.retain(|&t| t != tick);
+    if on {
+        f.push(tick);
     }
 }
 
@@ -730,6 +794,33 @@ mod tests {
         b.world.add_road(&[nd_sim::Vec2::new(-260.0, 330.0), nd_sim::Vec2::new(260.0, 330.0)], 1, 1);
         let _ = run_here(&mut b, (start + 400 - t) as u32);
         assert_eq!(fp(&a), fp(&b), "the edit landed on tick {t} in both");
+    }
+
+    /// [r16-crash] A tick that panics on the sim thread is contained: the
+    /// screen keeps the last whole city (before that tick), pauses and
+    /// says why; unpaused once the fault is gone, it runs on.
+    #[test]
+    fn a_panicking_tick_on_the_thread_pauses_the_game() {
+        let (mut a, _) = twins();
+        let start = 5_000_000_000;
+        a.world.clock.tick = start;
+        let bad = start + 37;
+        crate::sim_thread::plant_failure(bad, true);
+        for _ in 0..10_000 {
+            if a.paused {
+                break;
+            }
+            a.advance(1.0);
+            a.world.wait_batch(Duration::from_secs(30));
+        }
+        assert!(a.paused, "the fault paused the game");
+        assert!(a.fault.as_deref().is_some_and(|f| f.contains("planted failure")), "{:?}", a.fault);
+        assert!(a.world.clock.tick <= bad, "the screen's city is from before the failed tick: {}", a.world.clock.tick);
+        crate::sim_thread::plant_failure(bad, false);
+        a.paused = false;
+        a.pause_at = Some(bad + 30);
+        run_threaded(&mut a);
+        assert_eq!(a.world.clock.tick, bad + 30, "it runs on past the tick");
     }
 
     /// Pause holds the city at once, with a batch ready or out; the speed

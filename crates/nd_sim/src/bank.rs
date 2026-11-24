@@ -472,7 +472,7 @@ impl Slots {
             self.0.resize_with(i + 1, || None);
         }
         self.0[i] = Some(Entry { units: 0, key: ffi, ring: VecDeque::new() });
-        self.0[i].as_mut().unwrap()
+        self.0[i].as_mut().expect("set on the line above")
     }
 
     fn close(&mut self, ffi: u64) {
@@ -809,7 +809,7 @@ impl Bank {
         }
         let fresh = self.slots(a).is_some_and(|s| s.get(ffi).is_none());
         if fresh {
-            self.slots_mut(a).unwrap().open(ffi);
+            self.slots_mut(a).expect("fresh: slots(a) is there").open(ffi);
             let kind = if self.opened { Kind::Arrival } else { Kind::Opening };
             self.book_outside(a, class, m.units(), kind);
             return;

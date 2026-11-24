@@ -133,7 +133,7 @@ pub(super) fn subdivide_sized(poly: Polygon<f64>, lu: LandUse, (lw, ld): (f32, f
             break;
         }
     }
-    let (bands, core) = chosen.unwrap();
+    let (bands, core) = chosen.expect("the loop runs at least once");
     let core_area: f32 = core.0.iter().map(|p| area_f(&p)).sum();
     let band_area: f32 = bands.iter().flat_map(|m| m.0.iter()).map(|p| area_f(&p)).sum();
 

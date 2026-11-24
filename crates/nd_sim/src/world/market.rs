@@ -87,7 +87,7 @@ impl World {
             };
             let rate = tax_line.map_or(crate::tax::BUSINESS_TAX, |c| self.economy.taxes.rate(c));
             let b = &mut self.buildings[bid];
-            let bz = b.business.as_mut().unwrap();
+            let bz = b.business.as_mut().expect("listed for its business");
             if bz.closed {
                 // A shut business takes nothing and owes no tax; whatever
                 // the inspector still showed from its last day is cleared.
@@ -100,7 +100,7 @@ impl World {
                 if !b.workers.is_empty() {
                     stray.append(&mut b.workers);
                 }
-                let bz = b.business.as_mut().unwrap();
+                let bz = b.business.as_mut().expect("listed for its business");
                 if bz.broke_days > 7 {
                     let tenanted = b.units.iter().any(|u| matches!(u.occupant, crate::buildings::Occupant::Tenant(_)));
                     if b.is_tenant() {
@@ -151,7 +151,7 @@ impl World {
                     self.collect_rent(Account::Business(bid), host, shop_rent, Kind::ShopRent);
                 }
                 let b = &mut self.buildings[bid];
-                let bz = b.business.as_mut().unwrap();
+                let bz = b.business.as_mut().expect("listed for its business");
                 bz.rent_day = shop_rent;
                 bz.spend_today += wage_bill + extra + shop_rent;
                 // The market's reading of this kind of business, past the
@@ -164,7 +164,7 @@ impl World {
                 }
             }
             let b = &mut self.buildings[bid];
-            let bz = b.business.as_mut().unwrap();
+            let bz = b.business.as_mut().expect("listed for its business");
             bz.days_open = bz.days_open.saturating_add(1);
             let spent = bz.spend_today;
             bz.close_books(revenue, spent);
@@ -565,18 +565,18 @@ impl World {
                 }
                 match seller {
                     Some((seller_id, price)) => {
-                        let got = self.buildings[seller_id].business.as_mut().unwrap().take(r, amount);
+                        let got = self.buildings[seller_id].business.as_mut().expect("a seller: a business").take(r, amount);
                         if got <= 0.0 {
                             continue;
                         }
                         let cost = got * price;
                         {
-                            let sb = self.buildings[seller_id].business.as_mut().unwrap();
+                            let sb = self.buildings[seller_id].business.as_mut().expect("a seller: a business");
                             sb.revenue_today += cost;
                             sb.deals += 1;
                         }
                         {
-                            let bb = self.buildings[bid].business.as_mut().unwrap();
+                            let bb = self.buildings[bid].business.as_mut().expect("a buyer: a business");
                             bb.spend_today += cost;
                         }
                         self.transfer(Account::Business(bid), Account::Business(seller_id), cost, Kind::Supplies);
@@ -592,7 +592,7 @@ impl World {
                         // [tax] The import duty on top, to the treasury.
                         let duty = cost * self.economy.taxes.import_duty;
                         {
-                            let bb = self.buildings[bid].business.as_mut().unwrap();
+                            let bb = self.buildings[bid].business.as_mut().expect("a buyer: a business");
                             bb.spend_today += cost + duty;
                         }
                         self.transfer(Account::Business(bid), Account::Outside, cost, Kind::Imports);
@@ -1366,7 +1366,7 @@ impl World {
                 h.groceries += got;
                 c.groceries = h.groceries;
                 pantry = Some((h.members.clone(), h.groceries));
-                Account::Household(c.household.unwrap())
+                Account::Household(c.household.expect("hh came from it"))
             }
             None => Account::Person(cid),
         };
