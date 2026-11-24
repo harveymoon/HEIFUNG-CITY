@@ -836,7 +836,8 @@ Citizens are rendered from their simulated positions every frame.
   always with no grocer selling, a meal at a place cooking them instead
   [r12-hunger]); at lunch they may buy baked goods; the comfortable buy goods
   for mood. Days without food cost mood and eventually drive people out of town.
-- **Hunger as demand** [r12-hunger] (`world/food_need.rs`): each midnight the
+- **Hunger as demand** [r12-hunger] (`world/food_need.rs`): each midnight (and on
+  loading a save that has no reading yet, `food_need_after_load` [r14-photofix]) the
   hungry (gone to bed hungry, or hungry a day or more) are counted where they
   live on a 400 m grid, smoothed over days (`World::food_need`). A cell's pull is
   its hungry plus half its neighbours' over 30 (none under 4). While 3% or more
@@ -881,7 +882,8 @@ Citizens are rendered from their simulated positions every frame.
   comes by road from the map edge to its buyer instead. (Harvey's day-80 city:
   129 of 203 grocers had 5,100 units booked that no load held and never
   reordered; the hubs expected 470 loads with 40 on their way.)
-- **Business accounting**: businesses pay a share of their workers' wages daily.
+- **Business accounting**: [r15-money] businesses pay their staff's whole wage (and hold back the
+  standard tax for the treasury) at midnight; see "Money across the town edge".
   Deep in debt for five days means closure: workers laid off, the building goes
   derelict, and after a week it is demolished so the lot can be reused. Offices
   and civic buildings are publicly funded.

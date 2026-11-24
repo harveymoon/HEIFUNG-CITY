@@ -89,6 +89,35 @@ SUPERSEDED = (
     "flag: crashed motorcycle in a one-way tunnel",          # tow trucks reworked: street-followups, round1/r2-traffic
     "flag: kerbs turn to dirt at corners",                   # rest closed by fix/review on the same line
     "Sim on its own thread (Harvey 2026-11-01",              # rest in "Performance plan" (multi-core sim)
+    # Round 16 sweep (r16-docs, 2026-11-24): the open parts of these are in todo.md's
+    # "Round 16 sweep" section or in the open item named.
+    "**Supplies review: one goods catalogue",                # "Building trade, what is left"
+    "Part (1), the catalogue → DONE [r13-catalogue]",        # done by r14-materials / r16-tidy (d)
+    "Parts (2) and (4) → DONE [r14-materials]",              # "Building trade, what is left"
+    "Left: local contractors take few jobs",                 # "Building trade, what is left"
+    "Left: the merchant opens late",                         # "Building trade, what is left"
+    "Food trucks and street vendors (Harvey 2026-11-20",     # "Food trucks, what is left"
+    "F2 Overstocked Yard 21",                                # [r15-freight] lorry cap / port crane items
+    "F3 Route 88 / Neon Parade interchange",                 # "F3 interchange"
+    "F4 Plinths on slopes",                                  # "Hillside, what is left"
+    "F5 Lighthouse corner blocks",                           # small polish line
+    "F6 Port of Saltmarsh quay crane",                       # [r15-freight] port crane item
+    "F12 Long roundabout queues",                            # "Two-lane roundabouts", zebra item
+    "F15 Transit barely used",                               # dropped: Harvey's choices
+    "F16 Frame hitches up to 36.5 s",                        # the two [r15-polish] items
+    "Finding 1: the hills under Neon Market",                # "Hillside, what is left"
+    "#2 Cyclists ride inside each other",                    # trip-review items, round 16 (i)
+    "Left: (a) skid-row camps",                              # "Close-up detail, what is left"
+    "Trip review: follow people and check their paths",      # its open items follow it
+    "**Money still crosses the town edge**",                 # "Money loop, what is left"
+    "**Corps buy on near-free credit**",                     # "Money loop, what is left"
+    "**Hillside lots: cut the terrain to the pad**",         # "Hillside, what is left"
+    "[r14-materials] Site lorry counts in the probe",        # [r15-freight] lorry cap item
+    "Agent game instances crashed three times",              # [r15-polish] swapchain item
+    "**Water realism pass**",                                # "Water, what is left"
+    "Harvey's day-62 city empties through hunger",           # "Commutes are very long"
+    "Look-dev leftovers → DONE [fix/haze]",                  # small polish line
+    "#8 Converted boathouse inland",                         # F5 line in the small polish line
 )
 
 

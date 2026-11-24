@@ -181,13 +181,14 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
             ui.label(egui::RichText::new(format!("Planned: {} floor{}, about {:.0} m high when finished", n.floors, crate::ui::fmt::s(n.floors), n.height_m)).strong().color(egui::Color32::from_rgb(120, 220, 245)));
         }
         ui.label(egui::RichText::new(format!("{} of {} deliveries in  ·  {:.1} days of work in all  ·  site crew {}/{}  ·  will have {} homes and {} jobs", c.deliveries, nd_sim::Construction::DELIVERIES, c.days, b.workers.len(), b.jobs, homes, jobs)).small());
-        // [r14-materials] What it is built of, stage by stage, and the pile.
-        materials_section(ui, w, id);
-        // [r14-builders] Who is building it.
+        // [r14-builders] Who is building it ([r16-docs] above the long
+        // materials table, so it shows at the default inspector height).
         if let Some(yard) = builders::site_builder(ui, w, id) {
             *selection = Selection::Building(yard);
             return;
         }
+        // [r14-materials] What it is built of, stage by stage, and the pile.
+        materials_section(ui, w, id);
     }
     if b.plant.is_none() && b.powered < 0.98 && b.construction.is_none() {
         ui.label(egui::RichText::new(format!("UNDERPOWERED: {:.0}% of {:.1} MW, {} dark hours today", b.powered * 100.0, nd_sim::power::demand_mw(b), b.unpowered_hours_today)).color(WARN));

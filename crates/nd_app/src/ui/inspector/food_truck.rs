@@ -56,9 +56,10 @@ pub(super) fn card(ui: &mut egui::Ui, w: &nd_sim::World, selection: &mut Selecti
             ui.label(egui::RichText::new(format!("{} is driving and serving today.", c.name)).weak());
         }
     }
-    // Today's plan.
+    // Today's plan; before the 05:02 planning it is still yesterday's.
     if !t.plan.is_empty() {
-        section(ui, "TODAY'S SPOTS");
+        let today = t.plan.iter().any(|s| s.day == w.clock.day());
+        section(ui, if today { "TODAY'S SPOTS" } else { "YESTERDAY'S SPOTS (today's are planned at 05:02)" });
         for s in &t.plan {
             ui.label(format!("{}  {} ({}): {}", hours(s.from, s.to), s.name, s.kind.label(), s.state.label()));
         }
