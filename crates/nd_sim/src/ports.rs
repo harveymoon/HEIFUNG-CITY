@@ -630,6 +630,16 @@ pub enum CraneEnd {
     Quay,
 }
 
+/// [r15-freight] The quay crane's boom: its hinge over the seaward legs,
+/// metres past the crane's middle; how far past the berth's centre line it
+/// reaches (half a freighter's beam and a little); and its outreach from
+/// the hinge, at least and at most (a big real ship-to-shore crane reaches
+/// 50-70 m).
+pub const CRANE_HINGE: f32 = 6.0;
+pub const CRANE_PAST_BERTH: f32 = 8.0;
+pub const CRANE_MIN_OUTREACH: f32 = 20.0;
+pub const CRANE_MAX_OUTREACH: f32 = 55.0;
+
 impl Port {
     /// [berthing] The ship-to-shore crane's boom: from over the quay (the
     /// foot of the crane drawn with the port) out over the berth.
@@ -637,7 +647,21 @@ impl Port {
         let (w, d) = self.kind.size();
         let base = self.center + self.seaward * (d * 0.5 - 9.0) + self.along * (w * 0.12);
         let reach = (self.berth - base).dot(self.seaward).max(10.0);
-        (base, base + self.seaward * (reach + 10.0))
+        // [r15-freight] (photo 2026-11-20 F6) Out over the berth and the
+        // freighter's far side, never further than a quay crane reaches
+        // (the old boom was drawn on across the whole river).
+        let hinge = CRANE_HINGE;
+        let out = (reach - hinge + CRANE_PAST_BERTH).clamp(CRANE_MIN_OUTREACH, CRANE_MAX_OUTREACH);
+        (base, base + self.seaward * (hinge + out))
+    }
+
+    /// [r15-freight] Where the quay crane's boom hinges (over its seaward
+    /// legs, `CRANE_HINGE` past the crane's middle) and how far it reaches
+    /// out from there (`crane_boom`).
+    pub fn crane_hinge(&self) -> (Vec2, f32) {
+        let (base, tip) = self.crane_boom();
+        let hinge = base + self.seaward * CRANE_HINGE;
+        (hinge, hinge.distance(tip))
     }
 
     /// [berthing] A freighter's place alongside the pier head, arriving
@@ -662,8 +686,9 @@ pub fn crane_work(port: &Port, ship: &Ship, frac: f32) -> Option<CraneWork> {
         return None;
     }
     let landing = n < ship.boxes_in;
-    let (base, _) = port.crane_boom();
-    let over_ship = base + port.seaward * (quay.at - base).dot(port.seaward);
+    let (base, tip) = port.crane_boom();
+    // [r15-freight] Under the boom, however far out the ship lies.
+    let over_ship = base + port.seaward * (quay.at - base).dot(port.seaward).min(base.distance(tip) - 2.0);
     let over_quay = base + port.seaward * 2.0;
     let (src, dst, src_end, dst_end) = if landing { (over_ship, over_quay, CraneEnd::Ship, CraneEnd::Quay) } else { (over_quay, over_ship, CraneEnd::Quay, CraneEnd::Ship) };
     // Down and up at the source, across loaded, down and up at the

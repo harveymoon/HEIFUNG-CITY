@@ -99,7 +99,7 @@ impl World {
             let jobs = self.buildings.get(fw).map_or(0, |b| b.jobs) as usize;
             let fleet = (1 + jobs / 8).min(4);
             let out = self.containers.lorries.values().filter(|j| j.round.as_ref().is_some_and(|r| r.forwarder == fw)).count();
-            if out >= fleet || self.truck_count() >= crate::market::MAX_TRUCKS + super::market::BOX_TRUCKS_EXTRA {
+            if out >= fleet || self.truck_count() >= self.truck_cap() + super::market::BOX_TRUCKS_EXTRA {
                 continue;
             }
             // Where the full box goes: the port, else the nearest freight yard.

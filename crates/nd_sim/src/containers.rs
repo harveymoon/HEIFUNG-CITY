@@ -535,6 +535,9 @@ pub struct BoxStats {
     pub to_storage_total: u32,
     pub called_back_total: u32,
     pub cleared_by_road_total: u32,
+    /// [r15-freight] Empties the lines took off a depot over its room and
+    /// back to sea or rail with their next sailing or train (no lorry).
+    pub repositioned_total: u32,
     /// [r11-box-stock] Boxes over the terminals' room no yard had room
     /// for, today and yesterday (the pressure for container storage).
     pub overflow_today: u32,
@@ -668,7 +671,9 @@ pub const SHIFT_LORRIES_PER_HOUR: usize = 2;
 pub const BACKLOG_LORRIES_PER_HOUR: usize = 24;
 /// [r11-box-stock] Hours a full box stands at a terminal over its room,
 /// nobody fetching it, before it is unpacked there (two days otherwise).
-pub const UNPACK_AFTER_HOURS: u64 = 6;
+/// [r15-freight] Two: Harvey's port held 779 full boxes over a room of 60
+/// for a day (a cap on what a terminal holds, the goods going on loose).
+pub const UNPACK_AFTER_HOURS: u64 = 2;
 /// [r11-box-stock] Hired backlog lorries on the road at once, all told
 /// (shared out evenly between the terminals over their room).
 pub const BACKLOG_LORRIES: usize = 110;

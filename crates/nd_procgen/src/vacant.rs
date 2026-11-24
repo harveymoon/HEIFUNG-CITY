@@ -55,6 +55,56 @@ pub fn generate_vacant(lot: &Lot, land_value: f32, seed: u64, palette: &Palette)
     g
 }
 
+/// [r15-lots] (F1) Backland no street or path reaches (a landlocked lot
+/// with nothing on it): a rough meadow of long grass, scrub and a few
+/// trees, kept green until a company in front joins it to its site. It
+/// was a flat slab of dark earth: 51 ha of "dead ground" in Harvey's
+/// day-81 city, near black at night.
+pub fn generate_backland(lot: &Lot, seed: u64, palette: &Palette) -> Geometry {
+    let mut g = Geometry::default();
+    let mut rng = rng_for(seed, 31);
+    let mut poly = lot.polygon.clone();
+    if poly.len() < 3 {
+        return g;
+    }
+    if polygon_area(&poly) < 0.0 {
+        poly.reverse();
+    }
+    let inner = offset_poly(&poly, 0.25);
+    if inner.len() < 3 || polygon_area(&inner).abs() < 4.0 {
+        return g;
+    }
+    let site = Site { inner, lot: poly, front: lot.front_edge, inward: -lot.front_dir.normalize_or_zero() };
+    let pal = palette;
+    let area = site.area();
+    let meadow = mix(pal.foliage_dry, pal.foliage, 0.45);
+    g.part(Dirt).ground_polygon(&site.inner, 0.03, rgba(meadow));
+    for _ in 0..((area / 60.0) as i32).clamp(3, 14) {
+        if let Some(p) = site.sample(&mut rng, 1.0) {
+            let (r, k) = (rng.random_range(1.5..4.0), rng.random_range(0.85..1.15));
+            patch(&mut g, &site, Foliage, p, r, 0.045, &mut rng, mul(mix(pal.foliage_dry, pal.foliage, 0.7), k));
+        }
+    }
+    let mut spots = site.grid(&mut rng, 7.0, 1.5);
+    spots.retain(|_| rng.random_bool(0.5));
+    let max_trees = ((area / 250.0) as i32).clamp(1, 8);
+    let mut trees = 0;
+    for p in spots {
+        let size: f32 = rng.random();
+        let tint: f32 = rng.random();
+        match rng.random_range(0..10) {
+            0..=5 => scrub_world(&mut g, &mut rng, p, 0.02, 0.6 + size * 0.8, mix(pal.foliage_dry, pal.foliage, 0.3 + tint * 0.5)),
+            6 => rock_world(&mut g, &mut rng, p, 0.0, 0.3 + size * 0.5, mul(pal.stone, 0.9 + tint * 0.3)),
+            _ if trees < max_trees && site.inside(p, 2.5) => {
+                trees += 1;
+                crate::climate::climate_tree(&mut g, pal, p, rng.random_range(2.6..4.2), rng.random_range(2.0..3.2), mul(pal.foliage, rng.random_range(0.85..1.1)));
+            }
+            _ => {}
+        }
+    }
+    g
+}
+
 /// The parcel in world coordinates.
 struct Site {
     /// Exact outline, counter-clockwise.

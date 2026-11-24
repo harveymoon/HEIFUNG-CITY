@@ -11,9 +11,9 @@
 //! terminal calls its boxes back when it runs low (empties for the town's
 //! exports); after [`cx::STORAGE_DAYS`] the line sends a box home (back to
 //! its terminal to ship out when there is room, else out of town by road).
-//! Over its room with no yard to take the rest, the lines clear the backlog
-//! out of town by road, lorries loaded at the back gate by hired reach
-//! stackers (an older save works its surplus off so over a few days), and
+//! Over its room with no yard to take the rest, [r15-freight] the lines take
+//! their surplus empties back by sea or rail within the hour
+//! (`reposition_surplus`: no depot holds more than its room), and
 //! the boxes no yard could keep make the pressure for one more container
 //! yard: an entrepreneur opens one on an industrial lot, or turns a
 //! shut-down industrial business into one. A depot's room is what its
@@ -235,6 +235,12 @@ impl World {
                     }
                     let load = self.chassis_load(&mut ids);
                     let to = self.storage_yard_for(pos, d).filter(|y| y.1 >= load.len()).map(|y| y.0);
+                    // [r15-freight] Not out of town by road: the lines take
+                    // what no yard keeps back by sea or rail
+                    // (`reposition_surplus`), not two at a time in lorries.
+                    if to.is_none() {
+                        break;
+                    }
                     if !self.backlog_lorry(d, &load, to) {
                         break;
                     }
@@ -269,6 +275,37 @@ impl World {
                 self.call_back(d, pos, 1);
             }
         }
+        self.reposition_surplus();
+    }
+
+    /// [r15-freight] (photo 2026-11-20 F2) No depot holds more than its
+    /// room: whatever the lorries above could not move this hour, the
+    /// lines' surplus empties over a depot's room go back to sea or rail
+    /// with their next sailing or train, straight off the stack (a real
+    /// terminal stops taking a line's empties when its blocks are full and
+    /// the line repositions them). Harvey's day-80 save held 2,205 boxes at
+    /// a cargo hub with room for 23, 1,375 at the port with room for 60:
+    /// stacks drawn past the crane and boxes nowhere drawn at all, and up
+    /// to 110 hired lorries a day carrying the backlog about. Returns how
+    /// many went.
+    pub(super) fn reposition_surplus(&mut self) -> usize {
+        let mut gone = 0;
+        let depots: Vec<(BuildingId, DepotKind)> = self.box_depots().into_iter().filter(|d| d.1 != DepotKind::Scrap).map(|d| (d.0, d.1)).collect();
+        for (d, kind) in depots {
+            let room = self.box_room(d, kind);
+            let over = self.depot_stock(d).saturating_sub(room);
+            if over == 0 {
+                continue;
+            }
+            for id in self.movable_empties(d).into_iter().take(over) {
+                self.box_gone(id, Event::SentOut);
+                self.containers.stats.repositioned_total += 1;
+                // No yard kept it: the pressure for a container yard.
+                self.containers.stats.overflow_today += 1;
+                gone += 1;
+            }
+        }
+        gone
     }
 
     /// [r11-box-stock] Up to `n` full boxes standing at terminal `d` for

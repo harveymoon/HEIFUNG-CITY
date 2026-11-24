@@ -678,8 +678,9 @@ fn a_full_terminal_keeps_its_overflow_at_a_container_yard_for_a_fee() {
 
 /// [r11-box-stock] (Harvey's day-80 save: 1375 boxes at a port with room
 /// for 60) A terminal far over its room with nowhere in town to keep the
-/// rest works the backlog off over a few days, lorries carrying it out of
-/// town by road (every box counted as sent out), and the boxes no yard
+/// rest: [r15-freight] the lines take their surplus empties back by sea or
+/// rail within the hour (no lorries carrying it about by road, two at a
+/// time, for days), every box counted as sent out, and the boxes no yard
 /// could keep make the pressure for a container storage yard.
 #[test]
 fn an_overstocked_terminal_drains_by_road_and_asks_for_a_storage_yard() {
@@ -688,15 +689,17 @@ fn an_overstocked_terminal_drains_by_road_and_asks_for_a_storage_yard() {
     for k in 0..room * 6 {
         young_box(&mut w, yard, k % 2 == 0, None);
     }
+    tick(&mut w, 61);
+    assert!(w.depot_stock(yard) <= room, "within its room within the hour: {} (room {room})", w.depot_stock(yard));
+    assert!(w.containers.stats.repositioned_total as usize >= room * 4, "back by sea or rail: {:?}", w.containers.stats);
+    assert!(w.containers.haulers.is_empty(), "no lorries hired to carry it out of town");
     let mut by_day = Vec::new();
-    for _ in 0..6 {
+    for _ in 0..3 {
         tick(&mut w, 1440);
         by_day.push(w.depot_stock(yard));
         assert_eq!(accounted(&w), w.containers.stats.made, "every box is in town or counted out of it: {}", census(&w));
     }
-    assert!(by_day.windows(2).all(|p| p[1] <= p[0] + 2), "the stock falls day by day: {by_day:?}");
-    assert!(*by_day.last().unwrap() <= room, "within its room after a few days: {by_day:?} (room {room})");
-    assert!(w.containers.stats.cleared_by_road_total as usize >= room * 4, "out of town by road: {:?}", w.containers.stats);
+    assert!(by_day.iter().all(|n| *n <= room), "stays within its room: {by_day:?} (room {room})");
     // The pressure: the boxes no yard could keep.
     w.daily_pressure();
     assert!(w.pressure.signals.box_overflow > 0.0 || w.containers.stats.overflow_yday > 0);

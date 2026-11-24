@@ -100,6 +100,12 @@ pub(super) fn status(ctx: &Ctx) -> Value {
     // [chase-cam] How it follows, and what the chase camera cuts away.
     v["follow_view"] = json!(ctx.follow.target.map(|_| ctx.follow.view.label()));
     v["chasing"] = json!(ctx.follow.chasing());
+    // [r15-freight] Yesterday's riders and fares (the day's counts read at
+    // night are a few hours' worth).
+    v["transit"]["riders_yesterday"] = json!(t.riders_yesterday);
+    v["transit"]["fares_yesterday"] = json!(round(t.fares_yesterday));
+    v["rail"]["riders_yesterday"] = json!(r.riders_yesterday);
+    v["rail"]["fares_yesterday"] = json!(round(r.fares_yesterday));
     // [subway] Added apart: the literal above is at serde_json's macro depth.
     let ss = &w.subway.stats;
     v["subway"] = json!({ "stations": ss.stations, "lines": ss.lines, "trains": ss.trains, "waiting": ss.waiting, "riding": ss.riding, "riders_today": ss.riders_today, "riders_yesterday": ss.riders_yesterday, "fares_today": round(ss.fares_today) });

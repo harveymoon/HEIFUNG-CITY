@@ -346,6 +346,35 @@ impl Traffic {
     /// traffic there: a vehicle in the junction when it arrives, or one
     /// that will pass the entry (not leave by it) arriving less than a
     /// critical gap after it, or not yet past when it gets there.
+    /// [r15-freight] (photo 2026-11-20 F12) Rings holding up traffic: per
+    /// ring (`RoadNetwork::rings` index), the vehicles standing in queues
+    /// whose head has given way at one of its entries for `min_stall`
+    /// seconds or more, and that head's stall (the longest). For the
+    /// `roundabout_over_capacity` alert and probes.
+    pub fn ring_queues(&self, min_stall: f32) -> std::collections::BTreeMap<usize, (usize, f32)> {
+        let mut out: std::collections::BTreeMap<usize, (usize, f32)> = std::collections::BTreeMap::new();
+        if self.net.rings.nodes.is_empty() {
+            return out;
+        }
+        for (id, c) in self.cars.iter() {
+            if c.v >= 0.5 || c.hold > 0.0 || c.entering {
+                continue;
+            }
+            let Some(&head) = self.jam_chain(id).cars.last() else { continue };
+            let h = &self.cars[head];
+            if h.stalled < min_stall || self.stop_reason(head) != StopReason::Roundabout {
+                continue;
+            }
+            let Some(&next) = h.route.get(h.idx + 1) else { continue };
+            let LaneKind::Connector { node, .. } = self.net.lanes[next as usize].kind else { continue };
+            let Some(rn) = self.net.rings.nodes.get(&node) else { continue };
+            let e = out.entry(rn.ring).or_default();
+            e.0 += 1;
+            e.1 = e.1.max(h.stalled);
+        }
+        out
+    }
+
     fn ring_blocks_entry(&self, rn: &RingNode, reach: f32) -> bool {
         let lanes = &self.net.lanes;
         // Too far off to judge: decide nearer the line.
@@ -897,5 +926,38 @@ mod tests {
             }
         }
         assert!(left_by_exit, "got off at the arm instead of standing behind the ring for good");
+    }
+
+    /// [r15-freight] The queue held at a ring's entry is counted against
+    /// that ring, its longest stall with it; a queue held elsewhere is not.
+    #[test]
+    fn queues_held_at_a_ring_entry_are_counted_for_the_ring() {
+        let roads = city(1, Some((18.0, 1)));
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let rn = t.net.rings.nodes.values().find(|n| n.entries.iter().any(|&e| t.net.lanes[e as usize].start().x > 10.0)).unwrap().clone();
+        let (east, _) = arm_points(Vec2::X, 1, 0);
+        let (_, west) = arm_points(Vec2::NEG_X, 1, 0);
+        let head = send(&mut t, &roads, east * (60.0 / 280.0), west);
+        let k = t.cars[head].route.iter().position(|l| rn.entries.contains(l)).unwrap() - 1;
+        let old = t.cars[head].route[t.cars[head].idx];
+        t.net.lanes[old as usize].cars.retain(|&c| c != head);
+        let lane = t.cars[head].route[k];
+        let len = t.net.lanes[lane as usize].length;
+        {
+            let c = &mut t.cars[head];
+            c.idx = k;
+            c.s = len - 1.0;
+            c.v = 0.0;
+            c.entering = false;
+            c.wait = Wait::Yield;
+            c.stalled = 300.0;
+        }
+        t.insert_sorted(lane, head);
+        assert_eq!(t.stop_reason(head), StopReason::Roundabout);
+        let q = t.ring_queues(120.0);
+        assert_eq!(q.get(&rn.ring).map(|x| x.0), Some(1), "{q:?}");
+        assert!((q[&rn.ring].1 - 300.0).abs() < 0.01);
+        assert!(t.ring_queues(400.0).is_empty(), "not stood that long");
     }
 }

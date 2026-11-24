@@ -151,6 +151,13 @@ pub struct RailStats {
     pub from_out_of_town_today: u32,
     #[serde(default)]
     pub to_out_of_town_today: u32,
+    /// [r15-freight] Yesterday's riders and fares, kept at midnight: the
+    /// day's counts read at night are a few hours' worth (photo 2026-11-20
+    /// F15 read 13 rail riders at 02:17).
+    #[serde(default)]
+    pub riders_yesterday: u32,
+    #[serde(default)]
+    pub fares_yesterday: f32,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

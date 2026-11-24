@@ -79,5 +79,5 @@ pub use surface::{Geometry, Lod, Surface, WashLine};
 pub use detail::DetailBand;
 pub use terrain::{build_far_ground, build_terrain, flat_height, scatter_nature, terrain_height, TerrainConfig};
 pub use textures::{generate as generate_texture, mip_chain, roughness_map, Texture};
-pub use vacant::generate_vacant;
+pub use vacant::{generate_backland, generate_vacant};
 pub use vehicles::{vehicle_mesh, VehicleMesh};

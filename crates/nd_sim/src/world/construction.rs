@@ -512,7 +512,7 @@ impl World {
             self.dispatch_truck(TruckOrigin::Building(bid), cargo, RUBBLE_TRUCK_COLOR);
             return;
         }
-        if self.truck_count() >= crate::market::MAX_TRUCKS {
+        if self.truck_count() >= self.truck_cap() {
             return;
         }
         let route = (|| {

@@ -531,6 +531,8 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, fishing::sync_trawlers.in_set(SimSet::Sync).after(sync_ships));
         // [berthing] The quay cranes working the freighters at the berth.
         app.add_systems(Update, landscape::sync_port_cranes.in_set(SimSet::Sync).after(sync_ships));
+        // [r15-freight] Their booms, lowered over a freighter alongside, else raised.
+        app.add_systems(Update, landscape::sync_port_booms.in_set(SimSet::Sync).after(sync_ships));
         // [horizon] The world past the map out to the horizon: far ground and
         // water, ridges, the towns the ways lead to and their lights. Their
         // materials follow the fog and the night once the fog is set.

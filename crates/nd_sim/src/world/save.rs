@@ -288,6 +288,8 @@ impl World {
         // A save from before named projects: number and name the one it has.
         self.name_active_project();
         self.recut_parcels();
+        // [r15-lots] (F1) Lots dead for their outline's crumbs come back.
+        self.rejudge_lots();
         // [waterfront] frontage on the water, for a save from before
         self.mark_shore_lots();
         // [r4-crossings] Roads laid by older rules are laid again from the

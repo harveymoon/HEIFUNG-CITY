@@ -620,6 +620,8 @@ impl World {
         self.economy.taxes.roll();
         let rs = &mut self.rail.stats;
         rs.upkeep_today = rail_upkeep;
+        rs.riders_yesterday = rs.riders_today;
+        rs.fares_yesterday = rs.fares_today;
         rs.riders_today = 0;
         rs.fares_today = 0.0;
         rs.from_out_of_town_today = 0;
@@ -627,6 +629,8 @@ impl World {
         rs.passenger_trains_today = 0;
         rs.freight_trains_today = 0;
         rs.freight_in_today = 0.0;
+        self.economy.transit.riders_yesterday = self.economy.transit.riders_today;
+        self.economy.transit.fares_yesterday = self.economy.transit.fares_today;
         self.economy.transit.riders_today = 0;
         self.economy.transit.fares_today = 0.0;
         for (rid, cost) in line_upkeep {

@@ -954,8 +954,21 @@ impl World {
 
     pub(super) fn truck_count(&self) -> usize {
         // [r11-box-stock] Not the lorries hired to clear a depot's backlog.
+        // [r15-freight] Nor those standing in a depot's bays, off the street.
         let haulers = &self.containers.haulers;
-        self.traffic.cars.iter().filter(|(id, c)| c.cargo.is_some() && !haulers.contains(id)).count()
+        self.traffic.cars.iter().filter(|(id, c)| c.cargo.is_some() && !c.bay && !haulers.contains(id)).count()
+    }
+
+    /// [r15-freight] How many lorries the roads take before loads are
+    /// handed over on the spot (`dispatch_truck`): `MAX_TRUCKS`, and one
+    /// per `TRUCK_PEOPLE` residents in a bigger town. A flat 60 in a city
+    /// of 17,000 was full 97% of the day (95 lorries counted, 57 of them
+    /// driving back empty, 21 standing in depot bays), so nearly every load
+    /// that was not for a site or in boxes was handed over by magic, and
+    /// site loads past the site allowance too (the site lorry counts that
+    /// fell to near zero, todo r14-materials).
+    pub fn truck_cap(&self) -> usize {
+        crate::market::MAX_TRUCKS.max(self.citizens.len() / crate::market::TRUCK_PEOPLE)
     }
 
     /// The buyer counts a load as on its way so it does not reorder.
@@ -1040,7 +1053,7 @@ impl World {
         // behind the cap instead, a growing city's sites starved: a
         // generated city opened 17 businesses by day 4 instead of 20+.)
         let boxed = !to_site && self.has_full_boxes(cargo.from, cargo.resource, cargo.to);
-        let cap = crate::market::MAX_TRUCKS + if to_site { SITE_TRUCKS_EXTRA } else if boxed { BOX_TRUCKS_EXTRA } else { 0 };
+        let cap = self.truck_cap() + if to_site { SITE_TRUCKS_EXTRA } else if boxed { BOX_TRUCKS_EXTRA } else { 0 };
         if self.truck_count() >= cap {
             // [K34] Its boxes go with it.
             self.boxes_follow(&cargo);
@@ -1058,7 +1071,13 @@ impl World {
                 }
             };
             let (to_seg, to_pt) = self.truck_stop(cargo.to)?;
-            self.traffic.net.find_route(from_seg, from_pt, to_seg, to_pt)
+            // [r15-lots] (F10) A site's lorry goes into a pocket of streets
+            // with no way out when the site is in it.
+            if to_site {
+                self.traffic.net.find_route_into_pocket(from_seg, from_pt, to_seg, to_pt)
+            } else {
+                self.traffic.net.find_route(from_seg, from_pt, to_seg, to_pt)
+            }
         })();
         // [ferry-islands] No road to an island: the load waits at the
         // terminal for the next boat across (and comes off on the island).
@@ -1149,8 +1168,65 @@ impl World {
         leaves.into_iter().take(4).find_map(|n| {
             let node = self.roads.node(n);
             let seg = *node.segments.iter().find(|&&s| self.roads.segment(s).alive && self.roads.segment(s).is_street())?;
-            self.traffic.net.find_route(seg, node.pos, to_seg, to_pt)
+            self.traffic.net.find_route_into_pocket(seg, node.pos, to_seg, to_pt)
         })
+    }
+
+    /// [r15-lots] (F10) For probes: how a lorry would reach building `to`:
+    /// its stop, the street there, and a route (or none) from each of the
+    /// city's ways in on its network.
+    pub fn site_reach_debug(&self, to: BuildingId) -> Vec<String> {
+        let mut out = Vec::new();
+        let Some((seg, pt)) = self.truck_stop(to) else {
+            out.push("no truck stop".into());
+            return out;
+        };
+        let s = self.roads.segment(seg);
+        out.push(format!("stop seg {} at ({:.1},{:.1}) kind {:?} lanes {}/{} alive {} street {} levels {}/{} bridge {} viaduct {} tunnel {} comp {:?}/{:?}", seg.0, pt.x, pt.y, s.kind, s.lanes_fwd, s.lanes_bwd, s.alive, s.is_street(), self.roads.node(s.a).level, self.roads.node(s.b).level, s.bridge, s.viaduct, s.tunnel, self.drive_component(s.a), self.drive_component(s.b)));
+        out.push(format!("nearest lane on stop: {:?}", self.traffic.net.nearest_lane_on(seg, pt)));
+        let net = &self.traffic.net;
+        // [r4-flags-sim] A pocket no route enters: the trapped lanes the
+        // stop's lane can drive to, and where they meet the rest.
+        if let Some((goal, _, _)) = net.nearest_lane_on(seg, pt) {
+            let trapped = |l: u32| net.trap.get(l as usize).copied().unwrap_or(false);
+            out.push(format!("stop lane {goal} trapped {}", trapped(goal)));
+            let mut pocket = std::collections::BTreeSet::new();
+            let mut stack = vec![goal];
+            while let Some(l) = stack.pop() {
+                if !pocket.insert(l) {
+                    continue;
+                }
+                let lane = &net.lanes[l as usize];
+                stack.extend(lane.next.iter().copied());
+                stack.extend(lane.left);
+                stack.extend(lane.right);
+            }
+            let segs: std::collections::BTreeSet<u32> = pocket.iter().filter_map(|&l| match net.lanes[l as usize].kind { crate::traffic::LaneKind::Road { segment, .. } => Some(segment.0), _ => None }).collect();
+            out.push(format!("forward from the stop: {} lanes ({} trapped) on segments {:?}", pocket.len(), pocket.iter().filter(|&&l| trapped(l)).count(), segs.iter().take(40).collect::<Vec<_>>()));
+            // Lanes into the pocket from outside, and the nodes at its rim.
+            for &l in &pocket {
+                for &p in &net.lanes[l as usize].prev {
+                    if !pocket.contains(&p) {
+                        let k = &net.lanes[p as usize].kind;
+                        out.push(format!("   into the pocket: lane {p} {k:?} -> {l} {:?} end_node {}", net.lanes[l as usize].kind, net.lanes[p as usize].end_node.0));
+                    }
+                }
+            }
+            for &sid in &segs {
+                let sg = self.roads.segment(SegmentId(sid));
+                out.push(format!("   seg {sid} {:?} lanes {}/{} a {} ({:.0},{:.0}) b {} ({:.0},{:.0}) ramp {} oneway {}", sg.kind, sg.lanes_fwd, sg.lanes_bwd, sg.a.0, self.roads.node(sg.a).pos.x, self.roads.node(sg.a).pos.y, sg.b.0, self.roads.node(sg.b).pos.x, self.roads.node(sg.b).pos.y, sg.ramp, sg.lanes_fwd == 0 || sg.lanes_bwd == 0));
+            }
+        }
+        let leaves = self.city_leaves();
+        out.push(format!("city leaves {} ({} on its network)", leaves.len(), leaves.iter().filter(|&&n| self.drive_component(n) == self.drive_component(s.a)).count()));
+        for n in leaves.into_iter().filter(|&n| self.drive_component(n) == self.drive_component(s.a)).take(12) {
+            let node = self.roads.node(n);
+            let Some(&ls) = node.segments.iter().find(|&&x| self.roads.segment(x).alive && self.roads.segment(x).is_street()) else { continue };
+            let show = |r: Option<(Vec<crate::traffic::LaneId>, f32, f32)>| r.map_or("NO ROUTE".to_string(), |(l, _, _)| format!("{} lanes", l.len()));
+            let (plain, lorry) = (net.find_route(ls, node.pos, seg, pt), net.find_route_into_pocket(ls, node.pos, seg, pt));
+            out.push(format!("  from leaf {} at ({:.0},{:.0}) seg {}: any vehicle {}, a site's lorry {}", n.0, node.pos.x, node.pos.y, ls.0, show(plain), show(lorry)));
+        }
+        out
     }
 
     /// [r2-traffic] No lorry can get to building site `cargo.to`. A home

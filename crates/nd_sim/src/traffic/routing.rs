@@ -49,6 +49,18 @@ impl LaneNetwork {
         self.route_lanes(start, s_start, goal, s_end)
     }
 
+    /// [r15-lots] (F10) `find_route` that may go into a pocket of streets
+    /// with no way out when the goal is in it: the materials lorry for a
+    /// building site there (Clucky's Drive-Thru on Cinder Street, whose
+    /// only ways in are one-way ramps down off the circus viaducts). Every
+    /// other vehicle keeps out (`mark_traps`); the lorry is taken off the
+    /// road once it has delivered.
+    pub fn find_route_into_pocket(&self, from_seg: SegmentId, from: Vec2, to_seg: SegmentId, to: Vec2) -> Option<(Vec<LaneId>, f32, f32)> {
+        let (start, s_start, _) = self.nearest_lane_on(from_seg, from)?;
+        let (goal, s_end, _) = self.nearest_lane_on(to_seg, to)?;
+        self.route_search(start, s_start, goal, s_end, &Detour { into_traps: true, ..Detour::PLAIN })
+    }
+
     /// [pt-transit] `find_route`, and where the goal lies behind the start
     /// on its own lane (which `find_route` never routes: it does not
     /// re-enter its start lane), the drive off the end of the lane and
@@ -108,7 +120,7 @@ impl LaneNetwork {
     /// turning circle or a junction U-turn), so the car is not sent out and
     /// back down the nearest stub into the same jam (K52).
     pub fn route_replan(&self, start: LaneId, s_start: f32, goal: LaneId, s_end: f32, avoid: &[LaneId], avoid_step: Option<(LaneId, LaneId)>) -> Option<(Vec<LaneId>, f32, f32)> {
-        self.route_search(start, s_start, goal, s_end, &Detour { lanes: avoid, step: avoid_step, queue_cost: REPLAN_QUEUE_COST, turnback_cost: TURNBACK_COST, tolls: true })
+        self.route_search(start, s_start, goal, s_end, &Detour { lanes: avoid, step: avoid_step, queue_cost: REPLAN_QUEUE_COST, turnback_cost: TURNBACK_COST, tolls: true, into_traps: false })
     }
 
     /// The A* behind `route_avoiding`.
@@ -129,7 +141,8 @@ impl LaneNetwork {
     #[allow(clippy::too_many_arguments)]
     fn route_search_in(&self, sc: &mut SearchScratch, start: LaneId, s_start: f32, goal: LaneId, s_end: f32, to: Vec2, d: &Detour) -> Option<(Vec<LaneId>, f32, f32)> {
         let tolls = d.tolls;
-        let start_trapped = self.trap.get(start as usize).copied().unwrap_or(false);
+        // [r15-lots] (F10) Or the goal is in a pocket and the caller may go in.
+        let start_trapped = self.trap.get(start as usize).copied().unwrap_or(false) || (d.into_traps && self.trap.get(goal as usize).copied().unwrap_or(false));
         let mut open = BinaryHeap::new();
         let start_cost = self.lanes[start as usize].length - s_start;
         sc.set(start, start_cost, None);
@@ -316,11 +329,15 @@ pub struct Detour<'a> {
     pub turnback_cost: f32,
     /// False: searched as if no road were tolled.
     pub tolls: bool,
+    /// [r15-lots] (F10) May go into a pocket with no way out when the goal
+    /// is in it (a lorry with a building site's materials: it is taken off
+    /// the road when it has delivered, `send_truck_back`).
+    pub into_traps: bool,
 }
 
 impl Detour<'static> {
     /// The plain search: nothing avoided, the usual weights.
-    pub const PLAIN: Detour<'static> = Detour { lanes: &[], step: None, queue_cost: QUEUE_COST, turnback_cost: 0.0, tolls: true };
+    pub const PLAIN: Detour<'static> = Detour { lanes: &[], step: None, queue_cost: QUEUE_COST, turnback_cost: 0.0, tolls: true, into_traps: false };
 }
 
 thread_local! {

@@ -263,3 +263,76 @@ fn a_lorry_lined_up_at_the_kerb_never_stands_past_its_route_end() {
     assert_eq!(t.stop_reason(ids[0]), StopReason::Stranded);
     assert!(t.stop_reason(ids[0]).text(|_| String::new()).starts_with("stranded at the kerb"));
 }
+
+/// [r15-freight] (photo 2026-11-20 F2: 11 lorries at one exact point at a
+/// cargo hub's gate; 36 at another on Harvey's day-80 save) Lorries sent off
+/// one after another from the same kerb point, faster than they can pull
+/// out into the lane, line up along the kerb: never two on one spot, while
+/// they wait and once they have all driven off.
+#[test]
+fn lorries_setting_off_from_one_kerb_point_line_up() {
+    let mut roads = RoadNetwork::default();
+    roads.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
+    let mut t = Traffic::default();
+    t.rebuild(&roads);
+    let seg = roads.nearest_street(Vec2::ZERO).unwrap().0;
+    let lane = lane_of(&t, seg, Vec2::X, 0);
+    let len = t.net.lanes[lane as usize].length;
+    // A queue already in the lane at the gate, so nobody can pull out yet.
+    let blocker = t.spawn_car(CitizenId::default(), None, vec![lane], 150.0, len - 1.0, 0);
+    t.cars[blocker].hold = 1.0e6;
+    let load = Some(Cargo { from: BuildingId::default(), to: BuildingId::default(), resource: crate::market::Resource::Goods, amount: 1.0, price: 0.0 });
+    let ids: Vec<CarId> = (0..8)
+        .map(|_| t.spawn_car(CitizenId::default(), load, vec![lane], 150.0, len - 1.0, 0))
+        .collect();
+    let apart = |t: &Traffic| {
+        for (i, &a) in ids.iter().enumerate() {
+            for &b in &ids[i + 1..] {
+                let (ca, cb) = (&t.cars[a], &t.cars[b]);
+                if ca.entering && cb.entering {
+                    assert!((ca.s - cb.s).abs() >= ca.kerb_length().min(cb.kerb_length()) - 0.01, "two lorries on one spot at the kerb: {:.1} and {:.1}", ca.s, cb.s);
+                }
+            }
+        }
+    };
+    apart(&t);
+    assert!(ids.iter().filter(|&&id| t.cars[id].entering).count() >= 6, "they wait at the kerb");
+    for _ in 0..40 {
+        t.step(1.0, 4);
+        apart(&t);
+    }
+}
+
+/// [r15-freight] (photo 2026-11-20 F2: lorries drawn inside one another)
+/// A lorry takes its own length on the road: a queue of semis stands
+/// nose to tail, not cab through trailer, while cars keep a car's length.
+#[test]
+fn a_queue_of_lorries_keeps_their_own_lengths() {
+    let mut roads = RoadNetwork::default();
+    roads.add_polyline(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+    let mut t = Traffic::default();
+    t.rebuild(&roads);
+    let seg = roads.nearest_street(Vec2::ZERO).unwrap().0;
+    let lane = lane_of(&t, seg, Vec2::X, 0);
+    let len = t.net.lanes[lane as usize].length;
+    // A stopped car at the far end; semis come up behind it one by one.
+    let stop = t.spawn_car(CitizenId::default(), None, vec![lane], len - 20.0, len - 1.0, 0);
+    t.cars[stop].hold = 1.0e6;
+    let mut ids = Vec::new();
+    for k in 0..4 {
+        let id = t.spawn_car(CitizenId::default(), None, vec![lane], 20.0 + k as f32 * 2.0, len - 1.0, 0);
+        t.cars[id].model.body = crate::vehicle::BodyType::Semi;
+        t.cars[id].model.boxed = crate::vehicle::CHASSIS_40;
+        ids.push(id);
+        for _ in 0..30 {
+            t.step(1.0, 4);
+        }
+    }
+    let semi = crate::vehicle::semi_length(crate::vehicle::CHASSIS_40);
+    assert!((t.cars[ids[0]].length() - semi).abs() < 0.01 && t.cars[stop].length() == CAR_LENGTH);
+    let mut s: Vec<f32> = ids.iter().map(|&id| t.cars[id].s).collect();
+    s.sort_by(|a, b| b.total_cmp(a));
+    for p in s.windows(2) {
+        assert!(p[0] - p[1] >= semi, "semis {:.1} m apart, each {semi:.1} m long", p[0] - p[1]);
+    }
+}
