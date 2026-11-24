@@ -551,8 +551,15 @@ fn swap_in(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials,
     }
     for d in r.drawn.drain(..) {
         let id = d.id;
-        // [r16-tidy] (The room its stacks hold is the sim's own now, from
-        // the yard layout: `World::refresh_yard_rooms`.)
+        // [r16-tidy] The room its stacks hold is the sim's own now, from the
+        // yard layout (`World::refresh_yard_rooms`); say so if what is drawn
+        // holds a different number (the layout and the drawing disagree).
+        if let Some(&n) = sim.world.containers.layout_room.get(&id) {
+            let drawn = nd_procgen::buildings::parts::stack_room(&d.slots);
+            if drawn != n as usize {
+                eprintln!("[r16-tidy] depot {id:?}: drawn stacks hold {drawn}, the sim's yard layout says {n}");
+            }
+        }
         if d.bays.is_empty() {
             sim.depot_bays.remove(&id);
         } else {
