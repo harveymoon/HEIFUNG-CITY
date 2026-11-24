@@ -608,6 +608,15 @@ pub struct World {
     /// daily books just after (`daily_businesses`). Empty between days.
     #[serde(skip)]
     pub(crate) wages_paid: std::collections::BTreeMap<BuildingId, f32>,
+    /// [r15-money] The shops and places households spend their everyday
+    /// money at (`World::spend_in_town`): (the tick it was read at, each
+    /// open one with its staff summed so far). Rebuilt when stale.
+    #[serde(skip)]
+    pub(crate) town_shops: (u64, Vec<(f32, BuildingId)>),
+    /// [r15-money] Who walked past each lot this hour (a few of them), to
+    /// pay for the walk-in sales (`hourly_economy`). Cleared each hour.
+    #[serde(default)]
+    pub(crate) passers: std::collections::BTreeMap<LotId, Vec<market::Passer>>,
     pub roads: crate::versioned::Versioned<RoadNetwork>,
     pub zones: SlotMap<ZoneId, Zone>,
     pub lots: crate::versioned::Versioned<SlotMap<LotId, Lot>>,
@@ -1029,6 +1038,8 @@ impl World {
             plan_version: 0,
             plan_cache: None,
             wages_paid: Default::default(),
+            town_shops: Default::default(),
+            passers: Default::default(),
             implement_refused: None,
             deferred_intents: BTreeMap::new(),
             roads: Default::default(),

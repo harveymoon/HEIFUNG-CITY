@@ -879,13 +879,26 @@ impl World {
                 continue;
             }
             let done = (per_day / TRADE_HOURS).min(cap);
+            // [r15-money] The owners of the cars (bikes) mended pay the
+            // bill: residents with one, picked by a hash of the shop and the
+            // hour, a job each; with none in town, drivers from away.
+            let owners: Vec<Account> = self
+                .citizens
+                .iter()
+                .filter(|(_, c)| if kind == BusinessKind::Mechanic { c.car.is_some() } else { c.owns_bike })
+                .map(|(id, _)| self.purse_of(id))
+                .collect();
             for (id, c) in shops {
                 let jobs = done * c / cap;
                 let pay = jobs * fee;
                 if let Some(z) = self.buildings[id].business.as_mut() {
                     z.revenue_today += pay;
                     z.deals += (jobs + 0.5) as u32;
-                    self.transfer(Account::Outside, Account::Business(id), pay, Kind::Fees);
+                    let n = (jobs.ceil() as usize).max(1);
+                    for j in 0..n {
+                        let from = if owners.is_empty() { Account::Outside } else { owners[(crate::hash::mix2_salted(slotmap::Key::data(&id).as_ffi(), self.clock.tick, j as u64) % owners.len() as u64) as usize] };
+                        self.transfer(from, Account::Business(id), pay / n as f32, Kind::Fees);
+                    }
                 }
                 if kind == BusinessKind::Mechanic {
                     self.pressure.car_bill_today += pay;

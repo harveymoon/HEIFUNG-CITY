@@ -208,7 +208,8 @@ impl Class {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Kind {
     Flow(Flow),
-    /// Earnings: wages, gig money and pensions, paid in from outside.
+    /// Earnings: wages (from the employer, net of the income tax it holds
+    /// back), gig money and pensions (from outside).
     Wages,
     /// A business's wage bill.
     Payroll,
@@ -231,7 +232,8 @@ pub enum Kind {
     Shopping,
     /// Rounds at venues, tickets, outings.
     Outings,
-    /// Sales to passers-by and walk-in custom from out of town.
+    /// Sales to passers-by: the residents, tourists and students who walked
+    /// past and stepped in.
     WalkIn,
     /// Goods one business buys from another.
     Supplies,
@@ -272,10 +274,16 @@ pub enum Kind {
     Untracked,
     /// Balances read in from a save or an older one's money fields.
     Opening,
+    /// [r15-money] What clients out of town pay the town's offices for their
+    /// work (the offices' takings, out of which they pay their staff).
+    Services,
+    /// [r15-money] A bank loan's money coming in (a mega-corp borrowing
+    /// against a purchase); paid back with interest under `Loan`.
+    Credit,
 }
 
 /// The kinds that are not the treasury's flows, in order after them.
-pub const PRIVATE: [Kind; 31] = [
+pub const PRIVATE: [Kind; 33] = [
     Kind::Wages,
     Kind::Payroll,
     Kind::Living,
@@ -307,6 +315,8 @@ pub const PRIVATE: [Kind; 31] = [
     Kind::Departure,
     Kind::Untracked,
     Kind::Opening,
+    Kind::Services,
+    Kind::Credit,
 ];
 
 pub const KINDS: usize = FLOWS + PRIVATE.len();
@@ -365,6 +375,8 @@ impl Kind {
             Kind::Departure => "departures",
             Kind::Untracked => "untracked",
             Kind::Opening => "opening balances",
+            Kind::Services => "office services sold out of town",
+            Kind::Credit => "bank loans",
         }
     }
 
@@ -383,7 +395,7 @@ impl Kind {
     /// The headline group on the money-flow page.
     pub fn group(self) -> &'static str {
         match self {
-            Kind::Rent | Kind::ShopRent | Kind::Upkeep | Kind::Loan | Kind::Flow(Flow::PropertyTax) => "property",
+            Kind::Rent | Kind::ShopRent | Kind::Upkeep | Kind::Loan | Kind::Credit | Kind::Flow(Flow::PropertyTax) => "property",
             // [e2-tenants] Whole buildings changing hands at their value
             // (a block is worth months of the city's rent): a group of its
             // own, so a day's one sale does not flatten the rent beside it.
@@ -391,7 +403,7 @@ impl Kind {
             Kind::Wages | Kind::Payroll | Kind::Pocket => "wages",
             Kind::Dividend | Kind::Investment => "profits",
             Kind::Flow(_) => "city",
-            Kind::Shopping | Kind::Outings | Kind::WalkIn | Kind::Supplies | Kind::Imports | Kind::Exports | Kind::Tourism => "trade",
+            Kind::Shopping | Kind::Outings | Kind::WalkIn | Kind::Supplies | Kind::Imports | Kind::Exports | Kind::Services | Kind::Tourism => "trade",
             _ => "other",
         }
     }
@@ -991,3 +1003,55 @@ mod tests {
         assert_eq!(back.fixed[0].units, b.fixed[0].units, "the outside world's balance is saved");
     }
 }
+
+/// [r15-money] Every kind of money allowed across the town edge, and why:
+/// where the other side really is outside. Everything else moves between
+/// accounts in town. Mirrored by the list in docs/DESIGN.md ("Money across
+/// the town edge"); `ledger_tests::a_days_money_is_conserved_and_only_named_flows_cross_the_edge`
+/// holds a day of the sim to it.
+pub const EDGE_KINDS: &[(Kind, &str)] = &[
+    (Kind::Wages, "pensions and gig work paid from away; the crews an out-of-town builder hires here; crews of an out-of-town developer or a bank-financed build"),
+    (Kind::Flow(Flow::IncomeTax), "the income tax held back from that pay from away"),
+    (Kind::Services, "clients out of town paying the town's offices for their work, and the region's budget for its agencies on civic ground (out of which the offices pay their staff)"),
+    (Kind::Exports, "goods sold out of town"),
+    (Kind::Imports, "goods bought from out of town (and the film and act bookings of cinemas, theatres and halls)"),
+    (Kind::Living, "the half of living costs spent away: power, phone, insurance, things bought from away"),
+    (Kind::Shopping, "food bought away by those living rough"),
+    (Kind::Upkeep, "owners' upkeep of what they let (repairs, cleaning, insurance), the air taxis' running costs"),
+    (Kind::Loan, "mortgage payments and the corps' loan repayments, to the banks"),
+    (Kind::Credit, "a bank's loan to a corp for a purchase"),
+    (Kind::PropertySale, "a buyer's bank paying the seller; a corp's HQ or mega-block site and works; deposits on land and sites bought for growth"),
+    (Kind::Dividend, "out-of-town developers' profits over their float"),
+    (Kind::Investment, "investors from away: tower developers, the elite's money, start-up stakes"),
+    (Kind::Building, "materials and building firms from out of town"),
+    (Kind::Cars, "cars, bikes, cabs and food-truck leases from makers away; cars sold on away"),
+    (Kind::Fares, "fares paid by visitors from away"),
+    (Kind::Fees, "shipping lines paying the container yards; hauliers from away; a trash firm's out-of-town disposal; the out-of-town trash hauler; parking and repairs for drivers from away"),
+    (Kind::Outings, "the acts' share of a night out"),
+    (Kind::Theft, "stolen goods fenced away"),
+    (Kind::Arrival, "money brought by people, visitors and businesses arriving"),
+    (Kind::Departure, "money taken away by those leaving and businesses wound up"),
+    (Kind::Grants, "the player's grants"),
+    (Kind::Flow(Flow::BusFares), "ferry and boat fares of visitors"),
+    (Kind::Flow(Flow::RailFares), "train fares (not yet charged to the rider: still open)"),
+    (Kind::Flow(Flow::SubwayFares), "metro fares from away"),
+    (Kind::Flow(Flow::Tickets), "tickets bought by visitors"),
+    (Kind::Flow(Flow::ParkingFines), "tickets on cars from away"),
+    (Kind::Flow(Flow::ParkingFees), "parking by drivers from away"),
+    (Kind::Flow(Flow::Tolls), "tolls on through traffic"),
+    (Kind::Flow(Flow::AirportFees), "airlines' landing and handling charges"),
+    (Kind::Flow(Flow::GridExport), "power sold to the regional grid"),
+    (Kind::Flow(Flow::GridImport), "power bought from the regional grid"),
+    (Kind::Flow(Flow::RecyclingSales), "recovered metal, paper and glass sold away"),
+    (Kind::Flow(Flow::ImportDuty), "duty on imports"),
+    (Kind::Flow(Flow::Construction), "the city's own building works and land, by firms from away"),
+    (Kind::Flow(Flow::PlantUpkeep), "the plants' fuel and running costs"),
+    (Kind::Flow(Flow::ServiceUpkeep), "the services' supplies and running costs; help from the next town"),
+    (Kind::Flow(Flow::TransitUpkeep), "buses, depots, ports and cable cars: fuel, parts, running costs"),
+    (Kind::Flow(Flow::RailUpkeep), "stations, yards, hubs and extra runs"),
+    (Kind::Flow(Flow::SubwayUpkeep), "the metro's running costs"),
+    (Kind::Flow(Flow::TollUpkeep), "the toll booths' running costs"),
+    (Kind::Flow(Flow::AirportUpkeep), "the airports' running costs"),
+    (Kind::Flow(Flow::RoadMaintenance), "resurfacing by road firms"),
+    (Kind::Flow(Flow::WasteDisposal), "the city's disposal sites and the lorries out of town"),
+];

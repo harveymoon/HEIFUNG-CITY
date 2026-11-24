@@ -186,6 +186,8 @@ fn a_corp_buys_what_is_nearest_its_hq_by_road_not_as_the_crow_flies() {
     let v = w.roads.version;
     assert!(w.corps.drive_cache.values().all(|(ver, _)| *ver == v), "cached against the roads");
     w.corps.corps[ci].cash = 1e6;
+    // [r15-money] Takings for the bank to lend against.
+    w.corps.corps[ci].revenue_yesterday = 1e5;
     // Homes on the avenue: a town big enough for the cap to allow two buys.
     for l in free_lots(&w, LandUse::Residential) {
         homes(&mut w, l);
@@ -442,7 +444,8 @@ fn students_bring_trade_to_pizza_places_and_bars_by_campus() {
     // A full intake, by stand-ins.
     let template = w.citizens.values().next().cloned().unwrap();
     while w.corps.campuses[0].students.len() < 100 {
-        let id = w.citizens.insert(Citizen { age: 20, home: None, work: None, household: None, ..template.clone() });
+        // [r15-money] With money on them: they pay for what they buy.
+        let id = w.citizens.insert(Citizen { age: 20, home: None, work: None, household: None, savings: 50.0, ..template.clone() });
         w.corps.campuses[0].students.push(id);
     }
     let pull = w.campus_pull();

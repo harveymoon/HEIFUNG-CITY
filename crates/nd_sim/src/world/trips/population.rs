@@ -46,6 +46,9 @@ impl World {
             // station or plant whose lot is still being cleared hires
             // nobody yet.
             .filter(|(_, b)| b.operating() || b.construction.is_some())
+            // [r15-money] A shut business hires nobody (its staff are paid
+            // by it, and it pays no one).
+            .filter(|(_, b)| !b.business.as_ref().is_some_and(|z| z.closed))
             // [dock-access] A dock or station off the roads hires nobody yet.
             // [sweep-sim] One people can walk to (a ferry terminal or a
             // station joined by a path) hires: its staff walk in too.

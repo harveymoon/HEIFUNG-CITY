@@ -182,7 +182,15 @@ impl Business {
         let target = (per_hour * jobs as f32 * JOB_RATE * 24.0).max(1.0);
         let ratio = (self.stock_of(r) / target).clamp(0.0, 3.0);
         let k = 1.5 - 0.4 * ratio;
-        r.base_price() * k.clamp(0.6, 1.5)
+        let price = r.base_price() * k.clamp(0.6, 1.5);
+        // [r15-money] Farms, mills, works and yards pay their staff the
+        // whole wage now (it was 60% of it): what they make sells dearer in
+        // town, kept under what an import costs.
+        if self.kind.industry().is_some() {
+            (price * MAKER_PRICE).min(r.base_price() * MAKER_PRICE_CAP)
+        } else {
+            price
+        }
     }
 
     pub fn sells(&self, r: Resource) -> bool {

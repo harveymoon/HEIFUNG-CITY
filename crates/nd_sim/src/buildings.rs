@@ -1014,7 +1014,10 @@ impl Building {
         }
     }
 
-    /// Daily wage for a job here.
+    /// Daily wage for a job here. [r15-money] A civic job pays 100 (it was
+    /// 125 while nobody paid it): the treasury pays its own staff now (the
+    /// offices on civic ground are paid from away), and at 125 Harvey's
+    /// day-80 city would spend far more on them than its old surplus.
     pub fn wage(&self) -> f32 {
         if self.construction.is_some() {
             return Self::SITE_WAGE;
@@ -1023,7 +1026,7 @@ impl Building {
             LandUse::Industrial => 65.0,
             LandUse::Commercial => 90.0,
             LandUse::Entertainment => 80.0,
-            LandUse::Civic => 125.0,
+            LandUse::Civic => 100.0,
             LandUse::Park => 50.0,
             LandUse::Residential => 0.0,
         };
@@ -1085,6 +1088,10 @@ impl Building {
     }
 
     pub fn free_jobs(&self) -> u16 {
+        // [r15-money] A shut business has no jobs going.
+        if self.business.as_ref().is_some_and(|z| z.closed) {
+            return 0;
+        }
         self.jobs.saturating_sub(self.workers.len() as u16)
     }
 

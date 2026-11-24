@@ -647,6 +647,21 @@ impl World {
         self.corps.campuses.iter().filter_map(|k| self.building_lot(k.building).map(|l| (l.center, k.students.len() as f32))).filter(|(_, n)| *n > 0.0).collect()
     }
 
+    /// [r15-money] One of the students of the nearest campus whose trade
+    /// reaches `p` (picked by `key`): who pays for a student's walk-in.
+    pub(super) fn student_near(&self, p: Vec2, key: u64) -> Option<CitizenId> {
+        let k = self
+            .corps
+            .campuses
+            .iter()
+            .filter(|k| !k.students.is_empty())
+            .filter_map(|k| self.building_lot(k.building).map(|l| (l.center.distance(p), k)))
+            .filter(|(d, _)| *d < STUDENT_TRADE_REACH)
+            .min_by(|a, b| a.0.total_cmp(&b.0))?
+            .1;
+        k.students.get((key % k.students.len() as u64) as usize).copied()
+    }
+
     /// Extra walk-in shoppers an hour at a shop at `p` from the campuses
     /// in `pull` (pizza places, cafés and bookshops).
     pub(super) fn student_feet(pull: &[(Vec2, f32)], p: Vec2) -> f32 {

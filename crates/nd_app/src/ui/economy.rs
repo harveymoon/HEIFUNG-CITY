@@ -56,6 +56,7 @@ pub fn flow_color(f: Flow) -> Color32 {
         Flow::RecyclingSales => Color32::from_rgb(90, 200, 110),
         Flow::AirportFees => Color32::from_rgb(130, 180, 255),
         Flow::AirportUpkeep => Color32::from_rgb(120, 90, 220),
+        Flow::StaffWages => Color32::from_rgb(240, 120, 110),
     }
 }
 
@@ -63,7 +64,7 @@ pub fn flow_color(f: Flow) -> Color32 {
 /// service upkeep".
 fn flow_note(f: Flow) -> &'static str {
     match f {
-        Flow::IncomeTax => "12% of every citizen's daily income, taken at midnight; by the payer's income class.",
+        Flow::IncomeTax => "12% of every citizen's daily income, held back from the pay by whoever pays it (the employer, the city for its own staff, the pension or gig money from out of town) at midnight; by the payer's income class.",
         Flow::BusinessTax => "5% of every open business's takings, at midnight, by the land use it stands on; plus the levy on air-taxi fares.",
         Flow::BusFares => "Fares on each bus line as riders board, and ferry fares by terminal.",
         Flow::RailFares => "Train fares, by the station the rider boarded at.",
@@ -93,6 +94,7 @@ fn flow_note(f: Flow) -> &'static str {
         Flow::RecyclingSales => "Metal, plastics, paper and glass the recycling plants recover: sold to the scrap yards and works in town that are short, the rest out of town, by plant.",
         Flow::AirportFees => "Landing charges for every plane, a fee for every passenger flying out and the handling fee on air cargo, by airport.",
         Flow::AirportUpkeep => "Running each airport (staff, runways, the tower, the terminal), paid at midnight.",
+        Flow::StaffWages => "The pay of the city's own staff (civic buildings, services, plants, stations, depots, ports, airports and the car parks it runs), at midnight, by workplace; the income tax on it is kept back and shows under income tax.",
     }
 }
 

@@ -2049,7 +2049,9 @@ fn groceries_and_rent_come_out_of_the_household_purse() {
     w.daily_household(hid);
     let pockets_after: f32 = members.iter().map(|m| w.citizens[*m].savings).sum();
     let after = w.households[hid].money + pockets_after;
-    assert!((after - (before + income - rent - living)).abs() < 1.0, "money is conserved: {before} + {income} - {rent} - {living} != {after}");
+    // [r15-money] A share of what is left after rent and living goes at the shops.
+    let spare = (income - rent - living).max(0.0) * super::market::SPARE_SPEND;
+    assert!((after - (before + income - rent - living - spare)).abs() < 1.0, "money is conserved: {before} + {income} - {rent} - {living} - {spare} != {after}");
     assert!(members.iter().all(|m| w.citizens[*m].savings <= crate::citizens::POCKET_MONEY + 0.01));
 }
 

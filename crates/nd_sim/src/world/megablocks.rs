@@ -318,6 +318,11 @@ impl World {
         if self.buildings.values().any(|b| b.plot.megablock.is_some() && b.construction.is_some()) {
             return Some("another mega-block is rising".into());
         }
+        // [r15-money] The bank lends for one only while the corp is within
+        // its limit (it may go over it with this one).
+        if c.credit_left() <= 0.0 {
+            return Some(format!("{} owes the bank ${:.1}M, its limit on ${:.0}k a day of takings", c.brand.name, c.debt / 1e6, c.revenue_yesterday / 1e3));
+        }
         None
     }
 
@@ -405,11 +410,11 @@ impl World {
         self.take_plots_for(bid, &plots[1..], &memory, crate::buildings::DemolitionReason::Landmark);
         self.give_to(bid, owner, price);
         self.corps.corps[ci].megablock = Some(bid);
-        // [ledger] The deposit on the land and the works, to the sellers and
-        // builders out of town (the bank lends the rest).
-        let cash = self.corps.corps[ci].cash.max(0.0);
-        let deposit = ((price + 2.0e7) * crate::corp::DEPOSIT_SHARE * 4.0).min(cash * 0.8);
-        self.transfer64(Account::Owner(owner), Account::Outside, deposit, Kind::PropertySale);
+        // [ledger] [r15-money] The land and the works, to the sellers and
+        // builders out of town: the deposit out of its cash, the rest a bank
+        // loan it pays back (`corp_pays`; a corp over its credit limit may
+        // not start one, `megablock_refusal`).
+        self.corp_pays(ci, price + 2.0e7, Account::Outside);
         self.note_owner(owner, format!("broke ground on {name}, its mega-block, over {} plots", plots.len()));
         self.megablocks.started_total += 1;
         self.megablocks.last_refusal = None;

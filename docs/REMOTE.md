@@ -711,13 +711,19 @@ university's or residents' company's building) pay `shop_rent` (a tenth of a hom
 the building's owner. Developers send what they hold over $20,000 out of town each day
 (`profits_paid_out`); the landlords' pool pays what it holds over $20,000, up to the last day's rent
 after upkeep and tax, to the households with $5,000 or more saved, in proportion to their savings
-(`profits_paid_out`, landlords → households), and sends the rest (the price of buildings it sold,
-paid with the buyer's loan from outside) back out (`property_sales`, landlords → outside);
-a residents' property company pays its founder's household half its day's net. A business pays its
-staff's households their payroll wage (60% of the job's wage) itself (`wages_and_pensions`,
-businesses → households); the rest of their earnings, and everyone else's (the city's jobs, building
-sites, gigs, pensions), still comes in from outside, and only the payroll of staff with no household
-leaves town (`payroll`). The household, business and owner inspectors show the account with its recent moves;
+(`profits_paid_out`, landlords → households), keeps the rest (the price of buildings it sold) to build
+the sites it owns (`building_work`, landlords → ...) and pays 2% of it a day to the same savers;
+a residents' property company pays its founder's household half its day's net. [r15-money] Earnings
+are paid by whoever pays them (`wages_and_pensions`): a business its staff (businesses → households),
+the treasury its own staff (`city_staff_wages`, city treasury → households), an office out of its
+clients' fees (`office_services_sold_out_of_town`, outside → businesses), a site's owner its crew;
+pensions and gig money from outside. The payer holds back the income tax (`income_tax`, businesses /
+households / outside → city treasury). Half of the living costs go to the town's shops
+(`living_costs`, households → businesses); walk-in sales, repairs, hub handling and fleet-lot bays are
+paid by the residents, tourists and firms who buy them. A corp's purchase loan comes in as
+`bank_loans` and goes back as `mortgages`. `bank::EDGE_KINDS` (docs/DESIGN.md, "Money across the
+town edge") lists every kind allowed across the edge.
+The household, business and owner inspectors show the account with its recent moves;
 City Data, Economy, Money flow (`city_data {tab: "economy", sub: "money_flow"}`) draws the day's
 flows from payers to payees.
 
@@ -1356,7 +1362,7 @@ owner's kind as `mega_corp` (with the business it grew out of) or `university`.
 
 | action | fields | reply |
 | --- | --- | --- |
-| `summary` (default) | | `corps` (id, brand, origin, origin_kind, founded_day, `hq` {id, name, floors, building, pos}, cash, holdings, holdings_by_use, industries, staff, `housing` {blocks, homes, staff_housed}, revenue_yesterday, market_share, bought_total, levy_total, properties), `campuses` (as `campus`), `rules` {allowed, max_share, levy, cap_per_corp, room}, `thresholds`, `biggest_companies` (flagship, name, kind, holdings, staff, revenue, qualifies), `stats` |
+| `summary` (default) | | `corps` (id, brand, origin, origin_kind, founded_day, `hq` {id, name, floors, building, pos}, cash, debt, credit_left, repaid_total ([r15-money] its bank loan), holdings, holdings_by_use, industries, staff, `housing` {blocks, homes, staff_housed}, revenue_yesterday, market_share, bought_total, levy_total, properties), `campuses` (as `campus`), `rules` {allowed, max_share, levy, cap_per_corp, room}, `thresholds`, `biggest_companies` (flagship, name, kind, holdings, staff, revenue, qualifies), `stats` |
 | `rules` | `allowed` (bool), `max_share` (0.02-0.25), `levy` (0-0.2) | the rules as set (clamped) |
 | `promote` | `building` (a business) | dev: its company becomes a mega-corp now (brand, HQ site bought); the corp |
 | `buy` | `corp` or `building`, `n` | dev: the corp buys what it would buy next, `n` times (cash topped up); `bought` |

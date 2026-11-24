@@ -699,7 +699,8 @@ impl World {
         // [r5-trash] A loaded city truck takes its load to the best
         // disposal site in reach (a landfill, an incinerator, a recycling
         // plant, a transfer station), else to its depot's yard.
-        if let Hauler::City(d) = t.hauler {
+        // [r15-money] A local company's truck too (it pays the gate fee).
+        if let Hauler::City(d) | Hauler::Company(d) = t.hauler {
             let (pos, load) = (t.pos, t.load);
             t.dump = None;
             if load > 0.0 && self.buildings.contains_key(d) {
@@ -839,6 +840,8 @@ impl World {
                 };
                 (load - took).max(0.0)
             }
+            // [r15-money] A local company's load is paid for where it goes.
+            Hauler::Company(c) if load > 0.0 => self.company_tips(c, dump.filter(|s| self.buildings.contains_key(*s)), load),
             _ => 0.0,
         };
         let t = &mut self.society.trash.trucks[id];
