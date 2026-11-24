@@ -70,11 +70,7 @@ fn pool(commands: &mut Commands, v: &mut Vec<Entity>, n: usize, mesh: &Handle<Me
 }
 
 fn hash01(a: u64) -> f32 {
-    let mut x = a.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    x ^= x >> 31;
-    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x ^= x >> 29;
-    (x % 10_000) as f32 / 10_000.0
+    nd_sim::hash::per_10k(nd_sim::hash::mix2(a, 0))
 }
 
 #[allow(clippy::too_many_arguments)]

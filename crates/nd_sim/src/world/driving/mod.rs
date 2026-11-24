@@ -160,9 +160,7 @@ pub struct Driving {
 
 /// A stable `0..1` from a car id, for its weave phase and a stranger's traits.
 fn car_hash(id: CarId, salt: u64) -> f32 {
-    let x = slotmap::Key::data(&id).as_ffi().wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ salt.wrapping_mul(0xD6E8_FEB8_6659_FD93);
-    let x = (x ^ (x >> 29)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    ((x ^ (x >> 32)) % 10_000) as f32 / 10_000.0
+    crate::hash::tenk01(slotmap::Key::data(&id).as_ffi().wrapping_mul(crate::hash::PHI) ^ salt.wrapping_mul(0xD6E8_FEB8_6659_FD93))
 }
 
 impl World {

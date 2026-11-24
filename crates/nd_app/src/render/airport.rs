@@ -82,9 +82,7 @@ fn livery(airline: u8) -> [f32; 4] {
     C[airline as usize % C.len()]
 }
 
-fn hash2(a: u64, b: u64) -> u64 {
-    ap::mix(a, b)
-}
+use nd_sim::hash::mix_fmix as hash2;
 
 /// Builds in the airport's own frame (x along the runways, y across, h up
 /// from the levelled field).

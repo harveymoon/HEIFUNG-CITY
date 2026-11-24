@@ -278,7 +278,7 @@ impl World {
                 self.events.push(SimEvent::BuildingChanged(b));
             }
             let area: f32 = lots.iter().map(|l| self.lots[*l].area()).sum();
-            let s = self.shore.beaches.get_mut(&b).unwrap();
+            let s = self.shore.beaches.get_mut(&b).expect("inserted above");
             if s.members != others || s.lots != lots {
                 s.members = others.clone();
                 s.lots = lots;
@@ -330,7 +330,7 @@ impl World {
             let area: f32 = lots.iter().map(|l| l.area()).sum();
             let centre = if lots.len() == 1 { first.center } else { lots.iter().map(|l| l.center * l.area()).sum::<Vec2>() / area.max(1.0) };
             polys.insert(*b, lots.iter().map(|l| l.polygon.clone()).collect());
-            let s = self.shore.beaches.get_mut(b).unwrap();
+            let s = self.shore.beaches.get_mut(b).expect("a listed beach");
             s.contamination = worst;
             if s.open && worst >= shore::BEACH_CLOSE_AT {
                 s.open = false;
@@ -384,7 +384,7 @@ impl World {
         for (b, _, _, area) in list {
             let sand = polys.remove(&b).unwrap_or_default();
             let tourists_here = tourists.iter().filter(|p| sand.iter().any(|poly| point_in_polygon(**p, poly))).count() as u32;
-            let s = self.shore.beaches.get_mut(&b).unwrap();
+            let s = self.shore.beaches.get_mut(&b).expect("a listed beach");
             s.catchment = catchment.get(&b).copied().unwrap_or(0);
             s.people_here = here.get(&b).copied().unwrap_or(0) + tourists_here;
             s.note = if !s.access {
@@ -499,14 +499,8 @@ impl World {
 
     /// The jetty a business on the water builds for itself, if any.
     pub fn jetty_kind_for(kind: BusinessKind) -> Option<JettyKind> {
-        use BusinessKind as B;
-        Some(match kind {
-            B::Fishery | B::FishPlant | B::FishGutting | B::FishStickFactory | B::FishMarket => JettyKind::Fishing,
-            B::ContainerYard | B::Refinery | B::Smelter | B::ChemicalWorks | B::Mill | B::Assembly | B::Fab | B::CargoHub => JettyKind::Cargo,
-            B::PierRestaurant => JettyKind::Pier,
-            B::BoatRental => JettyKind::Pontoon,
-            _ => return None,
-        })
+        // [r16-tidy] A column of the catalogue now.
+        crate::catalogue::business(kind).jetty
     }
 
     /// Businesses on the water that have none yet build their jetty (the

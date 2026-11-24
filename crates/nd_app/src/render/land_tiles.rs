@@ -25,7 +25,7 @@ fn draped(sim: &Sim, a: SVec2, b: SVec2, lift: f32, out: &mut Vec<(Vec3, Vec3)>)
     let n = ((a.distance(b) / 30.0).ceil() as usize).max(1);
     let at = |t: f32| {
         let p = a.lerp(b, t);
-        Vec3::new(p.x, w.ground_height(p).max(0.0) + lift, p.y)
+        Vec3::new(p.x, nd_procgen::drawn_ground::height(w, p).max(0.0) + lift, p.y)
     };
     for k in 0..n {
         out.push((at(k as f32 / n as f32), at((k + 1) as f32 / n as f32)));

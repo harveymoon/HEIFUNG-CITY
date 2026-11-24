@@ -78,10 +78,9 @@ pub fn hill_plinth(building: &Geometry, step: &PadStep, pad: f32, seed: u64, pal
     // The underside is the hill; the top is the building's floor.
     let storeys = ((drop / PLINTH_STOREY).round() as usize).max(1);
     let h = drop / storeys as f32;
-    let mut k = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let mut k = seed.wrapping_mul(nd_sim::hash::PHI);
     let mut next = || {
-        k ^= k >> 29;
-        k = k.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        k = nd_sim::hash::step29(k);
         (k >> 40) as f32 / (1u64 << 24) as f32
     };
     for (fi, &(a, b, out)) in faces.iter().enumerate() {

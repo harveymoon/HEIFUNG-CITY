@@ -92,6 +92,9 @@ fn main() {
         Err(e) => eprintln!("home folder not entered ({e}); using the working directory"),
     }
     crash::install();
+    // [r16-tidy] The sim takes a depot's room from its yard layout (styles
+    // live in nd_procgen).
+    nd_procgen::install_sim_hooks();
     App::new()
         .insert_resource(ClearColor(Color::linear_rgb(0.02, 0.018, 0.028)))
         // [sound] Bevy's own audio is not used (`nd_audio` synthesises

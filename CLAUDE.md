@@ -49,9 +49,12 @@ Open work: `todo.md` (sorted by area; tick items with "→ DONE [branch]: what")
 
 ## Building and testing
 - Drive C: is tight. All work files live under `O:/projects/Heifung_District` (Harvey 2026-11-20; never loose `O:/nd_*` folders):
-  build agent work to `CARGO_TARGET_DIR=O:/projects/Heifung_District/targets/<branch>`, game homes/saves/probe output in
-  `O:/projects/Heifung_District/runs/<branch>`, screenshots worth keeping in `O:/projects/Heifung_District/shots/<branch>`.
-  The main-checkout test cache is `targets/main-check`. Delete a branch's target and run folder once it is merged.
+  game homes/saves/probe output in `O:/projects/Heifung_District/runs/<branch>`, screenshots worth keeping in
+  `O:/projects/Heifung_District/shots/<branch>`. Since round 15 agents build to the faster disk:
+  `CARGO_TARGET_DIR=Q:/BUILD_CACHE/Heifung_District/targets/<branch>`, which the coordinator copies from a warm build
+  of main (`Q:/BUILD_CACHE/Heifung_District/targets/warm`) before the agent starts (only the workspace crates
+  rebuild); touch nothing else on Q:. The main-checkout test cache is `O:/projects/Heifung_District/targets/main-check`.
+  Delete a branch's target and run folder once it is merged.
 - Speed: `.cargo/config.toml` sets the rust-lld linker (sccache was dropped: ~0% hits, it serialised
   builds). Use `--profile fast` (release without LTO, 16 codegen units) for tests:
   `cargo test --profile fast --workspace`
@@ -59,7 +62,8 @@ Open work: `todo.md` (sorted by area; tick items with "→ DONE [branch]: what")
   only). Move a running `heifung_city.exe` aside first (`mv` it to `heifung_city.old-HHMM.exe`), and
   delete the old copy only after the new exe exists. If rustc dies with STATUS_STACK_BUFFER_OVERRUN
   (0xc0000409) on the release link of nd_app, rebuild with `RUST_MIN_STACK=268435456` and `-j 2`.
-- `society_demo`'s 911 thresholds are borderline at a fixed seed; unrelated changes can flip it.
+- `society_demo` runs three seeds (7, 3, 10) and checks crime and 911 pooled over them (r16-ground);
+  `ND_SEEDS=0..12 ... --test society_demo -- --ignored --nocapture spread` prints the spread over more.
 
 ## Running a test instance
 - [sound] `ND_AUDIO=0` keeps a test instance silent (no sound card opened): set it for agent

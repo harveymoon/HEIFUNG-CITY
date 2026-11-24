@@ -225,33 +225,17 @@ impl TaxCategory {
     /// The line a business is taxed under; `None` for offices, which the
     /// city funds and taxes at the standard rate as before.
     pub fn of_business(kind: BusinessKind, tier: Tier) -> Option<TaxCategory> {
-        if let Some(k) = kind.industry() {
-            return Some(Self::of_industry(k));
+        // [r16-tidy] A column of the catalogue now (the industries' lines
+        // written out per kind, `of_industry`'s).
+        match crate::catalogue::business(kind).tax {
+            crate::catalogue::TaxLine::None => None,
+            crate::catalogue::TaxLine::Fixed(c) => Some(c),
+            crate::catalogue::TaxLine::Nightlife => Some(match tier {
+                Tier::Low => TaxCategory::NightlifeLow,
+                Tier::Mid => TaxCategory::NightlifeMid,
+                Tier::High => TaxCategory::NightlifeHigh,
+            }),
         }
-        Some(match kind {
-            BusinessKind::Grocery => TaxCategory::Grocery,
-            BusinessKind::Bakery | BusinessKind::Cafe => TaxCategory::Bakery,
-            BusinessKind::GadgetShop | BusinessKind::Bookshop => TaxCategory::GadgetShop,
-            BusinessKind::Parking => TaxCategory::Parking,
-            // [r4-leisure-places] The everyday kitchens with the cafés and
-            // bakeries; the nights out (and the fine-dining room) on the
-            // nightlife lines.
-            BusinessKind::Diner | BusinessKind::NoodleBar | BusinessKind::PizzaPlace | BusinessKind::FastFood | BusinessKind::FoodHall | BusinessKind::StreetFood | BusinessKind::BubbleTea => TaxCategory::Bakery,
-            k if k.is_eat_or_go_out() => match tier {
-                Tier::Low => TaxCategory::NightlifeLow,
-                Tier::Mid => TaxCategory::NightlifeMid,
-                Tier::High => TaxCategory::NightlifeHigh,
-            },
-            BusinessKind::Venue | BusinessKind::SeafoodRestaurant | BusinessKind::GolfRange | BusinessKind::Gallery | BusinessKind::Marina => match tier {
-                Tier::Low => TaxCategory::NightlifeLow,
-                Tier::Mid => TaxCategory::NightlifeMid,
-                Tier::High => TaxCategory::NightlifeHigh,
-            },
-            // [economy] Shops by what they sell.
-            BusinessKind::FishMarket => TaxCategory::Grocery,
-            BusinessKind::CarDealer | BusinessKind::BikeShop | BusinessKind::Mechanic | BusinessKind::ArtStudio => TaxCategory::GadgetShop,
-            _ => return None,
-        })
     }
 
     /// The rate it starts at: today's flat rates.

@@ -286,12 +286,12 @@ impl World {
             if held.is_empty() {
                 continue;
             }
-            let (flagship, fb) = held.iter().max_by(|a, b| a.1.workers.len().cmp(&b.1.workers.len()).then(b.0.cmp(&a.0))).copied().unwrap();
+            let (flagship, fb) = held.iter().max_by(|a, b| a.1.workers.len().cmp(&b.1.workers.len()).then(b.0.cmp(&a.0))).copied().expect("an owner with holdings");
             out.push(CompanySize {
                 owner: Some(oid),
                 flagship,
                 name: o.name.clone(),
-                kind: fb.business.as_ref().unwrap().kind,
+                kind: fb.business.as_ref().expect("eligible: a business").kind,
                 holdings: o.properties.len(),
                 staff: held.iter().map(|(_, b)| b.workers.len()).sum(),
                 revenue: held.iter().map(|(_, b)| avg(b)).sum(),
@@ -301,7 +301,7 @@ impl World {
             if b.plot.owner.is_some() || !eligible(b) {
                 continue;
             }
-            out.push(CompanySize { owner: None, flagship: id, name: b.name.clone(), kind: b.business.as_ref().unwrap().kind, holdings: 1, staff: b.workers.len(), revenue: avg(b) });
+            out.push(CompanySize { owner: None, flagship: id, name: b.name.clone(), kind: b.business.as_ref().expect("eligible: a business").kind, holdings: 1, staff: b.workers.len(), revenue: avg(b) });
         }
         out.sort_by(|a, b| b.revenue.total_cmp(&a.revenue).then(a.flagship.cmp(&b.flagship)));
         out

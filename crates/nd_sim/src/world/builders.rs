@@ -287,7 +287,7 @@ impl World {
         if let Some(y) = yard {
             let have = self.buildings[y].business.as_ref().map_or(0.0, |z| z.stock_of(r));
             if have >= want {
-                let got = self.buildings[y].business.as_mut().unwrap().take(r, want);
+                let got = self.buildings[y].business.as_mut().expect("it has stock, so a business").take(r, want);
                 self.book_site_load(site, q, r, got);
                 self.queue_truck(TruckOrigin::Building(y), Cargo { from: y, to: site, resource: r, amount: got, price: 0.0 }, SITE_LORRY_COLOR);
                 self.builders.today.yard_loads += 1;
@@ -298,7 +298,7 @@ impl World {
         // [K34] Steel cut from old boxes at a scrap yard goes in first.
         if src == Some(Resource::Metal) {
             if let Some(sy) = self.scrap_steel_for(at, want) {
-                let got = self.buildings[sy].business.as_mut().unwrap().take(Resource::Metal, want);
+                let got = self.buildings[sy].business.as_mut().expect("scrap_steel_for picks a scrap business").take(Resource::Metal, want);
                 if got > 0.0 {
                     let cost = got * Resource::Metal.base_price();
                     self.pay_for_materials(buyer, yard, Account::Business(sy), cost);
@@ -324,7 +324,7 @@ impl World {
             _ => false,
         };
         if let (true, Some((m, price))) = (use_merchant, merchant) {
-            let got = self.buildings[m].business.as_mut().unwrap().take(r, want);
+            let got = self.buildings[m].business.as_mut().expect("merchant_with picks a business").take(r, want);
             if got > 0.0 {
                 let cost = got * price;
                 self.pay_for_materials(buyer, yard, Account::Business(m), cost);
@@ -342,7 +342,7 @@ impl World {
                 return want - got;
             }
         } else if let Some((seller, price, s)) = maker {
-            let got = self.buildings[seller].business.as_mut().unwrap().take(s, want);
+            let got = self.buildings[seller].business.as_mut().expect("maker_of picks a business").take(s, want);
             if got > 0.0 {
                 let cost = got * price;
                 self.pay_for_materials(buyer, yard, Account::Business(seller), cost);
@@ -503,7 +503,7 @@ impl World {
         let budget = self.buildings[id].business.as_ref().map_or(0.0, |z| z.money.max(0.0)) / short;
         for &r in materials {
             let (stock, inbound, money) = {
-                let z = self.buildings[id].business.as_ref().unwrap();
+                let z = self.buildings[id].business.as_ref().expect("a merchant: a business");
                 (z.stock_of(r), z.inbound_of(r), z.money)
             };
             if stock + inbound >= target * bld::MERCHANT_REORDER {
@@ -519,7 +519,7 @@ impl World {
             // From a maker of what it is made from (`local_from`), else imported.
             let src = r.row().local_from;
             if let Some((seller, price, s)) = src.and_then(|s| self.maker_of(s, at, want, id).map(|(m, p)| (m, p, s))) {
-                let got = self.buildings[seller].business.as_mut().unwrap().take(s, want);
+                let got = self.buildings[seller].business.as_mut().expect("maker_of picks a business").take(s, want);
                 if got > 0.0 {
                     let cost = got * price;
                     self.transfer(Account::Business(id), Account::Business(seller), cost, Kind::Supplies);
@@ -585,7 +585,7 @@ impl World {
         let target = bld::YARD_UNITS_PER_CREW * crews as f32;
         for &r in materials {
             let (stock, inbound, money) = {
-                let z = self.buildings[id].business.as_ref().unwrap();
+                let z = self.buildings[id].business.as_ref().expect("a builder's yard: a business");
                 (z.stock_of(r), z.inbound_of(r), z.money)
             };
             if stock + inbound >= target * 0.5 {
@@ -609,7 +609,7 @@ impl World {
             if want < target * 0.25 {
                 continue;
             }
-            let got = self.buildings[m].business.as_mut().unwrap().take(r, want);
+            let got = self.buildings[m].business.as_mut().expect("merchant_with picks a business").take(r, want);
             let cost = got * price;
             self.transfer(Account::Business(id), Account::Business(m), cost, Kind::Supplies);
             if let Some(z) = self.buildings[m].business.as_mut() {

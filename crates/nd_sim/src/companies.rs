@@ -152,14 +152,15 @@ pub fn fleet_hex(i: u8) -> String {
 /// tow trucks, garbage trucks, trucking (lorry depots, container yards),
 /// and the shops and makers whose vans deliver.
 pub fn runs_fleet(kind: BusinessKind) -> bool {
-    use BusinessKind as K;
-    matches!(kind, K::TaxiCompany | K::TowYard | K::TrashCompany | K::FleetLot | K::ContainerYard | K::FreightForwarder) || crate::vehicle::Livery::for_business(kind) != crate::vehicle::Livery::None
+    // [r16-tidy] Catalogue columns `fleet` and `livery`.
+    let row = crate::catalogue::business(kind);
+    row.fleet || row.livery != crate::vehicle::Livery::None
 }
 
 /// The trades that grow a yard of vehicles: bigger yard first, then depots
 /// across town (`World::expand_firms`).
 pub fn yard_trade(kind: BusinessKind) -> bool {
-    matches!(kind, BusinessKind::TowYard | BusinessKind::TrashCompany | BusinessKind::FleetLot)
+    crate::catalogue::business(kind).grows_yards
 }
 
 // ── a corp's specialty ───────────────────────────────────────────────────────
@@ -190,20 +191,8 @@ impl Specialty {
 
     /// The specialty of a corp grown out of a company of `kind`.
     pub fn of_origin(kind: BusinessKind) -> Specialty {
-        use BusinessKind as K;
-        match kind {
-            K::GadgetShop | K::Assembly | K::Bookshop | K::ContainerYard | K::FleetLot | K::CargoHub | K::FreightForwarder => Specialty::Logistics,
-            K::CarDealer | K::Mechanic | K::TaxiCompany | K::TowYard | K::BikeShop | K::Parking => Specialty::Motors,
-            K::Grocery | K::Bakery | K::Cafe | K::VertFarm | K::GrainFarm | K::Dairy | K::ProteinVat | K::Mill | K::CowFarm | K::ChickenFarm | K::Slaughterhouse | K::Feedlot | K::Fishery | K::FishPlant | K::FishMarket | K::FishingPort | K::FishGutting | K::FishStickFactory => Specialty::Food,
-            K::Hotel | K::Venue | K::GolfRange | K::BeachResort | K::PierRestaurant | K::BeachBar | K::BoatRental | K::SeafoodRestaurant | K::Marina | K::Gallery | K::ArtStudio => Specialty::Leisure,
-            K::OilWell | K::Refinery | K::ChemicalWorks => Specialty::Energy,
-            K::Fab | K::Smelter | K::StripMine | K::TrashCompany | K::ScrapYard => Specialty::Industry,
-            K::Office | K::Contractor => Specialty::Property,
-            K::BuildersMerchant => Specialty::Industry,
-            // [r4-leisure-places] the kitchens with food, the nights out with hospitality
-            K::Diner | K::NoodleBar | K::PizzaPlace | K::FastFood | K::FoodHall | K::StreetFood | K::BubbleTea | K::FoodTruck => Specialty::Food,
-            K::FineDining | K::Bar | K::KaraokeBox | K::Cinema | K::Theatre | K::ConcertHall | K::BowlingAlley | K::Arcade | K::Gym | K::ComedyClub => Specialty::Leisure,
-        }
+        // [r16-tidy] A column of the catalogue now.
+        crate::catalogue::business(kind).specialty
     }
 
     pub fn label(self) -> &'static str {
@@ -254,16 +243,8 @@ impl Specialty {
 
 /// Floor area a kind's site needs at least (a forecourt of cars).
 pub fn min_area(kind: BusinessKind) -> f32 {
-    match kind {
-        BusinessKind::CarDealer => 700.0,
-        BusinessKind::Mechanic => 350.0,
-        BusinessKind::GolfRange => 2800.0,
-        BusinessKind::TowYard | BusinessKind::FleetLot | BusinessKind::ContainerYard => 500.0,
-        // [r14-builders] A builder's yard; the merchant's shed and car park.
-        BusinessKind::Contractor => 450.0,
-        BusinessKind::BuildersMerchant => 900.0,
-        _ => 0.0,
-    }
+    // [r16-tidy] A column of the catalogue now.
+    crate::catalogue::business(kind).min_area
 }
 
 // ── shops into corporations ──────────────────────────────────────────────────
@@ -285,7 +266,7 @@ pub enum ShopGrowth {
 /// bookshop closing to rebuild across the plot next door cost the small
 /// demo towns jobs.)
 pub fn shop_chain(kind: BusinessKind) -> bool {
-    matches!(kind, BusinessKind::Grocery | BusinessKind::GadgetShop)
+    crate::catalogue::business(kind).chain
 }
 
 /// A line of an owner's history.

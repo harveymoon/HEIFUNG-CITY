@@ -28,7 +28,7 @@ impl World {
                 let before = parking_band(b.parking_used, b.parking_capacity);
                 b.parking_used = b.parking_used.saturating_add(1);
                 if b.is_parking() && before != parking_band(b.parking_used, b.parking_capacity) {
-                    self.events.push(SimEvent::BuildingChanged(spot.building.unwrap()));
+                    self.events.push(SimEvent::BuildingChanged(spot.building.expect("found above")));
                 }
             }
         }
@@ -50,7 +50,7 @@ impl World {
                 let before = parking_band(b.parking_used, b.parking_capacity);
                 b.parking_used = b.parking_used.saturating_sub(1);
                 if b.is_parking() && before != parking_band(b.parking_used, b.parking_capacity) {
-                    self.events.push(SimEvent::BuildingChanged(spot.building.unwrap()));
+                    self.events.push(SimEvent::BuildingChanged(spot.building.expect("found above")));
                 }
             }
         }

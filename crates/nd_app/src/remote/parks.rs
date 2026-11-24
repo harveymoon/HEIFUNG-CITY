@@ -40,7 +40,7 @@ pub(super) fn park(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let a = w.parks.anchor(id).ok_or("not one of the city's parks")?;
     let mut out = json!({});
     if let Some(set) = field(cmd, "set") {
-        let s = w.parks.parks.get_mut(&a).unwrap();
+        let s = w.parks.parks.get_mut(&a).ok_or("not one of the city's parks")?;
         if let Some(t) = set.get("trash").or_else(|| set.get("litter")).and_then(Value::as_f64) {
             s.trash = (t as f32).clamp(0.0, 1.0);
         }

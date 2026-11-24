@@ -106,6 +106,9 @@ pub(super) fn run_one(cmd: &Value, ctx: &mut Ctx) -> Reply {
     }
 }
 
+/// [r16-crash] How a reply to a command that panicked begins.
+pub(super) const INTERNAL: &str = "internal error";
+
 fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let name = cmd.get("cmd").and_then(Value::as_str).ok_or("missing \"cmd\" field; try {\"cmd\": \"help\"}")?;
     let c = lookup(name).ok_or_else(|| format!("unknown command {name:?}; try {{\"cmd\": \"help\"}}"))?;
@@ -115,7 +118,10 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     // [r7-sim-thread] A command that changed the city says on which tick
     // (between that tick and the next): a replay applies it there.
     let edits = ctx.sim.world.stats_edits();
-    let mut v = (c.run)(cmd, ctx)?;
+    // [r16-crash] A panic in a command (a bad id it indexed with, a city it
+    // did not expect) is that command's error, not a closed game: the
+    // crash log has it, the caller gets a 400 saying so.
+    let mut v = crate::crash::contain_logged(c.name, || (c.run)(cmd, ctx)).map_err(|m| format!("{INTERNAL} in {:?}: {m} (contained, the game carried on; details in saves/crash.log)", c.name))??;
     if ctx.sim.world.stats_edits() != edits {
         if let Some(o) = v.as_object_mut() {
             o.entry("edit_tick").or_insert(serde_json::json!(ctx.sim.world.clock.tick));
@@ -1508,6 +1514,44 @@ mod dispatch_tests {
         }
     }
 
+    /// [r16-docs] Doc guard: `docs/REMOTE.md` documents every command
+    /// `help` lists (its name in backticks, as `name`, `name {...}` or
+    /// `name field`, or as a `###` heading), and its "Other names"
+    /// paragraph lists exactly the registry's aliases, each under its
+    /// command. Round 13 found 9 commands and 27 aliases missing from it.
+    #[test]
+    fn remote_md_documents_every_command_and_alias() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/REMOTE.md");
+        // [r16-tidy] Escapes, not literal line breaks: git turns a literal CR
+        // into nothing on commit, and a checkout with autocrlf has CRLF.
+        let doc = std::fs::read_to_string(&path).expect("docs/REMOTE.md").replace("\r\n", "\n");
+        let documented = |n: &str| {
+            [format!("`{n}`"), format!("`{n} "), format!("`{n}{{")].iter().any(|p| doc.contains(p.as_str()))
+                || doc.lines().any(|l| l.starts_with('#') && l.trim_start_matches('#').split_whitespace().next() == Some(n))
+        };
+        let missing: Vec<&str> = COMMANDS.iter().map(|c| c.name).filter(|n| !documented(n)).collect();
+        assert!(missing.is_empty(), "commands missing from docs/REMOTE.md: {missing:?}");
+        // The "Other names" paragraph: `command` (`alias`, `alias`); ...
+        let start = doc.find("**Other names.**").expect("REMOTE.md has an \"Other names\" paragraph");
+        let para = &doc[start..start + doc[start..].find("
+
+").unwrap_or(doc.len() - start)];
+        let mut listed: Vec<(String, String)> = Vec::new();
+        for entry in para.split(';') {
+            let Some(open) = entry.rfind(" (") else { continue };
+            let Some(cmd) = entry[..open].rsplit('`').nth(1) else { continue };
+            for alias in entry[open..].split('`').skip(1).step_by(2) {
+                listed.push((alias.to_string(), cmd.to_string()));
+            }
+        }
+        listed.sort();
+        let mut want: Vec<(String, String)> = COMMANDS.iter().flat_map(|c| c.aliases.iter().map(|a| (a.to_string(), c.name.to_string()))).collect();
+        want.sort();
+        let extra: Vec<_> = listed.iter().filter(|x| !want.contains(x)).collect();
+        let absent: Vec<_> = want.iter().filter(|x| !listed.contains(x)).collect();
+        assert!(extra.is_empty() && absent.is_empty(), "REMOTE.md \"Other names\" vs the registry (alias, command): not in the registry {extra:?}; missing from the docs {absent:?}");
+    }
+
     /// [photo] `photo_mode` sets, toggles and reports the flag the UI's
     /// drawing reads; a bad `size` is refused and changes nothing; with no
     /// window (as here) the reply's `window` is null.
@@ -1526,5 +1570,100 @@ mod dispatch_tests {
         assert!(!app.world().resource::<UiFlags>().photo_mode, "a refused command changes nothing");
         let (_, body) = send(&mut app, json!({ "cmd": "status" }));
         assert_eq!(body["photo_mode"], false);
+    }
+
+    /// [r16-crash] Every command, fed ids that name nothing and values of
+    /// the wrong kind, answers (an error or a reply) without panicking:
+    /// a panic would still be contained, but it shows up here as an
+    /// "internal error" reply. Commands that write files, cost money,
+    /// replace the city or run the clock are left out.
+    #[test]
+    fn bad_ids_and_values_never_panic_a_command() {
+        let mut app = app();
+        let (status, body) = send(&mut app, json!({ "cmd": "seed_demo" }));
+        assert_eq!(status, 200, "{body}");
+        send(&mut app, json!({ "cmd": "step", "ticks": 90 }));
+        // Clock runners: a huge count is a long wait, not a crash.
+        let skip = ["step", "run_to", "seed_demo", "build_now", "walk_to"];
+        let ids = ["id", "building", "citizen", "car", "lane", "lot", "road", "route", "line", "unit", "incident", "district", "park", "gesture", "household", "train", "station", "stop", "node", "segment", "box", "depot", "project", "corp", "owner"];
+        let bad = [json!(999_999), json!(-1), json!(u64::MAX), json!("nonsense"), json!(1.5e30), json!([1, 2]), json!({ "x": 1 }), json!(null), json!(true)];
+        let t = std::time::Instant::now();
+        let (mut sent, mut panicked, mut slow) = (0, Vec::new(), Vec::new());
+        let trace = std::env::var_os("ND_TRACE_FUZZ").is_some();
+        for c in COMMANDS {
+            if matches!(c.effect, Effect::Files | Effect::Paid | Effect::Replace(_)) || skip.contains(&c.name) {
+                continue;
+            }
+            let fields: Vec<&str> = c.help.iter().map(|&(f, _)| f).filter(|f| *f != "note").collect();
+            for v in &bad {
+                let mut tries = vec![json!({ "cmd": c.name, "id": v })];
+                for f in &fields {
+                    tries.push(json!({ "cmd": c.name, *f: v }));
+                }
+                // Every id-like field at once (and the command's own).
+                let mut all = json!({ "cmd": c.name });
+                for f in ids.iter().chain(fields.iter()) {
+                    all[*f] = v.clone();
+                }
+                tries.push(all);
+                for cmd in tries {
+                    let at = std::time::Instant::now();
+                    if trace {
+                        eprintln!("-> {cmd}");
+                    }
+                    let (_, body) = send(&mut app, cmd.clone());
+                    sent += 1;
+                    if at.elapsed().as_secs_f32() > 2.0 {
+                        slow.push(format!("{cmd}: {:.1} s", at.elapsed().as_secs_f32()));
+                    }
+                    if body["error"].as_str().is_some_and(|e| e.starts_with(INTERNAL)) {
+                        panicked.push(format!("{cmd} -> {}", body["error"]));
+                    }
+                }
+            }
+        }
+        assert!(panicked.is_empty(), "{} of {sent} calls panicked:
+{}", panicked.len(), panicked.join("
+"));
+        assert!(slow.is_empty(), "calls that took over 2 s:
+{}", slow.join("
+"));
+        assert!(sent > 1000, "{sent}");
+        eprintln!("{sent} bad calls in {:.1} s", t.elapsed().as_secs_f32());
+        // The city still runs.
+        let (status, body) = send(&mut app, json!({ "cmd": "step", "ticks": 30 }));
+        assert_eq!(status, 200, "{body}");
+    }
+
+    /// [r16-crash] A command that panics is contained: the caller gets an
+    /// error that says so and the app carries on.
+    #[test]
+    fn a_panicking_command_is_an_error_not_a_crash() {
+        let mut app = app();
+        crate::sim_thread::plant_failure(4_000_000_007, true);
+        app.world_mut().resource_mut::<Sim>().world.clock.tick = 4_000_000_000;
+        let (status, body) = send(&mut app, json!({ "cmd": "step", "ticks": 20 }));
+        crate::sim_thread::plant_failure(4_000_000_007, false);
+        // `step` stops at the failed tick; the sim pauses and says why.
+        assert_eq!(status, 200, "{body}");
+        assert!(body["stopped"].as_str().is_some_and(|s| s.contains("tick failed")), "{body}");
+        assert_eq!(body["ticks"], 7, "{body}");
+        let sim = app.world().resource::<Sim>();
+        assert!(sim.paused);
+        assert!(sim.fault.as_deref().is_some_and(|f| f.contains("planted failure")), "{:?}", sim.fault);
+        let (status, body) = send(&mut app, json!({ "cmd": "status" }));
+        assert_eq!(status, 200, "{body}");
+        assert!(body["sim_fault"].as_str().is_some_and(|f| f.contains("planted")), "{body}");
+        // A load of a damaged save is refused and the city stays.
+        let generation = app.world().resource::<Sim>().generation;
+        let dir = std::env::temp_dir().join(format!("nd_r16crash_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("broken.ron");
+        let text = app.world().resource::<Sim>().world.to_save_ron().expect("serialises");
+        std::fs::write(&path, &text[..text.len() / 2]).unwrap();
+        let r = app.world_mut().resource_mut::<Sim>().load(path.to_str().unwrap());
+        assert!(r.is_err(), "a truncated save is refused");
+        assert_eq!(app.world().resource::<Sim>().generation, generation, "the city running stays");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

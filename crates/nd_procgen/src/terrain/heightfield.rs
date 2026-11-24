@@ -141,6 +141,15 @@ pub fn build_landscape_terrain(world: &World, palette: &Palette, cell: f32) -> M
     mesh
 }
 
+/// [r16-ground] The ground as [`build_landscape_terrain`] draws it at
+/// `cell`, to set things on (`drawn_ground`).
+pub fn drawn_ground(world: &World, cell: f32) -> crate::drawn_ground::DrawnGround {
+    let half = world.landscape.land_half();
+    let n = landscape_n(half, cell);
+    let (raw, kept) = landscape_heights(world, cell, n);
+    crate::drawn_ground::DrawnGround::from_grid(world, half, cell, n, raw, kept, crate::holes::HoleSet::new(crate::holes::ground_holes(world)))
+}
+
 /// Vertices along a side of the landscape's ground at `cell`.
 fn landscape_n(half: f32, cell: f32) -> usize {
     ((half * 2.0) / cell).ceil() as usize + 1
@@ -397,6 +406,11 @@ impl LandscapeTiles {
             self.meshes[t] = m;
         }
         changed
+    }
+
+    /// [r16-ground] The ground as these tiles draw it, to set things on.
+    pub fn drawn(&self, world: &World) -> crate::drawn_ground::DrawnGround {
+        crate::drawn_ground::DrawnGround::from_grid(world, self.half, self.cell, self.n, self.raw.clone(), self.kept.clone(), self.holes.clone())
     }
 
     /// How many tiles there are (some may be empty).

@@ -276,7 +276,9 @@ pub fn metro_line(cmd: &Value, w: &mut World, t: &mut crate::tools::ToolState) -
         Some(v) => v.as_u64().ok_or("undo is true or a count")?,
         None => 0,
     };
-    for _ in 0..undo {
+    // [r16-crash] Never more than the draft holds: `undo: 1e19` spun the
+    // game for hours.
+    for _ in 0..undo.min(t.metro_draft.stations.len() as u64 + 1) {
         t.status = undo_stop(w, &mut t.metro_draft);
     }
     let mut line = Value::Null;

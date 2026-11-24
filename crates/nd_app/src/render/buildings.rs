@@ -551,15 +551,14 @@ fn swap_in(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials,
     }
     for d in r.drawn.drain(..) {
         let id = d.id;
-        // [r11-box-stock] The boxes its drawn stacks hold: the sim keeps the
-        // depot within that, so every box it holds is drawn. Written only
-        // when it changes (a write is an edit: the sim thread rebases).
-        let room = (sim.world.containers.live && sim.world.box_depot(id).is_some()).then(|| nd_procgen::buildings::parts::stack_room(&d.slots).min(u16::MAX as usize) as u16);
-        if sim.world.containers.drawn_room.get(&id).copied() != room {
-            match room {
-                Some(n) => sim.world.containers.drawn_room.insert(id, n),
-                None => sim.world.containers.drawn_room.remove(&id),
-            };
+        // [r16-tidy] The room its stacks hold is the sim's own now, from the
+        // yard layout (`World::refresh_yard_rooms`); say so if what is drawn
+        // holds a different number (the layout and the drawing disagree).
+        if let Some(&n) = sim.world.containers.layout_room.get(&id) {
+            let drawn = nd_procgen::buildings::parts::stack_room(&d.slots);
+            if drawn != n as usize {
+                eprintln!("[r16-tidy] depot {id:?}: drawn stacks hold {drawn}, the sim's yard layout says {n}");
+            }
         }
         if d.bays.is_empty() {
             sim.depot_bays.remove(&id);

@@ -109,10 +109,7 @@ pub(super) struct GrimeState {
     stain_built: f32,
 }
 
-fn hash01(a: u64, b: u64) -> f32 {
-    let h = (a ^ b.wrapping_mul(0x9E37_79B9_7F4A_7C15)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    ((h >> 40) as f32) / (1u64 << 24) as f32
-}
+use nd_sim::hash::quick01 as hash01;
 
 fn seed_of(id: BuildingId) -> u64 {
     use slotmap::Key;
@@ -184,7 +181,7 @@ pub(super) fn sync_grime(
                 }
             }
             let flat = w.landscape.is_flat();
-            let height = |p: SVec2| if flat { 0.0 } else { w.ground_height(p) };
+            let height = |p: SVec2| if flat { 0.0 } else { nd_procgen::drawn_ground::height(&w, p) };
             let m = g.mesh_by(STAIN_Y, |k| ground_stain_color(g.values[k]), |k| g.values[k] < 0.03, height);
             if !m.is_empty() {
                 let mat = state.stain_material.clone().unwrap_or_default();

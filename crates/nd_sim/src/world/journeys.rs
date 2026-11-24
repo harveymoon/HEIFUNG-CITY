@@ -603,7 +603,7 @@ impl World {
             .filter_map(|(id, b)| Some((id, self.lots.get(b.lot)?.center, *b.residents.first()?)))
             .collect();
         // A different few each day.
-        homes.sort_by_key(|(id, _, _)| (slotmap::Key::data(id).as_ffi() ^ day.wrapping_mul(0x9E37_79B9)).wrapping_mul(0xBF58_476D_1CE4_E5B9));
+        homes.sort_by_key(|(id, _, _)| crate::hash::quick_by(slotmap::Key::data(id).as_ffi(), day, crate::hash::PHI32 as u64));
         let tick = self.clock.tick;
         let mut said = 0;
         for (_, at, p) in homes {

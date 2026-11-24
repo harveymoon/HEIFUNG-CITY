@@ -86,7 +86,7 @@ pub(super) fn sync_undercroft(mut commands: Commands, mut meshes: ResMut<Assets<
         let mut g = bay(&l, pal);
         // On the ground under the deck (the deck's own height is what
         // `surface_height` would give).
-        let ground = if flat { 0.0 } else { w.ground_height(b.pos) };
+        let ground = if flat { 0.0 } else { nd_procgen::drawn_ground::height(w, b.pos) };
         nd_procgen::terrain::raise_geometry(&mut g, ground);
         state.lamps.extend(bay_lamps(&l).into_iter().map(|p| p + Vec3::Y * ground));
         geo.append(&g);

@@ -53,10 +53,8 @@ pub const SHUT_DAYS: u8 = 3;
 
 /// Kinds that fit a shopfront: shops customers walk into.
 pub fn fits_shopfront(kind: BusinessKind) -> bool {
-    matches!(kind, BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Cafe | BusinessKind::Bookshop | BusinessKind::BikeShop)
-        // [r4-leisure-places] the kitchens and the small nights out
-        || (kind.is_eatery() && !matches!(kind, BusinessKind::FastFood | BusinessKind::StreetFood))
-        || matches!(kind, BusinessKind::Bar | BusinessKind::KaraokeBox | BusinessKind::Arcade | BusinessKind::Gym | BusinessKind::ComedyClub)
+    // [r16-tidy] A column of the catalogue now.
+    crate::catalogue::business(kind).shopfront
 }
 
 /// The units a building would be let in, all empty, from its floors, its

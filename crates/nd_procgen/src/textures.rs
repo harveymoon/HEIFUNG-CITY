@@ -14,13 +14,8 @@ pub struct Texture {
 }
 
 fn hash(ix: i32, iy: i32, seed: u32) -> f32 {
-    let mut h = (ix as u32).wrapping_mul(0x8da6_b343) ^ (iy as u32).wrapping_mul(0xd8163841) ^ seed.wrapping_mul(0xcb1a_b31f);
-    h ^= h >> 15;
-    h = h.wrapping_mul(0x2c1b_3c6d);
-    h ^= h >> 12;
-    h = h.wrapping_mul(0x297a_2d39);
-    h ^= h >> 15;
-    (h & 0x00ff_ffff) as f32 / 16_777_216.0
+    use nd_sim::hash::{fin32, lattice32, low24_01};
+    low24_01(fin32(lattice32(ix, iy, seed)))
 }
 
 fn smooth(t: f32) -> f32 {

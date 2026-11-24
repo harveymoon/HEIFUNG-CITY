@@ -40,7 +40,7 @@ mod cargo_hubs;
 mod box_lorries;
 // [r11-box-stock] The depots' stock kept within their room.
 mod box_stock;
-pub use box_stock::StorageCard;
+pub use box_stock::{set_yard_layout, yard_layout_installed, StorageCard, YardLayoutFn};
 /// [r8] Freight forwarders: exports boxed up firm by firm.
 mod forwarders;
 /// [airport] Airports (`crate::airport`): placing, flights, passengers, cargo, noise.

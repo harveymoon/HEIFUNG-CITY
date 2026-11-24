@@ -478,7 +478,7 @@ impl World {
             let base = self.air.drones[hid].base;
             let call = format!("{} {}, {}", Craft::AirAmbulance.call_sign(), self.air.drones[hid].number, self.buildings.get(base).map_or(String::new(), |b| b.name.clone()));
             {
-                let i = self.services.incident_mut(id).unwrap();
+                let i = self.services.incident_mut(id).expect("looked up just above");
                 i.stage = Stage::Dispatched;
                 i.dispatched = Some(tick);
                 i.unit_name = Some(call.clone());

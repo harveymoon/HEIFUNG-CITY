@@ -13,48 +13,46 @@
 
 use crate::buildings::Tier;
 use crate::citizens::LifeStage;
+use crate::catalogue::LeisureGroup;
 use crate::market::{BusinessKind, Resource};
 
 use BusinessKind as K;
 
-/// The new places to eat, in `BusinessKind` order.
-pub const EATERIES: [BusinessKind; 8] = [K::Diner, K::NoodleBar, K::PizzaPlace, K::FastFood, K::FoodHall, K::StreetFood, K::FineDining, K::BubbleTea];
+/// The new places to eat, in `BusinessKind` order. [r16-tidy] Read off
+/// the catalogue's `leisure` column (`LeisureGroup::Eatery`).
+pub const EATERIES: [BusinessKind; 8] = crate::catalogue::kinds_in(LeisureGroup::Eatery);
 /// The new places to go out, in `BusinessKind` order (the nightclub is the
-/// `Venue`, listed in [`ALL_NIGHTS_OUT`]).
-pub const NIGHTS_OUT: [BusinessKind; 9] = [K::Bar, K::KaraokeBox, K::Cinema, K::Theatre, K::ConcertHall, K::BowlingAlley, K::Arcade, K::Gym, K::ComedyClub];
+/// `Venue`, listed in [`ALL_NIGHTS_OUT`]). [r16-tidy] The catalogue's
+/// `LeisureGroup::NightOut`.
+pub const NIGHTS_OUT: [BusinessKind; 9] = crate::catalogue::kinds_in(LeisureGroup::NightOut);
 /// Every kind this module is about: the eateries, the nights out and the
 /// nightclub.
-pub const ALL_NIGHTS_OUT: [BusinessKind; 18] = [
-    K::Diner,
-    K::NoodleBar,
-    K::PizzaPlace,
-    K::FastFood,
-    K::FoodHall,
-    K::StreetFood,
-    K::FineDining,
-    K::BubbleTea,
-    K::Bar,
-    K::KaraokeBox,
-    K::Cinema,
-    K::Theatre,
-    K::ConcertHall,
-    K::BowlingAlley,
-    K::Arcade,
-    K::Gym,
-    K::ComedyClub,
-    K::Venue,
-];
+pub const ALL_NIGHTS_OUT: [BusinessKind; 18] = {
+    let mut out = [K::Venue; 18];
+    let mut i = 0;
+    while i < EATERIES.len() {
+        out[i] = EATERIES[i];
+        i += 1;
+    }
+    let mut j = 0;
+    while j < NIGHTS_OUT.len() {
+        out[i + j] = NIGHTS_OUT[j];
+        j += 1;
+    }
+    // (The last is the nightclub.)
+    out
+};
 
 impl BusinessKind {
     /// One of the new places to eat or go out (not the nightclub, which
     /// is older and keeps its own rules: the cover at the door, its name).
     pub fn is_eat_or_go_out(self) -> bool {
-        EATERIES.contains(&self) || NIGHTS_OUT.contains(&self)
+        self.row().leisure != LeisureGroup::None
     }
 
     /// A new place to eat.
     pub fn is_eatery(self) -> bool {
-        EATERIES.contains(&self)
+        self.row().leisure == LeisureGroup::Eatery
     }
 
     /// Cooks meals it sells over the counter (as baked goods): every new

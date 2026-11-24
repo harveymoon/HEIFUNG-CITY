@@ -600,7 +600,7 @@ impl World {
                     // The mound is redrawn in twentieths.
                     let step = (fill * 20.0).floor() as u8;
                     if step != st.shown {
-                        self.society.trash.disposal.sites.get_mut(&s.id).unwrap().shown = step;
+                        self.society.trash.disposal.sites.get_mut(&s.id).expect("listed: s comes from the sites").shown = step;
                         self.events.push(crate::SimEvent::BuildingChanged(s.id));
                     }
                 }
@@ -610,7 +610,7 @@ impl World {
                     let ash = burn * ASH_SHARE;
                     {
                         let d = &mut self.society.trash.disposal;
-                        let x = d.sites.get_mut(&s.id).unwrap();
+                        let x = d.sites.get_mut(&s.id).expect("listed: s comes from the sites");
                         x.backlog_t -= burn;
                         x.done_today_t += burn;
                         x.mw = burn * MWH_PER_T;
@@ -644,7 +644,7 @@ impl World {
                     takings += pg;
                     {
                         let d = &mut self.society.trash.disposal;
-                        let x = d.sites.get_mut(&s.id).unwrap();
+                        let x = d.sites.get_mut(&s.id).expect("listed: s comes from the sites");
                         x.backlog_t -= sort;
                         x.done_today_t += sort;
                         x.recovered_today_t += recovered;
@@ -665,7 +665,7 @@ impl World {
                     }
                     let (dest, per_t) = if by_rail { (Dest::Shipped, COST_SHIP) } else { (Dest::Road, COST_TRANSFER_ROAD) };
                     let d = &mut self.society.trash.disposal;
-                    let x = d.sites.get_mut(&s.id).unwrap();
+                    let x = d.sites.get_mut(&s.id).expect("listed: s comes from the sites");
                     x.backlog_t -= ship;
                     x.done_today_t += ship;
                     x.cost_today += ship * per_t;
@@ -686,7 +686,7 @@ impl World {
                 let tier = self.buildings.get(depot).and_then(|b| b.service).map_or(Tier::Mid, |s| s.tier);
                 let rate = if starter { f32::MAX } else { HAUL_T_DAY[tier.index()] / hours * if broke { 0.5 } else { 1.0 } };
                 let t = have.min(rate);
-                *self.society.trash.disposal.yards.get_mut(&depot).unwrap() -= t;
+                *self.society.trash.disposal.yards.get_mut(&depot).expect("listed: depot comes from the yards") -= t;
                 self.society.trash.disposal.hauled_today_t += t;
                 self.haul_by_road(t);
                 if t >= 3.0 {

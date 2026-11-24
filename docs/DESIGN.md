@@ -802,8 +802,12 @@ Citizens are rendered from their simulated positions every frame.
 - **Container stock and storage yards** [r11-box-stock] (`world/box_stock.rs`): a depot's room
   is its ground's say (`box_capacity`: the port 60, a cargo hub area/45, a freight yard 24 +
   area/120, a container yard area/16) but never more than its drawn stacks hold
-  (`Containers::drawn_room`, handed over by the renderer from `stack_room`: one box per forty-foot
-  place, two tiers over the drawn stacks counted), so every box a depot holds is drawn. Each hour
+  (`Containers::layout_room`, from `stack_room`: one box per forty-foot place, two tiers over the
+  drawn stacks counted), so every box a depot holds is drawn. [r16-tidy] The sim takes that room from
+  the yard's own layout at the containers' hourly round (`World::refresh_yard_rooms`, laid out again
+  when the depot's lot or look changes), through the layout function `nd_procgen::install_sim_hooks`
+  hands it at start-up (the styles live in nd_procgen); the renderer no longer writes it. Without the
+  hook (the sim crate's own tests and probes) the saved room stands, else the ground's. Each hour
   a terminal (port, freight yard, cargo hub) over 75% of its room trucks its lines' empties (not
   those on a freighter's list, the ones going out last) to the nearest container yard with
   storage room within 6 km (85% of the yard's room), two lorries an hour through the bays; the
@@ -836,7 +840,8 @@ Citizens are rendered from their simulated positions every frame.
   always with no grocer selling, a meal at a place cooking them instead
   [r12-hunger]); at lunch they may buy baked goods; the comfortable buy goods
   for mood. Days without food cost mood and eventually drive people out of town.
-- **Hunger as demand** [r12-hunger] (`world/food_need.rs`): each midnight the
+- **Hunger as demand** [r12-hunger] (`world/food_need.rs`): each midnight (and on
+  loading a save that has no reading yet, `food_need_after_load` [r14-photofix]) the
   hungry (gone to bed hungry, or hungry a day or more) are counted where they
   live on a 400 m grid, smoothed over days (`World::food_need`). A cell's pull is
   its hungry plus half its neighbours' over 30 (none under 4). While 3% or more
@@ -881,7 +886,8 @@ Citizens are rendered from their simulated positions every frame.
   comes by road from the map edge to its buyer instead. (Harvey's day-80 city:
   129 of 203 grocers had 5,100 units booked that no load held and never
   reordered; the hubs expected 470 loads with 40 on their way.)
-- **Business accounting**: businesses pay a share of their workers' wages daily.
+- **Business accounting**: [r15-money] businesses pay their staff's whole wage (and hold back the
+  standard tax for the treasury) at midnight; see "Money across the town edge".
   Deep in debt for five days means closure: workers laid off, the building goes
   derelict, and after a week it is demolished so the lot can be reused. Offices
   and civic buildings are publicly funded.
@@ -2259,6 +2265,19 @@ Citizens are rendered from their simulated positions every frame.
   lowered to the grade. Cars ride the height of the way they are on (`car_height`), movers keep to
   the surface nearest the height they were at (`surface_height_near`), so a walker under a
   viaduct stays under it. Elevated roads pass roundabouts by.
+- **One ground height** [r16-ground]: the sim decides on its own ground (`World::ground_height`: the 4 m
+  raster, bilinear; `surface_height`/`surface_height_near` add decks and water; `car_height_at` and
+  `road_height` the ways). The renderer draws the ground in 8 m cells straight between vertices, held
+  under streets and cut out under levelled lots, benches, pits and covered shore, so on hillsides the
+  two part by metres. Everything set on the ground in the renderer (movers in `lift_movers`, laid
+  meshes in `lift_spawned`/`lie_height`, fire crews, camps and piles, steam vents, foot wear, grime,
+  heat maps, undercroft bays, the airlift's pad) reads the drawn ground instead:
+  `nd_procgen::drawn_ground` (the mesh's own triangle; a levelled lot's floor edge to edge; the sim's
+  ground on streets' carriageways and pavements and in other holes, whose meshes follow it). The game
+  installs the one its tiles draw; any other world (headless, previews) gets the sim's answer.
+  `ND_SIM_GROUND=1` puts things back on the sim's ground to compare. Cars stay on `car_height_at`
+  (their road). `terrain_height` is the flat map's natural land, and `World::ground_at` (industry) is
+  the soil, not a height. Probe: `nd_procgen/examples/ground_height_probe.rs` (`ND_PROBE_OLD=1`).
 - **Interchanges** [interchange]: slip roads (`Segment::ramp`) are grade-separated from what
   merely crosses them, like the highway (`roads::WayClass`, `roads::separated`): a street or the
   railway crossing a ramp passes under it (the ramp's vertex over it is lifted), so a street drawn

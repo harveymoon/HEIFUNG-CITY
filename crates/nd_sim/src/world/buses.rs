@@ -677,10 +677,8 @@ impl World {
     /// A bus reached the end of a leg: a stop, or the depot.
     pub(super) fn bus_arrived(&mut self, car_id: CarId) {
         let tick = self.clock.tick;
-        let (bus, pos) = {
-            let car = &self.traffic.cars[car_id];
-            (car.bus.clone().unwrap(), car.pos)
-        };
+        // [r16-crash] Not (or no longer) a bus: nothing to do.
+        let Some((bus, pos)) = self.traffic.cars.get(car_id).and_then(|car| Some((car.bus.clone()?, car.pos))) else { return };
         let gone = |w: &mut World, car_id: CarId| {
             w.transit.departures.remove(&car_id);
             w.bus_home(car_id)

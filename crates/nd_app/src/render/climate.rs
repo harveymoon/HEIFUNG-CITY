@@ -91,13 +91,8 @@ pub(super) struct PrecipState {
 }
 
 fn hash(k: u32) -> f32 {
-    let mut x = k.wrapping_mul(0x9E37_79B9) ^ 0x85EB_CA6B;
-    x ^= x >> 15;
-    x = x.wrapping_mul(0x2C1B_3C6D);
-    x ^= x >> 12;
-    x = x.wrapping_mul(0x297A_2D39);
-    x ^= x >> 15;
-    (x >> 8) as f32 / (1u32 << 24) as f32
+    use nd_sim::hash::{fin32, top24_01, PHI32};
+    top24_01(fin32(k.wrapping_mul(PHI32) ^ 0x85EB_CA6B))
 }
 
 /// One block of particles: `n` of them in a `TILE` cube (origin at a
@@ -298,7 +293,7 @@ pub(super) fn sync_steam(
                 if !nd_procgen::climate::vent_clear(w, p) {
                     continue;
                 }
-                let y = w.ground_height(p);
+                let y = nd_procgen::drawn_ground::height(w, p);
                 let vent = state.vents.len();
                 state.vents.push(Vec3::new(p.x, y, p.y));
                 for k in 0..per {

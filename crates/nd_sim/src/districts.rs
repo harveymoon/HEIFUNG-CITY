@@ -701,7 +701,7 @@ const NAMES_B: [&str; 12] = ["Row", "Heights", "Quarter", "Flats", "Gardens", "M
 
 /// A name for the `n`th district of a city with `seed`, deterministic.
 pub fn default_name(seed: u64, n: u16) -> String {
-    let h = (seed ^ (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    let h = crate::hash::quick(seed, n as u64);
     let a = NAMES_A[((h >> 7) % NAMES_A.len() as u64) as usize];
     let b = NAMES_B[((h >> 29) % NAMES_B.len() as u64) as usize];
     format!("{a} {b}")

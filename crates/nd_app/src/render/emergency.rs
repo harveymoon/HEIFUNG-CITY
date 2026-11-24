@@ -366,7 +366,7 @@ pub(super) fn sync_emergency(
         };
         let (ground, tunnel) = match car {
             Some(car) => (w.car_height_at(car, pos), w.car_in_tunnel(car)),
-            None => (w.surface_height_near(pos, w.ground_height(pos)), false),
+            None => (nd_procgen::drawn_ground::lie(w, pos), false),
         };
         let y = ground + 0.05 + if lifted.unit == Some(*uid) { super::SELECTED_LIFT } else { 0.0 };
         // Lights and sirens: the two halves of the bar alternate.

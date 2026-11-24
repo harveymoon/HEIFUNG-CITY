@@ -246,8 +246,7 @@ pub fn trail_fade(age: usize, n: usize) -> f32 {
 
 /// A hash of a slotmap key, for the trail table and the sampling.
 fn key_hash<K: slotmap::Key>(tag: u64, k: K) -> u64 {
-    let v = k.data().as_ffi();
-    (v ^ tag.wrapping_mul(0x9E37_79B9_7F4A_7C15)).wrapping_mul(0xBF58_476D_1CE4_E5B9)
+    nd_sim::hash::quick(k.data().as_ffi(), tag)
 }
 
 /// Where every mover is now, with its kind.

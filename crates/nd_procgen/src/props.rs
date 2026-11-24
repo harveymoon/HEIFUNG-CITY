@@ -32,9 +32,7 @@ use nd_sim::hash::mix as hmix;
 use std::f32::consts::TAU;
 use Surface::{Foliage, Matte, Metal, Tarp, Wood};
 
-fn h01(seed: u64, salt: u64) -> f32 {
-    (hmix(seed, salt) >> 40) as f32 / (1u64 << 24) as f32
-}
+use nd_sim::hash::mix01 as h01;
 
 // ── placing ─────────────────────────────────────────────────────────────────
 

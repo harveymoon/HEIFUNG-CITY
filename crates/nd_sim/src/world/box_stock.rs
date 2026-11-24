@@ -17,12 +17,32 @@
 //! the boxes no yard could keep make the pressure for one more container
 //! yard: an entrepreneur opens one on an industrial lot, or turns a
 //! shut-down industrial business into one. A depot's room is what its
-//! drawn stacks hold where the renderer has told the sim
-//! (`Containers::drawn_room`), so every box a depot holds is drawn.
+//! stacks hold (`Containers::layout_room`: [r16-tidy] from the yard's own
+//! layout, [`set_yard_layout`]), so every box a depot holds is drawn.
 
 use super::*;
 use crate::containers::{self as cx, BoxId, Event, Owner, TruckBoxes, Where};
 use super::containers::DepotKind;
+
+/// [r16-tidy] How many boxes a depot's yard layout holds (`None`: it lays
+/// out no stacks). The layouts live in `nd_procgen` (the depots' styles),
+/// which depends on this crate, so it hands the sim this function at
+/// start-up (`nd_procgen::install_sim_hooks`); the game and the procgen
+/// probes install it, the sim crate's own tests and probes run without.
+pub type YardLayoutFn = fn(&World, BuildingId) -> Option<usize>;
+
+static YARD_LAYOUT: std::sync::OnceLock<YardLayoutFn> = std::sync::OnceLock::new();
+
+/// [r16-tidy] Install the yard layout ([`YardLayoutFn`]); the first one
+/// set stays.
+pub fn set_yard_layout(f: YardLayoutFn) {
+    let _ = YARD_LAYOUT.set(f);
+}
+
+/// [r16-tidy] Whether a yard layout is installed.
+pub fn yard_layout_installed() -> bool {
+    YARD_LAYOUT.get().is_some()
+}
 
 /// A terminal: where boxes land and from where they leave town.
 fn terminal(k: DepotKind) -> bool {
@@ -46,12 +66,58 @@ pub struct StorageCard {
 
 impl World {
     /// [r11-box-stock] How many boxes depot `b` keeps at most: its ground's
-    /// say (`box_capacity`), no more than its drawn stacks hold.
+    /// say (`box_capacity`), no more than its stacks hold
+    /// (`Containers::layout_room`).
     pub fn box_room(&self, b: BuildingId, kind: DepotKind) -> usize {
         let cap = self.box_capacity(b, kind);
-        match self.containers.drawn_room.get(&b) {
+        match self.containers.layout_room.get(&b) {
             Some(&n) => cap.min(n as usize),
             None => cap,
+        }
+    }
+
+    /// [r16-tidy] What a depot's layout is worked out from: its footprint,
+    /// trade and the building's look (seed, floors, tier, use, depot, port
+    /// and rail kinds). A change lays it out again.
+    fn layout_key(&self, b: BuildingId) -> u64 {
+        let Some(bld) = self.buildings.get(b) else { return 0 };
+        let mut h = crate::hash::Fnv::default();
+        if let Some(lot) = self.footprint(b) {
+            for p in &lot.polygon {
+                h.word(((p.x.to_bits() as u64) << 32) | p.y.to_bits() as u64);
+            }
+        }
+        h.word(bld.seed);
+        h.word(((bld.floors as u64) << 32) | ((bld.tier as u64) << 16) | bld.land_use as u64);
+        let more = format!("{:?}|{:?}|{:?}|{}", bld.business.as_ref().map(|z| z.kind), bld.depot, bld.port, bld.rail.is_some());
+        for w in more.bytes() {
+            h.word(w as u64);
+        }
+        h.0
+    }
+
+    /// [r16-tidy] Bring each depot's `layout_room` up to date from its yard
+    /// layout (the installed [`YardLayoutFn`]): a depot whose lot or look
+    /// changed (or not laid out since the load) is laid out again; a
+    /// building no longer a depot drops its entry. Without a layout
+    /// installed the saved rooms stand. Called at the containers' hourly
+    /// round.
+    pub fn refresh_yard_rooms(&mut self) {
+        let depots: Vec<BuildingId> = if self.containers.live { self.box_depots().into_iter().map(|d| d.0).collect() } else { Vec::new() };
+        let keep: std::collections::BTreeSet<BuildingId> = depots.iter().copied().collect();
+        self.containers.layout_room.retain(|b, _| keep.contains(b));
+        self.containers.layout_keys.retain(|b, _| keep.contains(b));
+        let Some(layout) = YARD_LAYOUT.get().copied() else { return };
+        for b in depots {
+            let key = self.layout_key(b);
+            if self.containers.layout_keys.get(&b) == Some(&key) {
+                continue;
+            }
+            match layout(self, b) {
+                Some(n) => self.containers.layout_room.insert(b, n.min(u16::MAX as usize) as u16),
+                None => self.containers.layout_room.remove(&b),
+            };
+            self.containers.layout_keys.insert(b, key);
         }
     }
 

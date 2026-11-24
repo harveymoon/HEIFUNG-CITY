@@ -112,6 +112,11 @@ pub struct Sim {
     /// [r12-yards] The households' things on screen, for picking and the
     /// remote API (`render/yards.rs`).
     pub yard_props: Vec<crate::render::YardProp>,
+    /// [r16-crash] The last tick that panicked (contained: crash log
+    /// written, the game paused): "day D hh:mm: message". Cleared when the
+    /// city is replaced. `fault_seq` counts them, for the message line.
+    pub fault: Option<String>,
+    pub fault_seq: u64,
 }
 
 impl Sim {
@@ -161,6 +166,8 @@ impl Sim {
             yard_spots: Default::default(),
             yard_version: 0,
             yard_props: Vec::new(),
+            fault: None,
+            fault_seq: 0,
         }
     }
 
@@ -241,13 +248,46 @@ impl Sim {
     /// Advance the world `n` ticks right now, paused or not: the remote API's
     /// `step`. The events stay in `World::events` for `step_sim` to drain
     /// this frame, so renderers see them exactly as they see a normal tick.
-    pub fn step_ticks(&mut self, n: u32) {
+    /// [r16-crash] False when a tick failed (the game paused, see `fault`).
+    pub fn step_ticks(&mut self, n: u32) -> bool {
         if n > 0 && (self.player_car.is_some() || self.world.traffic.player.is_some()) {
             self.world.traffic.player = self.player_car.clone();
         }
         for _ in 0..n {
-            self.world.tick(&mut self.minds);
+            if !self.tick_here() {
+                return false;
+            }
         }
+        true
+    }
+
+    /// [r16-crash] One tick on the screen's city, here. A panic in it is
+    /// contained (crash log written) and the game pauses with a message
+    /// instead of closing; false then. Unlike the sim thread's, this city
+    /// cannot be put back as it was: it stays as the panic left it.
+    fn tick_here(&mut self) -> bool {
+        let from = self.world.clock.tick;
+        let (world, minds) = (&mut self.world, &mut self.minds);
+        match crate::crash::contain_logged("a sim tick", || crate::sim_thread::tick_once(world, minds)) {
+            Ok(()) => true,
+            Err(m) => {
+                self.on_fault(from, &m);
+                false
+            }
+        }
+    }
+
+    /// [r16-crash] A tick from clock `tick` panicked with `message`:
+    /// pause, and say so (the next tick from there may fail again, so the
+    /// player saves or edits first; unpausing tries again).
+    fn on_fault(&mut self, tick: u64, message: &str) {
+        let clock = nd_sim::SimClock { tick };
+        self.fault = Some(format!("day {} {}: {message}", clock.day() + 1, clock.format_hhmm()));
+        self.fault_seq += 1;
+        self.paused = true;
+        self.pause_at = None;
+        self.accumulator = 0.0;
+        bevy::log::error!("the simulation failed at tick {tick} and paused: {message}");
     }
 
     /// Write the world as RON, atomically (see [`write_atomic`]).
@@ -278,7 +318,9 @@ impl Sim {
         crate::crash::note_io("loading", Path::new(path));
         // [saves] Compressed or plain RON (saves from before compression).
         let t = std::time::Instant::now();
-        let world = World::read_save(path)?;
+        // [r16-crash] A panic reading it or settling it after (a damaged
+        // or hand-edited save) is the load failing: the city running stays.
+        let world = crate::crash::contain_logged("loading a save", || World::read_save(path)).map_err(|m| format!("the save could not be read ({m})")).and_then(|r| r)?;
         // [r16-speed] What a load costs on the frame, beside what the
         // renderers' rebuild costs on the next (`frame_stats`).
         bevy::log::info!("load: {path} read, parsed and set up in {:.0} ms", t.elapsed().as_secs_f32() * 1000.0);
@@ -302,6 +344,7 @@ impl Sim {
         self.minds = HybridMind::new(Box::new(MockBackend::default()));
         self.pause_at = None;
         self.player_car = None;
+        self.fault = None;
     }
 
     /// [r7-sim-thread] Move the game on by `dt` real seconds: what the sim
@@ -343,7 +386,9 @@ impl Sim {
                 self.world.traffic.player = self.player_car.clone();
             }
             while self.accumulator >= 1.0 && ticks < MAX_TICKS_PER_FRAME && !self.at_pause_tick() {
-                self.world.tick(&mut self.minds);
+                if !self.tick_here() {
+                    break;
+                }
                 self.accumulator -= 1.0;
                 ticks += 1;
                 if start.elapsed() > TICK_BUDGET {
@@ -392,6 +437,11 @@ impl Sim {
     /// cannot run: tick in the frame.
     fn advance_threaded(&mut self, dt: f32) -> Option<u32> {
         self.world.poll();
+        // [r16-crash] A tick on the thread panicked: the screen's city is
+        // the last whole one; stop there.
+        if let Some((tick, m)) = self.world.take_fault() {
+            self.on_fault(tick, &m);
+        }
         // The screen's own edits since the last frame, before anything is
         // handed to the thread (a copy of the world carries its events).
         let mut events = std::mem::take(&mut self.events);
@@ -455,7 +505,9 @@ impl Sim {
 /// [saves] Gzip-compressed RON (`World::write_ron_gz`): a tenth of the size
 /// and of the disk writes. Loading takes either form, so older saves load.
 pub fn save_world(world: &World, path: &Path) -> Result<(), String> {
-    write_atomic_with(path, |out| world.write_ron_gz(out)).map_err(|e| e.to_string())
+    // [r16-crash] A panic while writing is a failed save (the old file is
+    // left whole), not a closed game.
+    crate::crash::contain_logged("writing a save", || write_atomic_with(path, |out| world.write_ron_gz(out)).map_err(|e| e.to_string())).map_err(|m| format!("the save could not be written ({m})")).and_then(|r| r)
 }
 
 /// Copy `from` to `to` atomically (as [`write_atomic`]): the autosave's
@@ -508,7 +560,18 @@ impl Plugin for SimPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Sim::new())
             .configure_sets(Update, (SimSet::Input, SimSet::Step, SimSet::Sync).chain())
-            .add_systems(Update, (sim_hotkeys.in_set(SimSet::Input), step_sim.in_set(SimSet::Step)));
+            .add_systems(Update, (sim_hotkeys.in_set(SimSet::Input), step_sim.in_set(SimSet::Step), show_fault.after(SimSet::Step)));
+    }
+}
+
+/// [r16-crash] A tick that panicked (and paused the game) says so on the
+/// message line, once.
+fn show_fault(sim: Res<Sim>, mut flags: ResMut<UiFlags>, mut seen: Local<u64>) {
+    if sim.fault_seq != *seen {
+        *seen = sim.fault_seq;
+        if let Some(f) = &sim.fault {
+            flags.message = format!("The simulation hit an error and paused ({f}). Details are in saves/crash.log. Save the city, then unpause to try again.");
+        }
     }
 }
 

@@ -584,13 +584,22 @@ pub struct Containers {
     /// [r8] The freight forwarders' books.
     #[serde(default)]
     pub forwarders: BTreeMap<BuildingId, Forwarder>,
-    /// [r11-box-stock] Boxes each depot's drawn stacks hold
-    /// (`nd_procgen::buildings::parts::stack_room`), as the renderer last
-    /// laid them out: a depot keeps no more than that, so every box it
-    /// holds is drawn. Unknown (never drawn, a headless run): its ground
-    /// alone says (`World::box_capacity`).
-    #[serde(default)]
-    pub drawn_room: BTreeMap<BuildingId, u16>,
+    /// [r11-box-stock] Boxes each depot's stacks hold
+    /// (`nd_procgen::buildings::parts::stack_room`): a depot keeps no more
+    /// than that, so every box it holds is drawn. [r16-tidy] Taken by the
+    /// sim from the yard's own layout (`World::refresh_yard_rooms`, through
+    /// the layout hook `nd_procgen::install_sim_hooks` sets), no longer
+    /// handed over by the renderer, so a headless run with the hook keeps
+    /// the same stock as the game. Saved (old saves call it `drawn_room`):
+    /// without the hook (the sim crate's own tests and probes) the saved
+    /// room stands; unknown, its ground alone says (`World::box_capacity`).
+    #[serde(default, alias = "drawn_room")]
+    pub layout_room: BTreeMap<BuildingId, u16>,
+    /// [r16-tidy] What each depot's `layout_room` was worked out from (a
+    /// digest of its lot and look), so it is laid out again only when that
+    /// changes. Not saved: after a load the first round lays them all out.
+    #[serde(skip)]
+    pub layout_keys: BTreeMap<BuildingId, u64>,
     /// [r11-box-stock] The container yards' storage books.
     #[serde(default)]
     pub storage: BTreeMap<BuildingId, StorageBook>,
@@ -869,7 +878,7 @@ impl Containers {
                 let r = &self.boxes[id];
                 let ok = r.slot.is_some_and(|s| !taken.contains(&s) && (!r.forty || (s % 2 == 0 && !taken.contains(&(s + 1)))));
                 if ok {
-                    let s = r.slot.unwrap();
+                    let s = r.slot.expect("ok: it has a slot");
                     taken.insert(s);
                     if r.forty {
                         taken.insert(s + 1);

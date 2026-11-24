@@ -329,7 +329,7 @@ pub fn generate_pool(seed: u64) -> Vec<Politician> {
     let mut rng = SimRng::seed_from_u64(mix(seed, 0xC0_3317_7EE5));
     let mut scopes: Vec<Scope> = Scope::ALL.to_vec();
     while scopes.len() < POOL_SIZE {
-        scopes.push(*Scope::ALL.choose(&mut rng).unwrap());
+        scopes.push(*Scope::ALL.choose(&mut rng).expect("Scope::ALL is not empty"));
     }
     let mut names: Vec<String> = Vec::new();
     let mut out = Vec::new();
@@ -341,7 +341,7 @@ pub fn generate_pool(seed: u64) -> Vec<Politician> {
             tries += 1;
         }
         names.push(name.clone());
-        let temper = *Temper::ALL.choose(&mut rng).unwrap();
+        let temper = *Temper::ALL.choose(&mut rng).expect("Temper::ALL is not empty");
         let mut leanings = Leanings { spending: rng.random_range(-1.0..1.0), growth: rng.random_range(-1.0..1.0), order: rng.random_range(-1.0..1.0), loyalty: rng.random_range(0.1..0.9) };
         // The job pulls a little: an environment commissioner leans green
         // more often than not, a treasurer frugal; never always.
@@ -359,7 +359,7 @@ pub fn generate_pool(seed: u64) -> Vec<Politician> {
         if temper == Temper::Contrarian {
             leanings.loyalty *= 0.4;
         }
-        let background = Scope::BACKGROUNDS[scope.index()].choose(&mut rng).unwrap().to_string();
+        let background = Scope::BACKGROUNDS[scope.index()].choose(&mut rng).expect("every scope has backgrounds").to_string();
         out.push(Politician {
             id: i as u32 + 1,
             name,
@@ -367,7 +367,7 @@ pub fn generate_pool(seed: u64) -> Vec<Politician> {
             scope,
             temper,
             leanings,
-            party: PARTIES.choose(&mut rng).unwrap().to_string(),
+            party: PARTIES.choose(&mut rng).expect("PARTIES is not empty").to_string(),
             background,
             memory: Vec::new(),
             record: Record::default(),

@@ -187,10 +187,8 @@ fn dist_to_outline(p: Vec2, poly: &[Vec2]) -> f32 {
     (0..poly.len()).map(|i| seg_dist(p, poly[i], poly[(i + 1) % poly.len()])).fold(f32::MAX, f32::min)
 }
 
-/// `0..1` from a seed and a salt.
-fn h01(seed: u64, salt: u64) -> f32 {
-    (hmix(seed, salt) >> 40) as f32 / (1u64 << 24) as f32
-}
+// `0..1` from a seed and a salt.
+use nd_sim::hash::mix01 as h01;
 
 /// Every mesh of a geometry, the base and both detail layers, but the glow.
 fn solid_parts(g: &Geometry) -> impl Iterator<Item = &MeshData> {

@@ -171,7 +171,7 @@ pub(super) fn build_piece(w: &World, piece: &Piece, pal: &nd_procgen::Palette) -
     } else {
         for part in g.parts.iter_mut().chain(g.detail.iter_mut().flatten()) {
             for p in part.positions.iter_mut() {
-                p[1] += w.ground_height(SVec2::new(p[0], p[2]));
+                p[1] += nd_procgen::drawn_ground::height(w, SVec2::new(p[0], p[2]));
             }
         }
     }

@@ -169,11 +169,11 @@ impl World {
             // removed, and segment ids are renumbered by every rebuild, so
             // find it afresh before asking whether it reaches the trunk.
             let lot_poly = self.lots.get(self.buildings[id].lot).map(|l| (l.polygon.clone(), l.center, l.front_edge));
-            let kind = self.buildings[id].rail.as_ref().unwrap().kind;
+            let kind = self.buildings[id].rail.as_ref().expect("filtered to rail").kind;
             let length = kind.platform_length();
             let fresh = lot_poly.and_then(|(poly, center, front)| RailLink::beside(&self.roads, &poly, center, front, kind, length));
             let segment = fresh.as_ref().map(|f| f.segment).or_else(|| {
-                let old = self.buildings[id].rail.as_ref().unwrap().segment;
+                let old = self.buildings[id].rail.as_ref().expect("filtered to rail").segment;
                 self.roads.try_segment(old).filter(|s| s.is_rail()).map(|_| old)
             });
             let rail_ok = segment.is_some_and(|sid| {
@@ -190,7 +190,7 @@ impl World {
                 fresh.walk_connected = walk_ok;
                 self.buildings[id].rail = Some(fresh);
             } else {
-                let link = self.buildings[id].rail.as_mut().unwrap();
+                let link = self.buildings[id].rail.as_mut().expect("filtered to rail");
                 link.rail_connected = rail_ok;
                 link.road_connected = road_ok;
                 link.walk_connected = walk_ok;
@@ -704,7 +704,7 @@ impl World {
             match arrived {
                 Some(true) => self.train_arrived(id),
                 Some(false) => {
-                    let mut t = self.rail.trains.remove(id).unwrap();
+                    let Some(mut t) = self.rail.trains.remove(id) else { continue };
                     let pos = t.head();
                     let left = std::mem::take(&mut t.cargo);
                     if !left.is_empty() {

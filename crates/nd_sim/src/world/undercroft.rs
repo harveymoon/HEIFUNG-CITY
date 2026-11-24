@@ -66,7 +66,7 @@ impl World {
             for forward in [true, false] {
                 let mut prev = first;
                 loop {
-                    let n = if forward { *nodes.back().unwrap() } else { *nodes.front().unwrap() };
+                    let n = if forward { *nodes.back().expect("a chain has nodes") } else { *nodes.front().expect("a chain has nodes") };
                     let Some(next) = carry_on(n, prev) else { break };
                     if !done.insert(next) {
                         break;
@@ -89,9 +89,9 @@ impl World {
             }
             let mut cum = vec![0.0f32];
             for w in pts.windows(2) {
-                cum.push(cum.last().unwrap() + w[0].distance(w[1]));
+                cum.push(cum.last().expect("starts with 0.0") + w[0].distance(w[1]));
             }
-            let len = *cum.last().unwrap();
+            let len = *cum.last().expect("starts with 0.0");
             if len < MIN_BAY {
                 continue;
             }

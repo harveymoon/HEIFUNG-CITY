@@ -183,10 +183,8 @@ pub fn is_block(homes: u16, floors: u8) -> bool {
     homes > 4 || floors > 3
 }
 
-/// `0..1` from a seed and a salt.
-fn h01(seed: u64, salt: u64) -> f32 {
-    (mix(seed, salt) >> 40) as f32 / (1u64 << 24) as f32
-}
+// `0..1` from a seed and a salt.
+use crate::hash::mix01 as h01;
 
 /// The trades that bring an engine home to work on.
 fn engine_trade(k: BusinessKind) -> bool {

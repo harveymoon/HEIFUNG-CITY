@@ -48,7 +48,8 @@ impl World {
         for sid in stadiums {
             let (seats, lu, name, at) = {
                 let b = &self.buildings[sid];
-                let s = b.service.unwrap();
+                // [r16-crash] No longer a stadium (a damaged save): skipped.
+                let Some(s) = b.service else { continue };
                 (s.kind.capacity(s.tier), b.land_use, b.name.clone(), self.lots.get(b.lot).map_or(Vec2::ZERO, |l| l.center))
             };
             let mut fans: Vec<CitizenId> = self

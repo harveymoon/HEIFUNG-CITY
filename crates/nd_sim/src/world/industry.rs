@@ -323,7 +323,7 @@ impl World {
                     let need = per * cap;
                     let port = ports.iter().map(|p| near(p.distance(center), 80.0, 420.0)).fold(0.0, f32::max);
                     let yard = yards.iter().map(|p| near(p.distance(center), 80.0, 360.0)).fold(0.0, f32::max);
-                    let bz = self.buildings[id].business.as_mut().unwrap();
+                    let bz = self.buildings[id].business.as_mut().expect("a plant: a business");
                     let got = if need > 0.0 { bz.take(Resource::Fuel, need) } else { 0.0 };
                     let fuelled = if need > 0.0 { got / need } else { 1.0 };
                     let handling = HANDLING_PER_JOB_HOUR * jobs as f32 * staffing * (0.5 + 0.5 * fuelled) * (1.0 + 0.5 * port + 0.3 * yard);

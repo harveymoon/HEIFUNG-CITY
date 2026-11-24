@@ -375,7 +375,7 @@ impl World {
             })
             .next()
             .ok_or("nobody with a car parked near home")?;
-        let home = self.citizens[suspect].home.unwrap();
+        let home = self.citizens[suspect].home.expect("chosen for a home");
         let at = self.building_entrance(home).unwrap_or_default();
         let id = self.report_crime(CrimeKind::Robbery, home, Some(suspect), None).ok_or("could not report the crime")?;
         self.pull_off_road(uid);

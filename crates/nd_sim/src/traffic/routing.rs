@@ -154,7 +154,7 @@ impl LaneNetwork {
             // A lane reached again more cheaply leaves its older entry in
             // the heap: skip it rather than expand it (and count it toward
             // the cap) a second time.
-            if popped_g > sc.g(lane).unwrap() {
+            if popped_g > sc.g(lane).expect("a lane on the heap has a cost") {
                 continue;
             }
             if lane == goal && expanded > 0 {
@@ -174,7 +174,7 @@ impl LaneNetwork {
             if expansions > 20_000 {
                 return None;
             }
-            let gl = sc.g(lane).unwrap();
+            let gl = sc.g(lane).expect("a lane on the heap has a cost");
             let here = &self.lanes[lane as usize];
             // [tolls] A toll counts as the detour a driver would take to avoid it.
             let ahead = here.next.iter().filter(|&&n| self.lanes[n as usize].permitted).map(|&n| {
@@ -501,7 +501,7 @@ impl Traffic {
     pub(super) fn replan_from_here(&mut self, id: CarId) -> bool {
         let (here, s, goal, s_end, avoid) = {
             let c = &self.cars[id];
-            (c.route[c.idx], c.s, *c.route.last().unwrap(), c.s_end, c.avoided.iter().map(|&(l, _)| l).collect::<Vec<_>>())
+            (c.route[c.idx], c.s, *c.route.last().expect("route[idx] is there"), c.s_end, c.avoided.iter().map(|&(l, _)| l).collect::<Vec<_>>())
         };
         // [r2-traffic] Queues weighed, turning back costed, and not back
         // into what it gave up on (with no way round those, any way).
@@ -634,7 +634,7 @@ impl Traffic {
                     _ => continue,
                 }
             };
-            let (goal, s_end, s) = (*c.route.last().unwrap(), c.s_end, c.s);
+            let (goal, s_end, s) = (*c.route.last().expect("route[idx] is there"), c.s_end, c.s);
             let mut avoid: Vec<LaneId> = c.avoided.iter().map(|&(l, _)| l).filter(|&l| l != goal).collect();
             avoid.extend(avoid_lane);
             let mut found = self.net.route_replan(here, s, goal, s_end, &avoid, avoid_step);

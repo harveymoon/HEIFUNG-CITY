@@ -15,6 +15,8 @@ enums' order, and the building sites' bill of materials:
   capital, flags (food chain, outing, lodging, waterfront, needs a site, student trade, truck lot,
   fouls the air), the leisure numbers (tab, booking share, family/date spot, loudness, trash, land
   value lift, shopfront sign) and the inspector's line about it.
+  [r16-tidy] Also its van livery, fleet / yard / chain flags, least site area, a grown corp's
+  specialty, rooted, shop unit, eatery or night out (`LeisureGroup`), tax line (`TaxLine`) and jetty.
 - `INDUSTRIAL`, `COMMERCIAL`, `ENTERTAINMENT`, `CIVIC`: the kinds each land use can grow.
 - `BUILD_MIXES`, `build_type`, `site_bill`: what each kind of building is made of, stage by stage (round 14, see below).
 - `makers(r)` / `users(r)`: who makes and who uses a good, read off the recipes (never written twice).
@@ -24,6 +26,128 @@ enums' order, and the building sites' bill of materials:
 The old methods (`Resource::label`, `base_price`, `BusinessKind::recipe`, `hours`, `is_food`, ...)
 still exist and keep their signatures; they are one-line reads of the catalogue, so no caller had to
 change. Enum variants, their order and serde are unchanged: saves load as before.
+
+## Every good and every kind of business
+
+Generated from `catalogue.rs` and checked by the test
+`catalogue::tests::catalogue_md_lists_every_good_and_kind` [r16-docs], so this list cannot drift:
+after adding a good or a kind (or changing which goods a recipe names) run
+`ND_BLESS_DOCS=1 cargo test -p nd_sim catalogue_md_lists_every_good_and_kind` to rewrite it.
+"Made by" is `catalogue::makers` (recipe outputs and `local_from`); "Grows on" is the land-use
+lists (`INDUSTRIAL`, `COMMERCIAL`, `ENTERTAINMENT` = leisure, `CIVIC`); "its own system" kinds are
+opened by a pressure, placed by the player or started by their subsystem (ports, transit, food
+trucks, builders).
+
+<!-- doc-guard: catalogue lists start -->
+| Good | Label | Category | Unit | Made by |
+|---|---|---|---|---|
+| `Produce` | produce | farm | crates | VertFarm |
+| `Grain` | grain | farm | t | GrainFarm |
+| `Flour` | flour | food | pallets | Mill |
+| `BakedGoods` | baked goods | food | crates | Bakery, Cafe, Diner, NoodleBar, PizzaPlace, FastFood, FoodHall, StreetFood, BubbleTea, FoodTruck |
+| `Meat` | meat | food | crates | ProteinVat, FishPlant, Slaughterhouse, FishStickFactory |
+| `Dairy` | dairy | food | crates | Dairy |
+| `Groceries` | groceries | consumer | pallets | Grocery, FishMarket |
+| `Parts` | parts | manufactured | pallets | Fab |
+| `Electronics` | electronics | manufactured | pallets | Assembly |
+| `Goods` | goods | consumer | pallets | GadgetShop, Bookshop, BuildersMerchant |
+| `Crude` | crude oil | petrochemical | kL | OilWell |
+| `Fuel` | fuel | petrochemical | kL | Refinery |
+| `Plastics` | plastics | petrochemical | t | Refinery, ChemicalWorks |
+| `Fish` | fish | seafood | crates | Fishery, FishingPort |
+| `Livestock` | livestock | farm | head | CowFarm, ChickenFarm, Feedlot |
+| `Ore` | ore | minerals | t | StripMine |
+| `Fillets` | fish fillets | seafood | crates | FishGutting |
+| `Art` | art | culture | pieces | ArtStudio |
+| `Metal` | metal | minerals | t | Smelter, ScrapYard |
+| `Cement` | cement | building material | t | - |
+| `Aggregate` | sand and gravel | building material | t | StripMine |
+| `Bricks` | bricks and blocks | building material | t | - |
+| `Glass` | glass | building material | t | - |
+| `Steel` | structural steel | building material | t | Smelter, ScrapYard |
+| `Rebar` | rebar | building material | t | Smelter, ScrapYard |
+| `Timber` | timber | building material | t | - |
+| `Roofing` | roofing | building material | pallets | - |
+| `Insulation` | insulation | building material | pallets | Refinery, ChemicalWorks |
+| `Pipe` | pipe and plumbing | building material | pallets | Refinery, ChemicalWorks |
+| `Wiring` | wiring and electrical | building material | crates | Fab |
+| `Fixtures` | fixtures and fittings | building material | crates | Fab |
+| `Paint` | paint | building material | crates | Refinery, ChemicalWorks |
+
+| Kind | API key | Grows on | Uses | Makes |
+|---|---|---|---|---|
+| `VertFarm` | `vertical_farm` | industrial | - | Produce |
+| `GrainFarm` | `grain_farm` | industrial | - | Grain |
+| `ProteinVat` | `protein_vat` | industrial | Grain | Meat |
+| `Dairy` | `dairy` | industrial | Grain | Dairy |
+| `Mill` | `mill` | industrial | Grain | Flour |
+| `Fab` | `parts_fab` | industrial | - | Parts |
+| `Assembly` | `assembly_plant` | industrial | Parts | Electronics |
+| `Grocery` | `grocery` | commercial | Produce, Flour, Meat, Dairy | Groceries |
+| `Bakery` | `bakery` | commercial | Flour | BakedGoods |
+| `GadgetShop` | `gadget_shop` | commercial | Electronics | Goods |
+| `Venue` | `venue` | leisure | Groceries | - |
+| `Office` | `office` | commercial, civic | - | - |
+| `Parking` | `parking` | - (its own system) | - | - |
+| `OilWell` | `oil_well` | industrial | - | Crude |
+| `Refinery` | `refinery` | industrial | Crude | Fuel, Plastics |
+| `ContainerYard` | `container_yard` | industrial | Fuel | - |
+| `FleetLot` | `truck_and_bus_lot` | industrial | Fuel | - |
+| `Fishery` | `fishery` | industrial | - | Fish |
+| `FishPlant` | `fish_processing_plant` | industrial | Fish | Meat |
+| `TowYard` | `tow_company` | industrial | - | - |
+| `Hotel` | `hotel` | - (its own system) | Groceries | - |
+| `TaxiCompany` | `taxi_company` | - (its own system) | - | - |
+| `CargoHub` | `cargo_hub` | - (its own system) | - | - |
+| `Mechanic` | `car_repair_shop` | - (its own system) | - | - |
+| `CarDealer` | `car_dealership` | - (its own system) | - | - |
+| `TrashCompany` | `trash_company` | industrial | - | - |
+| `BikeShop` | `bike_shop` | - (its own system) | - | - |
+| `CowFarm` | `cattle_farm` | industrial | Grain | Livestock |
+| `ChickenFarm` | `chicken_farm` | industrial | Grain | Livestock |
+| `Slaughterhouse` | `slaughterhouse` | industrial | Livestock | Meat |
+| `StripMine` | `strip_mine` | industrial | - | Ore |
+| `Marina` | `marina` | - (its own system) | - | - |
+| `FishingPort` | `fishing_port` | - (its own system) | - | Fish |
+| `FishGutting` | `fish_gutting_shed` | industrial | Fish | Fillets |
+| `FishStickFactory` | `fishstick_factory` | industrial | Fillets | Meat |
+| `FishMarket` | `fish_market` | - (its own system) | Fish | Groceries |
+| `SeafoodRestaurant` | `seafood_restaurant` | - (its own system) | Fillets | - |
+| `GolfRange` | `golf_driving_range` | - (its own system) | - | - |
+| `ArtStudio` | `artists_studios` | - (its own system) | - | Art |
+| `Gallery` | `gallery` | - (its own system) | Art | - |
+| `Smelter` | `smelter` | industrial | Ore, Fuel | Metal |
+| `Feedlot` | `factory_farm` | industrial | Grain | Livestock |
+| `ChemicalWorks` | `chemical_works` | industrial | Crude | Plastics |
+| `BeachResort` | `beach_resort` | - (its own system) | Groceries | - |
+| `PierRestaurant` | `pier_restaurant` | - (its own system) | Groceries | - |
+| `BeachBar` | `beach_bar` | - (its own system) | Groceries | - |
+| `BoatRental` | `boat_rental` | - (its own system) | Fuel | - |
+| `Cafe` | `cafe` | - (its own system) | Flour, Dairy | BakedGoods |
+| `Bookshop` | `bookshop` | - (its own system) | Plastics | Goods |
+| `ScrapYard` | `scrap_yard` | - (its own system) | - | Metal |
+| `Diner` | `diner` | commercial | Meat, Dairy, Flour, Produce | BakedGoods |
+| `NoodleBar` | `noodle_bar` | commercial, leisure | Flour, Meat, Produce | BakedGoods |
+| `PizzaPlace` | `pizza_place` | commercial | Flour, Dairy, Meat, Produce | BakedGoods |
+| `FastFood` | `fastfood_drivethrough` | commercial | Meat, Flour, Produce | BakedGoods |
+| `FoodHall` | `food_hall` | commercial | Groceries, Meat, Produce | BakedGoods |
+| `StreetFood` | `streetfood_stalls` | leisure | Meat, Produce, Flour | BakedGoods |
+| `FineDining` | `finedining_restaurant` | leisure | Meat, Produce, Dairy | - |
+| `BubbleTea` | `bubbletea_bar` | commercial | Dairy, Produce | BakedGoods |
+| `Bar` | `bar` | leisure | Groceries | - |
+| `KaraokeBox` | `karaoke_box` | leisure | Groceries | - |
+| `Cinema` | `cinema` | leisure | Groceries | - |
+| `Theatre` | `theatre` | leisure | Groceries | - |
+| `ConcertHall` | `livemusic_hall` | leisure | Groceries | - |
+| `BowlingAlley` | `bowling_alley` | leisure | Groceries | - |
+| `Arcade` | `arcade` | leisure | Electronics | - |
+| `Gym` | `gym` | commercial | - | - |
+| `ComedyClub` | `comedy_club` | leisure | Groceries | - |
+| `FreightForwarder` | `freight_forwarder` | - (its own system) | Fuel | - |
+| `Contractor` | `building_contractor` | - (its own system) | - | - |
+| `BuildersMerchant` | `builders_merchant` | - (its own system) | Plastics | Goods |
+| `FoodTruck` | `food_truck` | - (its own system) | Meat, Produce, Flour, Dairy | BakedGoods |
+<!-- doc-guard: catalogue lists end -->
 
 ## Inventory: fact, where it was, where it is now
 
@@ -58,26 +182,46 @@ change. Enum variants, their order and serde are unchanged: saves load as before
 | UI colours / icons per good | none exist | (add a column when the UI wants one) |
 | Map layers per good | none (layers are per land survey resource, not per good) | n/a |
 
+### Moved into the catalogue in round 16 [r16-tidy]
+
+| Fact | Was | Now |
+|---|---|---|
+| Van livery | `vehicle.rs` `Livery::for_business` match | `.livery` |
+| Runs vehicles of its own (cabs, tow, bins, trucking) | `companies.rs` `runs_fleet` list | `.fleet` (`runs_fleet` = `.fleet` or a livery) |
+| Grows a yard of vehicles, then depots | `companies.rs` `yard_trade` | `.grows_yards` |
+| A shop that grows into a chain | `companies.rs` `shop_chain` | `.chain` |
+| Least site area | `companies.rs` `min_area` match | `.min_area` |
+| A corp's specialty when grown out of it | `companies.rs` `Specialty::of_origin` match | `.specialty` |
+| Tied to its ground (never moves on a buyout) | `world/relocate.rs` `rooted` (kinds + three industries) | `.rooted` |
+| Fits a shop unit | `world/tenants.rs` `fits_shopfront` | `.shopfront` |
+| A place to eat / to go out | `leisure.rs` `EATERIES`, `NIGHTS_OUT` literal lists | `.leisure` (`LeisureGroup`); the two lists and `ALL_NIGHTS_OUT` are built from it at compile time, same order |
+| Business tax line | `tax.rs` `TaxCategory::of_business` match (+ the industry's line) | `.tax` (`TaxLine::Fixed(..)`, `Nightlife` by tier, `None`) |
+| The jetty it builds on the water | `world/shore.rs` `World::jetty_kind_for` | `.jetty` |
+
+The old functions keep their signatures as one-line reads, so no caller changed. Every value was
+checked against the old functions for every kind (a dump of all 71 kinds, before and after, identical).
+
 ### Still keyed on a kind elsewhere (on purpose)
 
 These are rules of one subsystem that happen to switch on the kind, not facts about the kind, or
-they are curves rather than values. They stay with their subsystem; most end in `_ =>` so a new
-kind gets the default. Check them when adding a kind:
+they are curves or content rather than values. They stay with their subsystem; most end in `_ =>`
+so a new kind gets the default. Check them when adding a kind:
 
-- `industry.rs` `IndustryKind::businesses` (industry sub-zones; nuisance, dirt, spill by industry);
-  `BusinessKind::dirtiness` / `spill` (chemical works override) in `business_kind.rs`.
-- `leisure.rs` `appeal`, `tourist_pull` (who likes it at what hour), `EATERIES` / `NIGHTS_OUT` lists.
-- `pressure.rs` `PressureKind::business` (which pressure opens it), `commercial.rs` `CommercialSub`
-  menus, `tax.rs` `TaxCategory::of_business`, `districts.rs` `favours`.
-- `companies.rs` (fleets, yards, min area, shop chains, specialty), `estate.rs` (expansion, site
-  cap, branches), `world/relocate.rs` `rooted`, `world/tenants.rs` `fits_shopfront`,
-  `world/stories.rs` `is_nightlife`, `world/shore.rs` `jetty_kind_for`, `world/dirt.rs`,
-  `yards.rs` (yard clutter by trade), `names.rs` `trade_words` (brand names).
-- `vehicle.rs` `Livery::for_business` (van liveries).
-- Looks: `nd_procgen/src/buildings/choose.rs` `industry_styles` and the styles' own matches,
-  `nd_app/src/audio/spots.rs`, `nd_app/src/ui/inspector/building.rs`.
-- Goods: buyers' stock caps in `waste.rs` `sell_recovered` (scrap yards 80, others 30), the
-  household shopping rules in `world/market.rs` and `bots.rs` (groceries, meals, goods).
+- `industry.rs` `IndustryKind::businesses` (which kinds an industry sub-zone grows: the zoning's
+  rule, the inverse of `BusinessKind::industry`); `BusinessKind::dirtiness` / `spill` in
+  `business_kind.rs`: the numbers are the industry's (`IndustryKind`), with one override for the
+  chemical works; they belong with the dirt model's other curves.
+- `leisure.rs` `appeal`, `tourist_pull`: curves by hour and life stage, not one value per kind.
+- `pressure.rs` `PressureKind::business` (which pressure opens which kind: the pressure's rule),
+  `commercial.rs` `CommercialSub` menus, `districts.rs` `favours` (a district look's weights).
+- `estate.rs` (expansion, site cap, branches: the estate market's rules), `world/stories.rs`
+  `is_nightlife` (by land use as much as kind), `world/dirt.rs` (who complains).
+- `names.rs` `trade_words`: naming content (the brand words), tuned with the name generator.
+- `yards.rs` (yard clutter by trade) and the looks: `nd_procgen/src/buildings/choose.rs`
+  `industry_styles` and the styles' own matches, `nd_app/src/audio/spots.rs`,
+  `nd_app/src/ui/inspector/building.rs`: drawing and sound, render side.
+- Goods: buyers' stock caps in `waste.rs` `sell_recovered` (scrap yards 80, others 30: a rule of
+  the recovered-goods trade), the household shopping rules in `world/market.rs` and `bots.rs`.
 
 ## How to add a good (round 14: building materials)
 

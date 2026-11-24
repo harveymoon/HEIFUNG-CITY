@@ -48,7 +48,7 @@ type LaneKey = (i32, i32, i32, i32, i32);
 
 fn lane_key(l: &Lane) -> LaneKey {
     let q = |v: f32| (v * 100.0).round() as i32;
-    let (a, b) = (l.points[0], *l.points.last().unwrap());
+    let (a, b) = (l.points[0], *l.points.last().expect("points[0] is there"));
     (q(a.x), q(a.y), q(b.x), q(b.y), q(l.length))
 }
 

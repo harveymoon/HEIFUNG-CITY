@@ -111,9 +111,11 @@ pub(super) fn lift_spawned(
 /// Where lots, parks, overlays and the like are laid on the ground at
 /// `p` (`lift_spawned` adds it to every vertex): under a viaduct they stay
 /// down (over the water, a bridge deck is the nearest surface).
+/// [r16-ground] On the ground as drawn (`nd_procgen::drawn_ground`), not
+/// the sim's 4 m raster, which parted from the 8 m mesh by metres on
+/// hillsides and ran a slope over the last cell of every levelled lot.
 pub(super) fn lie_height(w: &World, p: SVec2) -> f32 {
-    let g = w.ground_height(p);
-    w.surface_height_near(p, g)
+    nd_procgen::drawn_ground::lie(w, p)
 }
 
 /// Raise movers onto the ground after their poses are written.
@@ -121,7 +123,7 @@ pub(super) fn lie_height(w: &World, p: SVec2) -> f32 {
 pub(super) fn lift_movers(
     mut commands: Commands,
     sim: Res<Sim>,
-    mut surfaces: Local<Option<(u64, u64, u64)>>,
+    mut surfaces: Local<Option<(u64, u64, u64, u64)>>,
     mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>, Option<Ref<WayHeight>>), (Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>, Without<SelfLifted>)>,
 ) {
     let _t = crate::frame_stats::span("lift_movers");
@@ -134,8 +136,10 @@ pub(super) fn lift_movers(
     // last lift, on surfaces that have not changed (the built ground, the
     // landscape), would get the same lift again. Skip those, so parked
     // cars, clamps and rubble no longer dirty their transforms every frame.
-    let key = (sim.generation, w.ground.version(), w.landscape.version());
+    let key = (sim.generation, w.ground.version(), w.landscape.version(), nd_procgen::drawn_ground::serial());
     let same_surfaces = *surfaces == Some(key);
+    // [r16-ground] People, cars' riders and props on the ground as drawn.
+    let drawn = nd_procgen::drawn_ground::current(w);
     *surfaces = Some(key);
     for (e, mut tf, lifted, way) in &mut q {
         if same_surfaces && lifted.is_some() && !tf.is_changed() && way.as_ref().is_none_or(|h| !h.is_changed()) {
@@ -151,8 +155,8 @@ pub(super) fn lift_movers(
         let lift = match (way.and_then(|h| h.0), &lifted) {
             // [footbridge] On a raised way: its deck, whatever was nearest.
             (Some(h), _) => h,
-            (None, Some(l)) => w.surface_height_near(at, l.lift),
-            (None, None) => w.surface_height_near(at, w.ground_height(at)),
+            (None, Some(l)) => drawn.as_ref().map_or_else(|| w.surface_height_near(at, l.lift), |d| d.near(w, at, l.lift)),
+            (None, None) => drawn.as_ref().map_or_else(|| w.surface_height_near(at, w.ground_height(at)), |d| d.lie(w, at)),
         };
         tf.translation.y = base + lift;
         let after = tf.translation.y;

@@ -146,14 +146,14 @@ impl World {
         // nightlife and out at another (the one farthest away).
         let mut plan = None;
         'outer: for entry in pick(self, &leaves) {
-            let lane = self.lane_in_from(entry).unwrap();
+            let lane = self.lane_in_from(entry).expect("picked for a lane in");
             let len = self.traffic.net.lanes[lane as usize].length;
             let meet_s = (len * 0.5).min(40.0).max(0.5);
             let at = self.roads.node(entry).pos;
             let mut exits: Vec<NodeId> = outs.iter().copied().filter(|&n| n != entry).collect();
             exits.sort_by(|a, b| self.roads.node(*b).pos.distance(at).total_cmp(&self.roads.node(*a).pos.distance(at)).then(a.0.cmp(&b.0)));
             for exit in exits {
-                let out = self.lane_out_to(exit).unwrap();
+                let out = self.lane_out_to(exit).expect("outs have a lane out");
                 let out_s = (self.traffic.net.lanes[out as usize].length - 1.0).max(0.0);
                 if self.route_via((lane, 0.5), (via_lane, via_s), (out, out_s)).is_some() {
                     plan = Some((entry, lane, meet_s, (out, out_s)));
