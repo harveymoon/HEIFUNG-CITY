@@ -212,7 +212,7 @@ pub(super) fn sync_airlifts(
                 commands.spawn((Mesh3d(a.load.clone()), MeshMaterial3d(lm), super::offstage(), AirliftTag)).id(),
             ]
         });
-        let ground = w.surface_height_near(l.at, w.ground_height(l.at));
+        let ground = nd_procgen::drawn_ground::lie(w, l.at);
         let p = l.pose(w.clock.tick, f, ground);
         let yaw = Quat::from_rotation_y(-p.heading);
         let body = Vec3::new(p.pos.x, p.height, p.pos.y);

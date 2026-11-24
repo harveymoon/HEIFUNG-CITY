@@ -59,7 +59,8 @@ Open work: `todo.md` (sorted by area; tick items with "→ DONE [branch]: what")
   only). Move a running `heifung_city.exe` aside first (`mv` it to `heifung_city.old-HHMM.exe`), and
   delete the old copy only after the new exe exists. If rustc dies with STATUS_STACK_BUFFER_OVERRUN
   (0xc0000409) on the release link of nd_app, rebuild with `RUST_MIN_STACK=268435456` and `-j 2`.
-- `society_demo`'s 911 thresholds are borderline at a fixed seed; unrelated changes can flip it.
+- `society_demo` runs three seeds (7, 3, 10) and checks crime and 911 pooled over them (r16-ground);
+  `ND_SEEDS=0..12 ... --test society_demo -- --ignored --nocapture spread` prints the spread over more.
 
 ## Running a test instance
 - [sound] `ND_AUDIO=0` keeps a test instance silent (no sound card opened): set it for agent

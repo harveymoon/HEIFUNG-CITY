@@ -348,7 +348,8 @@ pub(super) fn sync_cars(
             let Some(car) = traffic.cars.get(id) else { continue };
             let (pos, heading) = car.pose_at(f);
             let tail = pos - SVec2::new(heading.cos(), heading.sin()) * 1.4;
-            let p = Vec3::new(tail.x, 0.05 + w.surface_height(tail), tail.y);
+            // [r16-ground] At the car's own road (under a viaduct, not its deck).
+            let p = Vec3::new(tail.x, 0.05 + w.car_height_at(car, tail), tail.y);
             let Some((_, h, pts)) = vr.trails.get_mut(&id) else { continue };
             if pts.back().is_some_and(|b| b.distance(p) < 0.35) {
                 continue;
