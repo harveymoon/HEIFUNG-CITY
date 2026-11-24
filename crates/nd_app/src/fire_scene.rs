@@ -176,9 +176,11 @@ fn hash(a: u64) -> u64 {
     x.wrapping_mul(0xBF58_476D_1CE4_E5B9)
 }
 
-/// The ground (or the deck) at `p`.
+/// The ground (or the deck) at `p`, as drawn ([r16-ground] `drawn_ground`:
+/// crews and hose lines on a hillside stood on the sim's 4 m raster, off
+/// the 8 m ground mesh between its vertices).
 fn ground_at(w: &World, p: SVec2) -> f32 {
-    w.surface_height_near(p, w.ground_height(p))
+    nd_procgen::drawn_ground::lie(w, p)
 }
 
 /// [fire-scene] How tall each building is drawn (the top of its walls and

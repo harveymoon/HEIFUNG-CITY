@@ -101,6 +101,7 @@ fn mix<const N: usize>(a: [f32; N], b: [f32; N], t: f32) -> [f32; N] {
 /// [r15-hillside] Holes binned by square of `HOLE_BUCKET` metres, so a
 /// triangle looks only at the holes near it (every hillside lot is one or
 /// more holes: thousands of them).
+#[derive(Clone, Default)]
 pub struct HoleSet {
     pub holes: Vec<Vec<Vec2>>,
     boxes: Vec<(Vec2, Vec2)>,
@@ -130,6 +131,16 @@ impl HoleSet {
 
     pub fn is_empty(&self) -> bool {
         self.holes.is_empty()
+    }
+
+    /// [r16-ground] Is `p` inside one of the holes?
+    pub fn contains(&self, p: Vec2) -> bool {
+        self.bins.get(&(bucket(p.x), bucket(p.y))).is_some_and(|v| {
+            v.iter().any(|&k| {
+                let (lo, hi) = self.boxes[k as usize];
+                p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y && nd_sim::geom::point_in_polygon(p, &self.holes[k as usize])
+            })
+        })
     }
 
     /// The holes whose box overlaps `b`, in their order.

@@ -11,7 +11,13 @@ use std::sync::OnceLock;
 
 /// The same layout as `Sim::new` + `Sim::seed_demo_district` in nd_app.
 pub fn demo_world() -> World {
-    let mut world = World::new(WorldConfig::default());
+    demo_world_seeded(WorldConfig::default().seed)
+}
+
+/// [r16-ground] The demo district grown from another seed (who moves in,
+/// their minds, the day's draws): the same streets and plan.
+pub fn demo_world_seeded(seed: u64) -> World {
+    let mut world = World::new(WorldConfig { seed, ..WorldConfig::default() });
     world.drain_events();
     nd_sim::scenarios::demo_district(&mut world);
     world

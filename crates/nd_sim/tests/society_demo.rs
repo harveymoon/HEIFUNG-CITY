@@ -18,6 +18,8 @@ mod common;
 use common::{place, place_near};
 
 struct Day8 {
+    /// The food and rent targets missed (hungry, starving, rent-stressed).
+    fails: Vec<String>,
     pop: usize,
     offenders: usize,
     offences: [u32; 5],
@@ -36,8 +38,8 @@ struct Day8 {
     response: [(usize, usize, Vec<u16>); 3],
 }
 
-fn run(services: bool) -> Day8 {
-    let mut world = common::demo_world();
+fn run(services: bool, seed: u64) -> Day8 {
+    let mut world = common::demo_world_seeded(seed);
     if services {
         place(&mut world, ServiceKind::Police, Tier::Mid, &[LandUse::Civic, LandUse::Commercial]);
         place(&mut world, ServiceKind::Dispatch, Tier::Low, &[LandUse::Civic, LandUse::Commercial]);
@@ -49,13 +51,15 @@ fn run(services: bool) -> Day8 {
         place(&mut world, ServiceKind::Health, Tier::Mid, &[LandUse::Civic, LandUse::Commercial]);
     }
     let mut minds = RuleBasedMind::default();
-    let label = if services { "with services" } else { "bare demo" };
+    let label = format!("{} seed {seed}", if services { "with services" } else { "bare demo" });
     let mut pick = 0x2545_F491_4F6C_DD1Du64;
     // A drill fire due while another fire still burns waits until it is
     // out: with one engine in town the second call measured the overlap,
     // not the response (fix/under-construction: a drill fire four minutes
     // after another left one call waiting 30 minutes for the engine).
     let mut fire_due = false;
+    // The food and rent targets missed, checked by the caller.
+    let mut fails: Vec<String> = Vec::new();
     for day in 1..=8 {
         loop {
             world.tick(&mut minds);
@@ -131,10 +135,14 @@ fn run(services: bool) -> Day8 {
             stressed * 100.0,
             world.land_value.average(),
         );
-        assert!(hungry < 0.10, "{label} day {day}: {:.1}% hungry", hungry * 100.0);
-        assert!(starving < 0.02, "{label} day {day}: {:.1}% starving", starving * 100.0);
-        if day == 8 {
-            assert!(stressed < 0.05, "{label} day 8: {:.1}% rent-stressed", stressed * 100.0);
+        if hungry >= 0.10 {
+            fails.push(format!("{label} day {day}: {:.1}% hungry", hungry * 100.0));
+        }
+        if starving >= 0.02 {
+            fails.push(format!("{label} day {day}: {:.1}% starving", starving * 100.0));
+        }
+        if day == 8 && stressed >= 0.05 {
+            fails.push(format!("{label} day 8: {:.1}% rent-stressed", stressed * 100.0));
         }
     }
     // Day 8's calls, up to half an hour before midnight (police calls
@@ -160,6 +168,7 @@ fn run(services: bool) -> Day8 {
     println!("[{label}] chases {} (tagged {}): {:?}", world.services.stats.chases_total, world.services.stats.chases_tagged_total, chases);
     let s = &world.society;
     Day8 {
+        fails,
         response,
         pop: world.citizens.len(),
         offenders: s.crime.offenders.len(),
@@ -176,59 +185,127 @@ fn run(services: bool) -> Day8 {
     }
 }
 
+/// [r16-ground] The seeds the demo is grown from (the default first). Crime
+/// at one seed is a handful of offenders and offences, and unrelated
+/// changes reshuffled them (offenders 9-12, offences 4-6 at the default
+/// seed in round 14): `spread` over seeds 0-11 measured bare offenders
+/// 5-19 (mean 11.6) against 0-9 served (4.0), offences 3-16 (9.1) against
+/// 0-4 (1.75); served had fewer offences at all 12 seeds, fewer offenders
+/// at 11 (seed 1: 9 vs 5, with offences 1 vs 3). Pooled over any three
+/// seeds served/bare (offenders + offences) ran 0.06-0.66 (220 triples,
+/// median 0.28); with police doing nothing it would sit round 1.
+const SEEDS: [u64; 3] = [7, 3, 10];
+
+/// Pooled over [`SEEDS`], the served town's offenders and offences may be
+/// at most this share of the bare town's (all 220 triples measured pass).
+const CRIME_SHARE_MAX: f32 = 0.75;
+
 #[test]
 fn the_demo_with_and_without_police_jail_and_a_trash_depot() {
-    let bare = run(false);
-    let served = run(true);
-    for (k, d) in [("bare", &bare), ("served", &served)] {
-        println!(
-            "{k}: pop {} offenders {} offences {} ({}) arrests {} reoffend {:.0}% homeless {} camps {} rvs {} overflowing {} city {:.0} kg private {:.0} kg (made {:.0} kg/day)",
-            d.pop,
-            d.offenders,
-            d.offences.iter().sum::<u32>(),
-            Offence::ALL.iter().map(|o| format!("{} {}", o.key(), d.offences[o.index()])).collect::<Vec<_>>().join(", "),
-            d.arrests,
-            d.reoffend * 100.0,
-            d.homeless,
-            d.camps,
-            d.rvs,
-            d.overflowing,
-            d.collected_city,
-            d.collected_private,
-            d.produced
+    assert_eq!(SEEDS[0], nd_sim::WorldConfig::default().seed);
+    // Each seed's two towns on threads of their own (the runs do not share
+    // anything), so three seeds cost about what one did.
+    let runs: Vec<(Day8, Day8)> = std::thread::scope(|sc| {
+        let hs: Vec<_> = SEEDS.iter().map(|&seed| (sc.spawn(move || run(false, seed)), sc.spawn(move || run(true, seed)))).collect();
+        hs.into_iter().map(|(b, s)| (b.join().unwrap(), s.join().unwrap())).collect()
+    });
+    let sum = |d: &Day8| d.offences.iter().sum::<u32>();
+    for (seed, (bare, served)) in SEEDS.iter().zip(&runs) {
+        for (k, d) in [("bare", bare), ("served", served)] {
+            println!(
+                "seed {seed} {k}: pop {} offenders {} offences {} ({}) arrests {} reoffend {:.0}% homeless {} camps {} rvs {} overflowing {} city {:.0} kg private {:.0} kg (made {:.0} kg/day)",
+                d.pop,
+                d.offenders,
+                sum(d),
+                Offence::ALL.iter().map(|o| format!("{} {}", o.key(), d.offences[o.index()])).collect::<Vec<_>>().join(", "),
+                d.arrests,
+                d.reoffend * 100.0,
+                d.homeless,
+                d.camps,
+                d.rvs,
+                d.overflowing,
+                d.collected_city,
+                d.collected_private,
+                d.produced
+            );
+        }
+        assert!(bare.fails.is_empty() && served.fails.is_empty(), "seed {seed}: {:?} {:?}", bare.fails, served.fails);
+        assert!(bare.pop > 1000 && served.pop > 1000, "seed {seed}: both grow into a town");
+        assert_eq!(bare.collected_city, 0.0, "seed {seed}: no depot, no city trucks");
+        assert!(served.collected_city > 0.0, "seed {seed}: the depot's trucks collect");
+        assert!(served.overflowing < bare.overflowing, "seed {seed}: fewer overflowing bins with a depot ({} vs {})", served.overflowing, bare.overflowing);
+        // At one seed, by either measure: fewer offences committed or
+        // fewer offenders about (both worse at once is a regression).
+        assert!(
+            served.offenders < bare.offenders || sum(served) < sum(bare),
+            "seed {seed}: police and a jail hold crime back (offenders {} vs {}, offences {} vs {})",
+            served.offenders,
+            bare.offenders,
+            sum(served),
+            sum(bare)
         );
     }
-    assert!(bare.pop > 1000 && served.pop > 1000, "both grow into a town");
-    assert!(bare.offenders > 0 && bare.offences.iter().sum::<u32>() > 0, "crime shows up in the bare demo");
-    assert_eq!(bare.collected_city, 0.0, "no depot, no city trucks");
-    assert!(served.collected_city > 0.0, "the depot's trucks collect");
-    assert!(served.overflowing < bare.overflowing, "fewer overflowing bins with a depot ({} vs {})", served.overflowing, bare.overflowing);
-    // [r14-photofix] By either measure: fewer offences committed or fewer
-    // offenders about. Each is a handful at this one seed (offenders 9-12,
-    // offences 4-6), and the riders' following gap alone turned offenders
-    // 9 vs 9 into 12 vs 9 with fewer offences (4 vs 6) and 3 arrests; both
-    // worse at once is still a regression. Round 16 (i) makes the demo
-    // robust (several seeds or a band).
-    let (so, bo) = (served.offences.iter().sum::<u32>(), bare.offences.iter().sum::<u32>());
-    assert!(
-        served.offenders < bare.offenders || so < bo,
-        "police and a jail hold crime back (offenders {} vs {}, offences {} vs {})",
-        served.offenders,
-        bare.offenders,
-        so,
-        bo
-    );
-    // With the services placed, 911 works on day 8: at least 90 % of calls
-    // answered within 30 minutes and a median response of 15 at most, per kind.
+    // Over the seeds: crime shows up in the bare towns, and police and a
+    // jail cut it well down (see `SEEDS` for the spread this rests on).
+    let bare: u32 = runs.iter().map(|(b, _)| b.offenders as u32 + sum(b)).sum();
+    let served: u32 = runs.iter().map(|(_, s)| s.offenders as u32 + sum(s)).sum();
+    println!("offenders + offences over seeds {SEEDS:?}: bare {bare} served {served} ({:.2})", served as f32 / bare.max(1) as f32);
+    assert!(runs.iter().all(|(b, _)| b.offenders > 0 && sum(b) > 0), "crime shows up in every bare demo");
+    assert!(served as f32 <= CRIME_SHARE_MAX * bare as f32, "police and a jail hold crime back over the seeds: {served} vs {bare} offenders + offences");
+    // With the services placed, 911 works on day 8, the calls of all seeds
+    // together: at least 90 % answered within 30 minutes and a median
+    // response of 15 at most, per kind (single seeds ran medians 8-16).
     for kind in IncidentKind::ALL {
-        let (calls, quick, mins) = &served.response[kind.index()];
-        let (median, p90, _) = response_summary(mins, 30).unwrap_or((0, 0, 0.0));
+        let mut mins: Vec<u16> = Vec::new();
+        let (mut calls, mut quick) = (0, 0);
+        for (seed, (_, served)) in SEEDS.iter().zip(&runs) {
+            let (c, q, m) = &served.response[kind.index()];
+            assert!(*c >= 3, "seed {seed} {}: only {c} calls on day 8", kind.label());
+            calls += c;
+            quick += q;
+            mins.extend(m);
+        }
+        let (median, p90, _) = response_summary(&mins, 30).unwrap_or((0, 0, 0.0));
         println!("served {}: {calls} calls, {} answered, {quick} within 30 min, median {median} p90 {p90} min", kind.label(), mins.len());
-        assert!(*calls >= 3, "{}: only {calls} calls on day 8", kind.label());
-        assert!(*quick as f32 >= 0.9 * *calls as f32, "{}: only {quick} of {calls} calls answered within 30 minutes", kind.label());
-        // At most 15 (was under 15): fix/under-construction's city grows a
-        // little differently and two of eight fires fall in the far
-        // south-east corner, 15 and 20 minutes from the central station.
+        assert!(quick as f32 >= 0.9 * calls as f32, "{}: only {quick} of {calls} calls answered within 30 minutes", kind.label());
         assert!(median <= 15, "{}: median response {median} min", kind.label());
+    }
+}
+
+/// [r16-ground] The spread of the crime and 911 figures over seeds, for
+/// setting the checks above: `ND_SEEDS=0..12 cargo test --profile fast -p
+/// nd_sim --test society_demo -- --ignored --nocapture spread`.
+#[test]
+#[ignore]
+fn spread() {
+    let seeds = std::env::var("ND_SEEDS").unwrap_or_else(|_| "0..8".into());
+    let (a, b) = seeds.split_once("..").expect("ND_SEEDS=a..b");
+    for seed in a.parse::<u64>().unwrap()..b.parse::<u64>().unwrap() {
+        let bare = run(false, seed);
+        let served = run(true, seed);
+        let sum = |d: &Day8| d.offences.iter().sum::<u32>();
+        let r: Vec<String> = IncidentKind::ALL
+            .iter()
+            .map(|k| {
+                let (calls, quick, mins) = &served.response[k.index()];
+                let (median, _, _) = response_summary(mins, 30).unwrap_or((0, 0, 0.0));
+                format!("{} {calls}/{quick}/{median}", k.label())
+            })
+            .collect();
+        println!(
+            "SPREAD seed {seed}: pop {}/{} offenders {} vs {} offences {} vs {} arrests {} overflowing {} vs {} | {} | fails {:?} {:?}",
+            bare.pop,
+            served.pop,
+            bare.offenders,
+            served.offenders,
+            sum(&bare),
+            sum(&served),
+            served.arrests,
+            bare.overflowing,
+            served.overflowing,
+            r.join(", "),
+            bare.fails,
+            served.fails
+        );
     }
 }

@@ -2261,6 +2261,19 @@ Citizens are rendered from their simulated positions every frame.
   lowered to the grade. Cars ride the height of the way they are on (`car_height`), movers keep to
   the surface nearest the height they were at (`surface_height_near`), so a walker under a
   viaduct stays under it. Elevated roads pass roundabouts by.
+- **One ground height** [r16-ground]: the sim decides on its own ground (`World::ground_height`: the 4 m
+  raster, bilinear; `surface_height`/`surface_height_near` add decks and water; `car_height_at` and
+  `road_height` the ways). The renderer draws the ground in 8 m cells straight between vertices, held
+  under streets and cut out under levelled lots, benches, pits and covered shore, so on hillsides the
+  two part by metres. Everything set on the ground in the renderer (movers in `lift_movers`, laid
+  meshes in `lift_spawned`/`lie_height`, fire crews, camps and piles, steam vents, foot wear, grime,
+  heat maps, undercroft bays, the airlift's pad) reads the drawn ground instead:
+  `nd_procgen::drawn_ground` (the mesh's own triangle; a levelled lot's floor edge to edge; the sim's
+  ground on streets' carriageways and pavements and in other holes, whose meshes follow it). The game
+  installs the one its tiles draw; any other world (headless, previews) gets the sim's answer.
+  `ND_SIM_GROUND=1` puts things back on the sim's ground to compare. Cars stay on `car_height_at`
+  (their road). `terrain_height` is the flat map's natural land, and `World::ground_at` (industry) is
+  the soil, not a height. Probe: `nd_procgen/examples/ground_height_probe.rs` (`ND_PROBE_OLD=1`).
 - **Interchanges** [interchange]: slip roads (`Segment::ramp`) are grade-separated from what
   merely crosses them, like the highway (`roads::WayClass`, `roads::separated`): a street or the
   railway crossing a ramp passes under it (the ramp's vertex over it is lifted), so a street drawn

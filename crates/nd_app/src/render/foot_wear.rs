@@ -318,7 +318,7 @@ fn draped_sheet(w: &World, key: (i32, i32), lift: f32) -> MeshData {
         for i in 0..=steps {
             let (u, v) = (i as f32 / steps as f32, j as f32 / steps as f32);
             let p = o + SVec2::new(u, v) * CHUNK_M;
-            m.positions.push([p.x, w.ground_height(p) + lift, p.y]);
+            m.positions.push([p.x, nd_procgen::drawn_ground::height(w, p) + lift, p.y]);
             m.normals.push([0.0, 1.0, 0.0]);
             m.colors.push([1.0, 1.0, 1.0, 1.0]);
             m.uvs.push([u, v]);
@@ -617,7 +617,7 @@ pub(super) fn sync_foot_wear_layer(
         }
         let t = |v: f32| ((1.0 + v).ln() / (1.0 + PAVE_FULL).ln()).clamp(0.0, 1.0);
         let flat = w.landscape.is_flat();
-        let height = |p: SVec2| if flat { 0.0 } else { w.ground_height(p) };
+        let height = |p: SVec2| if flat { 0.0 } else { nd_procgen::drawn_ground::height(&w, p) };
         m = g.mesh_by(
             0.45,
             |k| {
