@@ -472,7 +472,7 @@ impl HybridMind {
             home: ctx.home_name.map(str::to_string),
             work: ctx.work_name.map(str::to_string),
             activity: ctx.citizen.activity.label().to_string(),
-            recent_memories: ctx.citizen.memories.iter().rev().take(6).map(|m| m.text.clone()).collect(),
+            recent_memories: ctx.citizen.memories.iter().rev().take(6).map(|m| m.text.to_string()).collect(),
             population: ctx.population,
             options: ["Stay", "GoHome", "GoWork", "Shop(Groceries)", "Shop(BakedGoods)", "Shop(Goods)", "Visit(Entertainment)", "Visit(Park)", "Explore(Entertainment)", "Wander"]
                 .iter()

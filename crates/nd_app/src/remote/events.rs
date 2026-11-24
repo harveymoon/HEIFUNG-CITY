@@ -131,7 +131,7 @@ pub(super) fn events(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
 pub(super) fn thoughts(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let limit = opt_u64(cmd, "limit")?.unwrap_or(50) as usize;
     let w = &ctx.sim.world;
-    let mut rows: Vec<(u64, Value)> = w.citizens.iter().flat_map(|(id, c)| c.memories.iter().map(move |m| (m.tick, json!({ "citizen": key_str(id), "name": c.name, "tick": m.tick, "text": m.text })))).collect();
+    let mut rows: Vec<(u64, Value)> = w.citizens.iter().flat_map(|(id, c)| c.memories.iter().map(move |m| (m.tick, json!({ "citizen": key_str(id), "name": c.name, "tick": m.tick, "text": &*m.text })))).collect();
     rows.sort_by(|a, b| b.0.cmp(&a.0));
     let memories: Vec<Value> = rows.into_iter().take(limit).map(|(_, v)| v).collect();
     let thoughts: Vec<Value> = w.citizens.iter().filter(|(_, c)| !c.thought.is_empty()).take(limit).map(|(id, c)| json!({ "citizen": key_str(id), "name": c.name, "thought": c.thought })).collect();

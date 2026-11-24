@@ -415,7 +415,7 @@ pub fn citizen_detail(w: &World, id: CitizenId, c: &Citizen, favourite: bool) ->
             "last_trip": { "mode": c.commute.last_mode.map(|m| m.key()), "minutes": c.commute.last_minutes, "pain": round(c.commute.last_pain) },
         },
         "thought": c.thought, "spotlight": c.spotlight, "favourite": favourite,
-        "memories": c.memories.iter().rev().map(|m| { let mut t = tick_time(m.tick); t["text"] = json!(m.text); t }).collect::<Vec<_>>(),
+        "memories": c.memories.iter().rev().map(|m| { let mut t = tick_time(m.tick); t["text"] = json!(&*m.text); t }).collect::<Vec<_>>(),
     });
     // [tools] On a raised walkway (a footbridge), how high (outside the
     // literal above: it is at the json! macro's recursion limit).

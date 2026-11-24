@@ -375,7 +375,19 @@ pub struct ToCar {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Memory {
     pub tick: u64,
-    pub text: String,
+    /// [r16-speed] Shared, not owned: the sim thread copies the whole city
+    /// after every batch, and 340,000 memory strings were a third of that
+    /// copy on a 17,000-person city. Saved as the plain string it was.
+    #[serde(serialize_with = "ser_text", deserialize_with = "de_text")]
+    pub text: std::sync::Arc<str>,
+}
+
+fn ser_text<S: serde::Serializer>(t: &std::sync::Arc<str>, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(t)
+}
+
+fn de_text<'de, D: serde::Deserializer<'de>>(d: D) -> Result<std::sync::Arc<str>, D::Error> {
+    String::deserialize(d).map(std::sync::Arc::from)
 }
 
 pub const MAX_MEMORIES: usize = 24;
@@ -671,7 +683,7 @@ impl Citizen {
     }
 
     pub fn remember(&mut self, tick: u64, text: impl Into<String>) {
-        self.memories.push(Memory { tick, text: text.into() });
+        self.memories.push(Memory { tick, text: std::sync::Arc::from(text.into()) });
         if self.memories.len() > MAX_MEMORIES {
             self.memories.remove(0);
         }

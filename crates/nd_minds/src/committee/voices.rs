@@ -162,10 +162,10 @@ pub fn diary_request(w: &World, id: CitizenId) -> Option<TurnRequest> {
     let today_from = day * 1440;
     let name = |x: CitizenId| w.citizens.get(x).map_or_else(|| "someone".to_string(), |c| c.name.clone());
     let entry = |tick: u64, text: String, key: bool| (tick, DiaryEntry { today: tick >= today_from, time: hhmm(tick), text, key });
-    let mut dated: Vec<(u64, DiaryEntry)> = c.memories.iter().filter(|m| m.tick >= since).map(|m| entry(m.tick, m.text.clone(), is_key(&m.text))).collect();
+    let mut dated: Vec<(u64, DiaryEntry)> = c.memories.iter().filter(|m| m.tick >= since).map(|m| entry(m.tick, m.text.to_string(), is_key(&m.text))).collect();
     if dated.is_empty() {
         // Nothing lately: the last few things they remember.
-        dated = c.memories.iter().rev().take(3).rev().map(|m| entry(m.tick, m.text.clone(), is_key(&m.text))).collect();
+        dated = c.memories.iter().rev().take(3).rev().map(|m| entry(m.tick, m.text.to_string(), is_key(&m.text))).collect();
     }
     if let Some(circle) = w.social.circles.get(&id) {
         for n in circle.talks.iter().filter(|n| n.tick >= since).rev().take(4) {

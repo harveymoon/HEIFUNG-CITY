@@ -95,6 +95,7 @@ pub use travel_history::{mode_words, TripView};
 #[cfg(test)]
 mod insight_tests;
 mod memory;
+mod copy;
 mod develop;
 mod districts;
 // [stories] District stories' policies in the sim.

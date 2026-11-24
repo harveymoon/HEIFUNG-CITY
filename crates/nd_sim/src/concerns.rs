@@ -394,7 +394,7 @@ impl Concerns {
     /// As `heard`, about a building at a known place.
     pub fn heard_at(&mut self, cid: CitizenId, c: &Citizen, concern: Concern, severity: f32, at: Option<(BuildingId, Vec2)>) -> bool {
         let Some(m) = c.memories.last() else { return false };
-        let (tick, text) = (m.tick, m.text.clone());
+        let (tick, text) = (m.tick, m.text.to_string());
         self.note(complaint(tick, cid, c, concern, severity, text, at))
     }
 

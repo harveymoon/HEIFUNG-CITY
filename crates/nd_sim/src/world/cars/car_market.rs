@@ -114,6 +114,7 @@ impl World {
     /// Paid from the buyer's purse: the dealer's share to the dealer, the
     /// rest to the maker out of town.
     pub(in crate::world) fn buy_car(&mut self, id: CitizenId, model: VehicleModel, price: f32) -> Option<f32> {
+        crate::prof_scope!("buy_car");
         let c = self.citizens.get(id)?;
         if c.car.is_some() {
             return None;
@@ -168,7 +169,7 @@ impl World {
         }
         let lot = self.building_lot(home)?;
         let (ct_seg, ct_pt) = lot.car_segment.map(|s| (s, lot.car_point))?;
-        let (route, s0, s1) = self.route_from_edge(ct_seg, ct_pt)?;
+        let (route, s0, s1) = crate::prof!("bc_route_from_edge", self.route_from_edge(ct_seg, ct_pt))?;
         let color = self.rng.random_range(0..8u8);
         let car = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, color);
         let vid = self.new_car(id, model, CarPlace::Driving(car), CarEvent::BoughtOutOfTown);

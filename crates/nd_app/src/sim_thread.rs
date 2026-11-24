@@ -552,7 +552,7 @@ impl Worker {
                         let _ = self.dropper.send(Garbage::Own(old));
                     }
                     phase_on(2);
-                    let w = Box::new(nd_sim::versioned::exact_clone(|| (*base).clone()));
+                    let w = Box::new(base.exact_copy());
                     phase_off(2);
                     drop(base);
                     self.state = Some((w, minds, epoch));
@@ -606,7 +606,7 @@ impl Worker {
         let events = w.drain_events();
         let c = Instant::now();
         phase_on(2);
-        let copy = Arc::new(nd_sim::versioned::exact_clone(|| (**w).clone()));
+        let copy = Arc::new(w.exact_copy());
         phase_off(2);
         let Some(minds) = minds.try_clone() else { return FromWorker::Aborted { epoch } };
         let copy_ms = c.elapsed().as_secs_f32() * 1000.0;

@@ -156,7 +156,7 @@ fn main() {
             let mut rows: Vec<_> = table.into_iter().collect();
             rows.sort_by(|a, b| b.1.total.total_cmp(&a.1.total));
             println!("{:<26} {:>8} {:>10} {:>10} {:>9}", "section", "calls", "total ms", "ms/tick", "max ms");
-            for (name, e) in rows.iter().take(70) {
+            for (name, e) in rows.iter().take(250) {
                 println!("{:<26} {:>8} {:>10.1} {:>10.3} {:>9.2}", name, e.calls, e.total * 1000.0, e.total * 1000.0 / ticks as f64, e.max * 1000.0);
             }
             // [r6-perf] The regression guard: `ND_GUARD=1` checks the run

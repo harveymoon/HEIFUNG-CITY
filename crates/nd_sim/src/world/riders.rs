@@ -124,11 +124,25 @@ impl World {
         let mut hits: Vec<(f32, f32, Vec<Vec2>)> = Vec::new();
         // [r5-fixes] The point on the leg ridden `p`..`q` abreast of `x`.
         let abreast = |x: Vec2, p: Vec2, q: Vec2| crate::geom::project_on_segment(x, p, q).1;
+        // [r16-speed] The ride's box, a little wider than the 3 m a leg
+        // must pass the crossing within: a bridge outside it cannot be hit
+        // (skipping it changes nothing). Every rider checked every bridge
+        // against every leg whenever the walk graph changed: 120 ms in
+        // one tick on Harvey's 17,000-person city.
+        let (mut lo, mut hi) = (path[0], path[0]);
+        for p in path.iter() {
+            lo = lo.min(*p);
+            hi = hi.max(*p);
+        }
+        let (lo, hi) = (lo - Vec2::splat(3.5), hi + Vec2::splat(3.5));
         for f in &self.walk.footbridges {
+            let Some(c) = self.walk.crossings.get(f.crossing as usize) else { continue };
+            if c.mid.x < lo.x || c.mid.y < lo.y || c.mid.x > hi.x || c.mid.y > hi.y {
+                continue;
+            }
             if path.iter().any(|p| f.top.contains(p)) {
                 continue;
             }
-            let Some(c) = self.walk.crossings.get(f.crossing as usize) else { continue };
             if !c.closed || self.roads.try_segment(c.segment).is_none() {
                 continue;
             }
@@ -579,7 +593,7 @@ impl World {
             if !self.walk.footbridges.is_empty() && *idx < path.len() {
                 let mut rest: Vec<Vec2> = std::iter::once(pos).chain(path[*idx..].iter().copied()).collect();
                 let n = rest.len();
-                self.bike_over_footbridges(&mut rest);
+                crate::prof!("rider_footbridges", self.bike_over_footbridges(&mut rest));
                 if rest.len() != n {
                     path.truncate(*idx);
                     path.extend_from_slice(&rest[1..]);
