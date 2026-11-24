@@ -25,8 +25,15 @@ pub fn retaining_walls(world: &World, palette: &Palette) -> (MeshData, MeshData)
     let ground = rgba(mul(palette.ground, 0.9));
     let mut capped: Vec<nd_sim::LotId> = Vec::new();
     let dark = rgba(mul(palette.concrete(0), 0.35));
+    // [r15-hillside] The ground as the mesh draws it in front of each wall:
+    // the face runs down to it (or the wall up to it), so no gap opens
+    // under a wall's straight foot where the coarse cells dip, and no hill
+    // stands over a wall's top (the "saw-tooth skirts" under ParkHaus 8).
+    let probe = crate::lot_ground::TerrainProbe::new(world);
     for r in &world.ground.retaining {
         let (a, b) = (r.a, r.b);
+        let drawn: Vec<f32> = probe.breaks(a, b).into_iter().map(|t| probe.height(a.lerp(b, t))).collect();
+        let (g_lo, g_hi) = drawn.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &g| (lo.min(g), hi.max(g)));
         let v = |p: Vec2, y: f32| glam::Vec3::new(p.x, y, p.y);
         if r.holds_back {
             // [r4-hillside] The hill held back above a terrace cut into the
@@ -34,7 +41,11 @@ pub fn retaining_walls(world: &World, palette: &Palette) -> (MeshData, MeshData)
             // hill behind, a coping on top and buttresses every 4 m.
             let into = glam::Vec3::new(r.inward.x, 0.0, r.inward.y);
             let (ba, bb) = (a - r.inward * THICK, b - r.inward * THICK);
-            let (ta, tb) = (r.foot_a + COPING, r.foot_b + COPING);
+            // A level top (the highest of its ends and the ground behind it):
+            // a wall's top running from end to end of each short edge piece
+            // rose and fell in spikes along a terrace's back.
+            let level = r.foot_a.max(r.foot_b).max(g_hi) + COPING;
+            let (ta, tb) = (level, level);
             let base = r.top - FOOTING;
             walls.quad_facing([v(a, base), v(b, base), v(b, tb), v(a, ta)], into, concrete);
             walls.quad_facing([v(a, ta), v(b, tb), v(bb, tb), v(ba, ta)], glam::Vec3::Y, concrete);
@@ -58,7 +69,7 @@ pub fn retaining_walls(world: &World, palette: &Palette) -> (MeshData, MeshData)
         }
         let (ia, ib) = (a + r.inward * THICK, b + r.inward * THICK);
         let top = r.top + COPING;
-        let (fa, fb) = (r.foot_a.min(r.top) - FOOTING, r.foot_b.min(r.top) - FOOTING);
+        let (fa, fb) = ((r.foot_a.min(r.top) - FOOTING).min(g_lo - FOOTING), (r.foot_b.min(r.top) - FOOTING).min(g_lo - FOOTING));
         let out = glam::Vec3::new(-r.inward.x, 0.0, -r.inward.y);
         // The face to the street, the coping, the lip above the pad behind.
         walls.quad_facing([v(a, fa), v(b, fb), v(b, top), v(a, top)], out, concrete);
