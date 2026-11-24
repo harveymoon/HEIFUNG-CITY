@@ -17,6 +17,7 @@ Where to look. One line each; newest facts win over older notes.
 - `STYLE_REFERENCE.md`: the building style guide drawn from Harvey's inspiration renders (Hong Kong and cyberpunk families).
 - `playtest/photo_report_<date>.md`: the cleanup round's photographer report (broken / wrong / unrealistic / polish).
   - `playtest/photo_report_2026-11-20.md` (round 12, 17 findings, all worked in round 15) and `playtest/photo_report_2026-11-22.md` (round 13, 12 findings, all worked in round 14).
+  - `playtest/photo_report_2026-11-24.md` (round 16, 14 findings for round 17; the tour PDF and the beautiful shots are in `O:/projects/Heifung_District/shots/r16-photographer/`).
 - `playtest/leftovers_sweep_<date>.md`: the cleanup round's sweep of agents' LEFT notes and the shallow-systems audit (CLOSED / FIXED / FILE / DROP per note). Round 16's sweep is the "Round 16 sweep" section of `todo.md` itself.
 - `playtest/trip_review_2026-11-21.md`: the trip review (following people and bikes; its open items are in `todo.md`).
 - `playtest/flags_2026-10-15.md`: Harvey's flags K1-K52, still referenced by the open "J. Flags" section of `todo.md`.
