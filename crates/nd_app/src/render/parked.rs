@@ -61,9 +61,9 @@ pub(super) fn sync_parked_cars(mut commands: Commands, sim: Res<Sim>, assets: Re
             }
         }
         let v = vr.variant(&mut meshes, &car.model, &assets.palette);
-        let finish = vr.finish_of(car.model.class);
         let pose = Transform::from_translation(Vec3::new(spot.pos.x, 0.05, spot.pos.y)).with_rotation(Quat::from_rotation_y(-spot.heading));
-        let e = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, ParkedTag, Grounded)).id();
+        // [r17-cars] Near and far models in the car paint.
+        let e = v.spawn_body(&mut commands, vr.paint(), (pose, NotShadowCaster, ParkedTag, Grounded));
         // [boot] An orange clamp on the front wheel on the street side.
         let clamp = spot.booted.then(|| {
             let (mesh, mat) = pr.clamp.get_or_insert_with(|| (meshes.add(clamp_mesh()), materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.45, 0.02), emissive: LinearRgba::rgb(0.9, 0.3, 0.0), perceptual_roughness: 0.5, ..default() }))).clone();

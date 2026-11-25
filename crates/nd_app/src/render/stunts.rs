@@ -257,7 +257,7 @@ pub(super) fn sync_stunts(
         }
         let entry = st.loads.entry(id).or_insert_with(|| {
             let v = vr.variant(&mut meshes, &model, &game.palette);
-            let e = commands.spawn((Mesh3d(v.body), MeshMaterial3d(vr.finish_of(model.class)), Transform::IDENTITY, StuntTag)).id();
+            let e = v.spawn_body(&mut commands, vr.paint(), (Transform::IDENTITY, StuntTag));
             (e, model, hitch - dir * wheelbase)
         });
         // Trail the rear axle after the hitch (reset after a jump).
