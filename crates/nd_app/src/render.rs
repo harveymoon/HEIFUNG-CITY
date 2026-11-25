@@ -535,6 +535,8 @@ impl Plugin for RenderPlugin {
         app.init_resource::<yards::YardRender>();
         app.init_resource::<climate::SceneClock>().add_systems(Update, climate::tick_scene_clock.in_set(SimSet::Input));
         app.add_systems(Update, (climate::sync_precipitation, climate::sync_steam).in_set(SimSet::Sync).after(sync_landscape));
+        // [r17-fixes] Rain and snow fade near the eye (photo F12).
+        app.add_plugins(MaterialPlugin::<climate::PrecipMaterial>::default()).add_systems(Startup, climate::add_precip_shader);
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
         app.add_systems(Update, water_look::sync_water_look.in_set(SimSet::Sync).after(update_daylight));
         // [sweep-visual] The sun's shadow cascades reach as far as the

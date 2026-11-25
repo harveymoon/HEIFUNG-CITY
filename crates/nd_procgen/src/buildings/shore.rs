@@ -517,8 +517,8 @@ pub fn beach_bar(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, _look: Option<Sh
                 torch(g, f, p, 0.3);
             }
         }
-        // Surfboards in a rack by the side.
-        for i in 0..5 {
+        // Surfboards in a rack by the side (not in a cold climate).
+        for i in 0..if cold_climate(c) { 0 } else { 5 } {
             let p = Vec2::new(roof.u1 + 1.0, r.v0 + i as f32 * 0.5);
             if on_lot(c, p, 0.3) {
                 f.bx_yaw(g, Paint, p.x, 1.1, p.y, Vec3::new(0.55, 2.1, 0.08), BRIGHT[(i + 2) % BRIGHT.len()], FRAC_PI_2);
@@ -526,10 +526,62 @@ pub fn beach_bar(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, _look: Option<Sh
         }
     }
     let sand = R::new(area.u0 + 0.5, area.u1 - 0.5, mid.y + sd * 0.5 + 6.0, area.v1);
+    if cold_climate(c) {
+        // [r17-fixes] (photo 2026-11-24 F6) In a cold climate (Arctic,
+        // Volcanic) no parasols and palms in the snow: fire pits with
+        // benches round them on the sand, patio heaters, the climate's own
+        // trees.
+        fire_pits(g, c, &sand);
+        for _ in 0..2 {
+            if let Some(p) = c.random_inside(rng, 1.5) {
+                if on_lot(c, p, 3.0) {
+                    tree_in(g, f, pal, p, rng.random_range(4.0..6.0), 2.2, pal.foliage);
+                }
+            }
+        }
+        return;
+    }
     umbrella_rows(g, c, rng, &sand, 0.05, 8);
     for _ in 0..2 {
         if let Some(p) = c.random_inside(rng, 1.5) {
             palm(g, c, p, rng.random_range(5.0..8.0));
+        }
+    }
+}
+
+/// [r17-fixes] A cold climate's palette (conifers or moss and birch):
+/// leisure on the shore keeps warm instead of lying in the sun.
+fn cold_climate(c: &Ctx) -> bool {
+    matches!(c.palette.flora, crate::climate::Flora::Conifers | crate::climate::Flora::Moss)
+}
+
+/// [r17-fixes] Fire pits on the sand, each a stone ring with embers and
+/// logs round it to sit on, and a patio heater (a pole under a glowing
+/// hood) between them: a cold beach bar's terrace.
+fn fire_pits(g: &mut Geometry, c: &Ctx, sand: &R) {
+    let f = &c.frame;
+    let pal = c.palette;
+    if sand.w() < 4.0 || sand.d() < 4.0 {
+        return;
+    }
+    let n = ((sand.w() / 7.0).floor() as i32).clamp(1, 3);
+    for k in 0..n {
+        let p = Vec2::new(sand.u0 + (k as f32 + 0.5) * sand.w() / n as f32, sand.v0 + sand.d().min(8.0) * 0.5);
+        if !on_lot(c, p, 2.2) {
+            continue;
+        }
+        g.part(Concrete).cylinder(f.to_world(p.x, p.y), 0.7, 0.7, 0.0, 0.35, 10, rgba(mul(pal.concrete(0), 0.55)));
+        g.part(Glow).cylinder_capped(f.to_world(p.x, p.y), 0.5, 0.45, 0.3, 0.4, 10, false, true, rgba(mul(WARM, 0.9)));
+        for a in 0..4 {
+            let ang = a as f32 * FRAC_PI_2 + 0.4;
+            let q = p + Vec2::from_angle(ang) * 1.7;
+            f.bx_yaw(g, Wood, q.x, 0.22, q.y, Vec3::new(1.3, 0.4, 0.4), mul(pal.wood, 0.7), ang + FRAC_PI_2);
+        }
+        let h = p + Vec2::new(2.6, 0.0);
+        if k + 1 < n && on_lot(c, h, 0.6) {
+            f.bx(g, Metal, h.x, 1.1, h.y, Vec3::new(0.1, 2.2, 0.1), mul(pal.steel, 0.7));
+            g.part(Metal).cylinder(f.to_world(h.x, h.y), 0.12, 0.6, 2.2, 2.45, 10, rgba(mul(pal.steel, 0.8)));
+            g.part(Glow).cylinder_capped(f.to_world(h.x, h.y), 0.3, 0.3, 1.95, 2.2, 8, true, false, rgba(mul(WARM, 0.7)));
         }
     }
 }

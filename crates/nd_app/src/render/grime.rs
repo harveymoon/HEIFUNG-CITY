@@ -197,7 +197,10 @@ pub(super) fn sync_grime(
     // at night.
     let t = if lighting.follow_clock { w.clock.day_fraction() } else { (lighting.hour / 24.0).rem_euclid(1.0) };
     let elev = ((t - 0.25) * std::f32::consts::TAU).sin();
-    let light = 0.16 + 0.84 * smoothstep(-0.12, 0.3, elev);
+    // [r17-fixes] (photo 2026-11-24 F7) Lit through dusk like the coal
+    // smoke (`haze::smoke_light`): soot shaded dark against the evening sky
+    // read as black tears on the horizon.
+    let light = super::haze::smoke_light(elev);
     let light_key = (light * 64.0).round() as i32;
     if state.light_key != Some(light_key) {
         state.light_key = Some(light_key);
@@ -205,7 +208,7 @@ pub(super) fn sync_grime(
             let (rgb, top, _) = vent_look(KINDS[i / ALPHA_STEPS]);
             let a = top * ((i % ALPHA_STEPS) + 1) as f32 / ALPHA_STEPS as f32;
             if let Some(mut m) = materials.get_mut(h) {
-                m.base_color = Color::linear_rgba(rgb[0] * light, rgb[1] * light * 0.97, rgb[2] * light * 0.92, a);
+                m.base_color = Color::linear_rgba(rgb[0] * light, rgb[1] * light * 0.97, rgb[2] * light * 0.92, a * super::haze::smoke_alpha(light));
             }
         }
     }

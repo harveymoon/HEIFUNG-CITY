@@ -253,9 +253,9 @@ pub fn water_edges(world: &World, palette: &Palette, g: &mut Geometry) {
 }
 
 pub fn water_edges_with(world: &World, palette: &Palette, probe: &TerrainProbe, cut: &[ShorePiece], g: &mut Geometry) {
-    let _ = world;
     let stone = mix(palette.stone, palette.concrete(0), 0.35);
     let wet = mul(mix(stone, [0.16, 0.2, 0.17], 0.55), 0.55);
+    culverts(&world.landscape, probe, stone, wet, g);
     let earth = mul(mix(palette.ground, [0.3, 0.26, 0.2], 0.5), 0.8);
     let mud = mul(mix(palette.ground, [0.25, 0.22, 0.16], 0.6), 0.6);
     let v = |p: Vec2, y: f32| Vec3::new(p.x, y, p.y);
@@ -286,10 +286,15 @@ pub fn water_edges_with(world: &World, palette: &Palette, probe: &TerrainProbe, 
         if walled {
             // A quay wall: stone from under the water to a coping over the
             // bank, dark and wet below the waterline.
+            // [r17-fixes] (photo 2026-11-24 F5) A level coping along the
+            // piece, at its highest bank: following the 8 m ground cells'
+            // heights the wall's top ran up and down in a saw-tooth under
+            // the lots above.
+            let level = high.max(0.6) + 0.2;
             let wall = g.part(Surface::Stone);
             for w in top.windows(2) {
-                let ((p0, h0), (p1, h1)) = (w[0], w[1]);
-                let (t0, t1) = (h0.max(0.6) + 0.2, h1.max(0.6) + 0.2);
+                let ((p0, _), (p1, _)) = (w[0], w[1]);
+                let (t0, t1) = (level, level);
                 wall.quad_facing([v(p0, EDGE_BED), v(p1, EDGE_BED), v(p1, 0.35), v(p0, 0.35)], into3, rgba(wet));
                 wall.quad_facing([v(p0, 0.35), v(p1, 0.35), v(p1, t1), v(p0, t0)], into3, rgba(stone));
                 // The coping, half a metre back over the bank.
@@ -307,6 +312,54 @@ pub fn water_edges_with(world: &World, palette: &Palette, probe: &TerrainProbe, 
                 }
                 bank.quad_facing([v(p0, h0.max(EDGE_BED)), v(p1, h1.max(EDGE_BED)), v(q1, EDGE_BED), v(q0, EDGE_BED)], Vec3::Y, rgba(earth));
             }
+        }
+    }
+}
+
+/// [r17-fixes] (photo 2026-11-24 F6) Where a stream starts in town (its
+/// line ends with no water beyond: it comes from under the city) a culvert
+/// mouth: a concrete headwall across the end with a dark culvert opening
+/// at the waterline and a coping, so the stream runs out of a drain, not
+/// out of a blank wall.
+fn culverts(land: &Landscape, probe: &TerrainProbe, stone: [f32; 3], wet: [f32; 3], g: &mut Geometry) {
+    if land.is_flat() {
+        return;
+    }
+    let half = land.land_half() - STRIP - 12.0;
+    let v = |p: Vec2, y: f32| Vec3::new(p.x, y, p.y);
+    let dark = [0.012, 0.013, 0.014];
+    for r in &land.rivers {
+        let n = r.points.len();
+        if n < 2 {
+            continue;
+        }
+        for (end, prev) in [(r.points[0], r.points[1]), (r.points[n - 1], r.points[n - 2])] {
+            let dir = (end - prev).normalize_or_zero();
+            let hw = r.width * 0.5;
+            // (The sim's river is round at its ends, `hw` past the last
+            // point: look beyond that cap for more water.)
+            if dir == Vec2::ZERO || end.x.abs() > half || end.y.abs() > half || land.is_water(end + dir * (hw + 2.0)) {
+                continue;
+            }
+            // The headwall across the cap, half way into it.
+            let end = end + dir * (hw * 0.5);
+            let side = dir.perp();
+            let (a, b) = (end - side * hw, end + side * hw);
+            let into = Vec3::new(-dir.x, 0.0, -dir.y);
+            let top = probe.height(end + dir * 1.5).max(0.6) + 0.25;
+            let wall = g.part(Surface::Concrete);
+            wall.quad_facing([v(b, EDGE_BED), v(a, EDGE_BED), v(a, 0.35), v(b, 0.35)], into, rgba(wet));
+            wall.quad_facing([v(b, 0.35), v(a, 0.35), v(a, top), v(b, top)], into, rgba(stone));
+            let back = dir * 0.6;
+            wall.quad_facing([v(b, top), v(a, top), v(a + back, top), v(b + back, top)], Vec3::Y, rgba(mul(stone, 1.1)));
+            // The opening, a box culvert's dark mouth just proud of the wall.
+            let ow = (hw * 1.2).min(5.0);
+            let oh = (top - 0.5).clamp(0.6, 2.2);
+            let (oa, ob) = (end - side * ow * 0.5 - dir * 0.04, end + side * ow * 0.5 - dir * 0.04);
+            g.part(Surface::Matte).quad_facing([v(ob, -0.3), v(oa, -0.3), v(oa, oh), v(ob, oh)], into, rgba(dark));
+            // Its lintel.
+            let (la, lb) = (oa - side * 0.3 - dir * 0.08, ob + side * 0.3 - dir * 0.08);
+            g.part(Surface::Concrete).quad_facing([v(lb, oh), v(la, oh), v(la, oh + 0.35), v(lb, oh + 0.35)], into, rgba(mul(stone, 0.85)));
         }
     }
 }
