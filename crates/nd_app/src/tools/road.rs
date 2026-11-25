@@ -32,7 +32,7 @@ pub(super) fn roundabout_input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, 
             bevy::input::mouse::MouseScrollUnit::Pixel => scroll.delta.y / 60.0,
         };
         if lines != 0.0 {
-            tools.ring_radius = (tools.ring_radius + lines * (tools.ring_radius * 0.08).max(2.0)).clamp(nd_sim::roads::RING_MIN_RADIUS, nd_sim::roads::RING_MAX_RADIUS);
+            tools.set_ring_radius(tools.ring_radius + lines * (tools.ring_radius * 0.08).max(2.0));
             tools.status = format!("Roundabout {:.0} m across.", tools.ring_radius * 2.0);
         }
     }
@@ -43,10 +43,26 @@ pub(super) fn roundabout_input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, 
             tools.status = match sim.world.add_roundabout_at(c, r, lanes, level) {
                 Ok(_) if level != 0.0 => format!("Roundabout {:.0} m across at {} stamped into the project: roads drawn to it at its level join it, others pass under or over. Ctrl+Z undoes, Ctrl+Enter implements.", r * 2.0, elevation_label(level)),
                 Ok(_) => format!("Roundabout {:.0} m across stamped into the project: roads crossing it are cut and joined, buildings in red come down. Ctrl+Z undoes, Ctrl+Enter implements.", r * 2.0),
-                Err(e) => format!("No roundabout: {e}."),
+                Err(e) => upgrade_ring(sim, c, lanes).unwrap_or_else(|| format!("No roundabout: {e}.")),
             };
         }
     }
+}
+
+/// [r17-roundabouts] A roundabout click refused over an existing ring,
+/// on that ring's island: with another lane count the ring is upgraded
+/// to it (its outer edge stays, the lanes come out of the island). The
+/// status to show, or None when the click was not on an island.
+fn upgrade_ring(sim: &mut Sim, c: SVec2, lanes: u8) -> Option<String> {
+    let x = sim.world.effective_plan().roundabouts().map(|(_, x)| x).filter(|x| x.center.distance(c) < x.island_radius().max(4.0)).min_by(|a, b| a.radius.total_cmp(&b.radius))?;
+    Some(if x.lanes == lanes {
+        format!("That roundabout already has {lanes} lane{}: pick another lane count and click its island to change it.", if lanes == 1 { "" } else { "s" })
+    } else {
+        match sim.world.widen_roundabout(x.center, Some(x.radius), lanes) {
+            Ok(_) => format!("Roundabout {:.0} m across set to {lanes} lanes in the project (the outer edge stays; the island gives the room). Ctrl+Z undoes, Ctrl+Enter implements.", x.outer_radius() * 2.0),
+            Err(e) => format!("Not changed: {e}."),
+        }
+    })
 }
 
 /// Points, then Enter or a right-click lays the road (or two clicks the

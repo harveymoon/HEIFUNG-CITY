@@ -410,6 +410,14 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("implement", "bool"),
         ("returns", "gesture_id, roundabout {joins, cuts_roads, takes_buildings}, project state"),
     ] },
+    Cmd { name: "widen_roundabout", aliases: &["widen_ring"], effect: Game, run: planning::widen_roundabout, help: &[
+        ("at", "[x,y] near the roundabout's centre (within 30 m; or `center`)"),
+        ("radius", "picks among rings nested round one centre (default the smallest)"),
+        ("lanes", "1|2|3 ring lanes (default one more)"),
+        ("implement", "bool, default false (pending in the project)"),
+        ("note", "[r17-roundabouts] the outer edge stays: the new lane comes out of the island, so nothing around the ring is taken"),
+        ("returns", "gesture_id, implemented, roundabout {center, radius, lanes, was {radius, lanes}, takes_buildings}, project state"),
+    ] },
     Cmd { name: "add_interchange", aliases: &["interchange"], effect: Game, run: planning::add_interchange, help: &[
         ("from", "[x,y]: one end of the cross street, on one side of the highway"),
         ("to", "[x,y]: the other end, across the highway"),

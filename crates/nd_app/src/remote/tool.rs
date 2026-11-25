@@ -36,7 +36,7 @@ pub(super) fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         t.ring_hover = Some(at);
     }
     if let Some(d) = opt_f32(cmd, "diameter")? {
-        t.ring_radius = (d * 0.5).clamp(nd_sim::roads::RING_MIN_RADIUS, nd_sim::roads::RING_MAX_RADIUS);
+        t.set_ring_radius(d * 0.5);
     }
     if let Some(n) = opt_u64(cmd, "ring_lanes")? {
         t.ring_lanes = (n.min(u8::MAX as u64) as u8).clamp(1, nd_sim::roads::RING_MAX_LANES);

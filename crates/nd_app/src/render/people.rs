@@ -93,6 +93,11 @@ impl PeopleRender {
         m
     }
 
+    /// [r17-people] The figures' material, once made.
+    pub(super) fn material_handle(&self) -> Option<Handle<StandardMaterial>> {
+        self.material.clone()
+    }
+
     /// The trim and the clothes glow with the night (`night` 0 day to 1).
     pub(super) fn set_night(&mut self, night: f32, materials: &mut Assets<StandardMaterial>) {
         let key = (night * 32.0).round() as i32;

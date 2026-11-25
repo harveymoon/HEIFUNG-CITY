@@ -43,7 +43,17 @@ pub fn lane_arrows(roads: &RoadNetwork, net: &LaneNetwork, heights: &[f32], inne
         };
         let seg_cuts = cuts.get(&ap.segment.0).map(|v| v.as_slice()).unwrap_or(&[]);
         let (sa, sb) = roads.segment_points(ap.segment);
-        for (&l, &a) in ap.lanes.iter().zip(&ap.arrows) {
+        // [r17-roundabouts] A two-lane arm onto a multi-lane ring is
+        // painted by exit, as drivers read it: the right lane for the first
+        // exits (right and ahead), the left lane for later exits and the
+        // U-turn (ahead and left). The lanes may take every one of them.
+        let ring_lanes = roads.ring_of_node(ap.node).filter(|_| !ap.lanes.first().is_some_and(|l| net.rings.circulating.contains(l))).map(|k| roads.rings[k].lanes).unwrap_or(0);
+        let by_exit: Option<Vec<u8>> = (ring_lanes >= 2 && ap.lanes.len() >= 2 && ap.arrows.iter().all(|&a| a == nd_sim::traffic::RIGHT)).then(|| {
+            let n = ap.lanes.len();
+            (0..n).map(|i| if i + 1 == n { nd_sim::traffic::RIGHT | nd_sim::traffic::STRAIGHT } else if i == 0 { nd_sim::traffic::STRAIGHT | nd_sim::traffic::LEFT } else { nd_sim::traffic::STRAIGHT }).collect()
+        });
+        let shown = by_exit.as_ref().unwrap_or(&ap.arrows);
+        for (&l, &a) in ap.lanes.iter().zip(shown) {
             let lane = &net.lanes[l as usize];
             if lane.length < 9.0 || a == 0 {
                 continue;

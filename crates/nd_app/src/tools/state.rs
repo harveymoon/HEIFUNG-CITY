@@ -325,6 +325,15 @@ pub fn road_type_of(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8, car_only: bool
 }
 
 /// [w1-roads] The Use dial's value for these settings.
+/// [r17-roundabouts] Ring lanes a new roundabout of `radius` gets unless
+/// the player picks: two from 50 m across (a big ring carries the traffic
+/// of big roads, and one lane round it queues), one below.
+pub const RING_TWO_LANES_FROM: f32 = 25.0;
+
+pub fn ring_lanes_for(radius: f32) -> u8 {
+    if radius >= RING_TWO_LANES_FROM { 2 } else { 1 }
+}
+
 pub fn road_use_of(kind: RoadKind, car_only: bool) -> nd_sim::roads::RoadUse {
     match kind {
         RoadKind::Path => nd_sim::roads::RoadUse::Pedestrian,
@@ -631,6 +640,16 @@ impl ToolState {
     }
 
     /// [w1-roads] The Use dial.
+    /// [r17-roundabouts] Resize the roundabout to `radius`; its lanes
+    /// follow the size (`ring_lanes_for`) unless the player picked others.
+    pub fn set_ring_radius(&mut self, radius: f32) {
+        let radius = radius.clamp(nd_sim::roads::RING_MIN_RADIUS, nd_sim::roads::RING_MAX_RADIUS);
+        if self.ring_lanes == ring_lanes_for(self.ring_radius) {
+            self.ring_lanes = ring_lanes_for(radius);
+        }
+        self.ring_radius = radius;
+    }
+
     pub fn road_use(&self) -> nd_sim::roads::RoadUse {
         road_use_of(self.kind, self.car_only)
     }

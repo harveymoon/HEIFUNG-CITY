@@ -107,6 +107,8 @@ mod sky;
 mod street_look;
 /// [looks] Citizens drawn with their own look.
 mod people;
+/// [r17-people] Near figures: the detailed, walking person close to the camera.
+mod near_people;
 pub use people::MESH_CAP as PEOPLE_MESH_CAP;
 mod stunts;
 /// [events] Rave lights, race markers, road cracks and the road condition layer.
@@ -449,6 +451,13 @@ pub struct RenderStats {
     pub people_looks_visible: usize,
     pub people_built: usize,
     pub people_borrowed: usize,
+    /// [r17-people] Near figures drawn, their triangles, those lent (drawn
+    /// or out of view), near looks cached and built over the run.
+    pub people_near: usize,
+    pub people_near_tris: usize,
+    pub people_near_lent: usize,
+    pub people_near_meshes: usize,
+    pub people_near_built: usize,
     /// [look] The graphics tier in force, the frame time and the effects.
     pub graphics: Graphics,
     /// [chase-cam] Scenery meshes wearing the cutting material now.
@@ -624,6 +633,12 @@ impl Plugin for RenderPlugin {
         app.add_plugins(pt_layers::PtLayersPlugin);
         app.add_plugins(sites_layer::SitesLayerPlugin);
         app.add_plugins(mapview::MapViewPlugin);
+        // [r17-people] Near figures, posed on the far ones once those are
+        // lifted and hidden by depth.
+        app.add_plugins(MaterialPlugin::<near_people::RigMaterial>::default())
+            .init_resource::<near_people::NearPeople>()
+            .add_systems(Startup, near_people::add_rig_shader)
+            .add_systems(Update, near_people::sync_near_people.in_set(SimSet::Sync).after(holo::apply_depth));
         // [districts] The district layer; [tourism] visitors on foot, after
         // the citizens whose figure cache they share.
         app.init_resource::<districts::DistrictRender>().add_systems(Update, (districts::sync_district_layer, districts::sync_tourists.after(sync_citizens).before(lift_movers)).in_set(SimSet::Sync));

@@ -64,6 +64,10 @@ pub struct Ctx<'a> {
     pub site: Option<super::architects::SiteLook>,
     /// [r14-materials] See [`Extras::site_pile`].
     pub pile: Vec<nd_sim::market::Resource>,
+    /// [r17-logos] See [`Extras::ads`].
+    pub ads: Option<crate::ads::AdSource<'a>>,
+    /// [r17-logos] See [`Extras::own`].
+    pub own: Option<&'a crate::ads::Ad>,
 }
 
 /// Per-building state that changes the look beyond style and condition.
@@ -174,11 +178,21 @@ pub struct Extras<'a> {
     /// biggest pile first (`World::site_pile_goods`): its stacks are drawn
     /// as those materials. Empty: the old mixed stacks.
     pub site_pile: &'a [nd_sim::market::Resource],
+    /// [r17-logos] Where the building's billboards and LED screens get
+    /// their ads (`ads::ads_for` over the world); `None`: fictional
+    /// brands (`ads::fallback_ads`).
+    pub ads: Option<crate::ads::AdSource<'a>>,
+    /// [r17-logos] By unit (as `units`): the business's mark and trading
+    /// name for its shop sign (`ads::shop_marks`); empty: plain signs.
+    pub shop_marks: &'a [Option<(crate::logo::Mark, String)>],
+    /// [r17-logos] The business in the building (its trading name and
+    /// mark, `ads::ad_of`): its sign boards and hanging signs spell it.
+    pub own: Option<&'a crate::ads::Ad>,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, cable: false, battery: None, form: None, tower: None, megablock: None, brand: None, annex: None, shore: None, pier: None, park_look: None, units: &[], boxes_of: None, real_boxes: false, overhead: &[], waste_fill: 0.0, site: None, ghost_signs: &[], site_pile: &[], site_builder: None, fleet_colour: None }
+        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, cable: false, battery: None, form: None, tower: None, megablock: None, brand: None, annex: None, shore: None, pier: None, park_look: None, units: &[], boxes_of: None, real_boxes: false, overhead: &[], waste_fill: 0.0, site: None, ghost_signs: &[], site_pile: &[], site_builder: None, fleet_colour: None, ads: None, shop_marks: &[], own: None }
     }
 }
 
@@ -244,6 +258,8 @@ impl<'a> Ctx<'a> {
             waste_fill: extras.waste_fill,
             site: extras.site,
             pile: extras.site_pile.to_vec(),
+            ads: extras.ads,
+            own: extras.own,
         }
     }
 }

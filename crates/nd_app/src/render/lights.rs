@@ -47,19 +47,34 @@ pub(super) const WINDOW_PREPASS_SHADER: Handle<Shader> = uuid_handle!("9a1c3e57-
 const WINDOW_COMMON_SRC: &str = r#"
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var lit_texture: texture_2d<f32>;
 // x: sim minutes (wrapped), for each window's own wandering; y: how much
-// night it is (0 by day, 1 at night), for landmark neon and night beams.
+// night it is (0 by day, 1 at night), for landmark neon and night beams;
+// z: real seconds (wrapped, in quarter steps), for the ads' frames.
 @group(#{MATERIAL_BIND_GROUP}) @binding(101) var<uniform> lights_clock: vec4<f32>;
 
 fn window_hash(p: vec2<f32>) -> f32 {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 }
 
+// [r17-logos] An ad frame (uv.x = -4 - code; code: the frame in bits 0-1,
+// the screen's frames - 1 in 2-3, its phase in 4-7) shows only in its
+// turn: each frame stays up 5 s, screens out of step by their phase.
+fn ad_hidden(x: f32) -> bool {
+    let code = u32(max(-x - 4.0, 0.0) + 0.5);
+    let frames = ((code >> 2u) & 3u) + 1u;
+    let phase = f32(code >> 4u);
+    let shown = u32(floor(lights_clock.z / 5.0 + phase * 0.37)) % frames;
+    return shown != (code & 3u);
+}
+
 // uv.x: the building's slot, or -1 for glow that is always on, -2 for a
-// landmark's neon (dimmed by day), -3 for glow lit only after dark; uv.y:
-// this window's rank. A window lights when its rank is below the
-// building's lit share.
+// landmark's neon (dimmed by day), -3 for glow lit only after dark, -4 and
+// below an ad frame; uv.y: this window's rank. A window lights when its
+// rank is below the building's lit share.
 fn window_dark(uv: vec2<f32>) -> bool {
     if uv.x < 0.0 {
+        if uv.x < -3.5 {
+            return ad_hidden(uv.x);
+        }
         return uv.x < -2.5 && lights_clock.y < 0.5;
     }
     let slot = u32(uv.x + 0.5);
@@ -178,7 +193,8 @@ pub(super) type WindowMaterial = ExtendedMaterial<StandardMaterial, WindowLights
 pub(super) struct WindowLights {
     #[texture(100)]
     pub lit: Handle<Image>,
-    /// x: sim minutes, wrapped to keep f32 precision; y: night (0..1).
+    /// x: sim minutes, wrapped to keep f32 precision; y: night (0..1);
+    /// z: [r17-logos] real seconds, wrapped, in quarter steps (the ads).
     #[uniform(101)]
     pub clock: Vec4,
     /// [chase-cam] What the chase camera cuts away (`cutaway`).
@@ -228,12 +244,16 @@ pub(super) fn slot_of(id: BuildingId) -> Option<u32> {
 /// Point one building's window lights at its slot: marked glow vertices
 /// (see `parts::window_light`) get `uv = (slot, rank)` and their alpha
 /// back; a landmark's neon (`NEON_MARK`) gets `uv.x = -2`, dimmed by day,
-/// glow lit only after dark (`NIGHT_MARK`) `-3`; every other glow vertex
+/// glow lit only after dark (`NIGHT_MARK`) `-3`, [r17-logos] an ad frame
+/// (`nd_procgen::ads::ad_alpha`) `-4 - code`; every other glow vertex
 /// gets `uv.x = -1`, always on.
 pub(super) fn tag_windows(g: &mut Geometry, slot: Option<u32>) {
     let m = g.part(Surface::Glow);
     for (c, uv) in m.colors.iter_mut().zip(m.uvs.iter_mut()) {
-        if c[3] >= WINDOW_LIGHT_MARK {
+        if let Some(code) = nd_procgen::ads::ad_code(c[3]) {
+            c[3] = 1.0;
+            *uv = [-4.0 - code as f32, 0.0];
+        } else if c[3] >= WINDOW_LIGHT_MARK {
             let rank = (c[3] - WINDOW_LIGHT_MARK).clamp(0.0, 0.999);
             c[3] = 1.0;
             *uv = match slot {
@@ -261,6 +281,7 @@ fn building_hash(slot: u32) -> u64 {
 /// (and after a load) and move each building's texel towards its new share
 /// on that building's own turn, a few windows at a time.
 pub(super) fn update_window_lights(
+    time: Res<Time<Real>>,
     sim: Res<Sim>,
     look: Res<super::sky::SkyLook>,
     mats: Res<Materials>,
@@ -275,6 +296,14 @@ pub(super) fn update_window_lights(
     // write rebuilds its bind group).
     let night = ((1.0 - look.daylight) * 32.0).round() / 32.0;
     let night_moved = materials.get(&mats.windows).is_some_and(|m| m.extension.clock.y != night);
+    // [r17-logos] The ads' clock: real seconds in quarter steps (a write
+    // four times a second at most), wrapped at a day.
+    let ad_clock = ((time.elapsed_secs_f64() % 86_400.0) * 4.0).floor() as f32 * 0.25;
+    if materials.get(&mats.windows).is_some_and(|m| m.extension.clock.z != ad_clock) {
+        if let Some(mut m) = materials.get_mut(&mats.windows) {
+            m.extension.clock.z = ad_clock;
+        }
+    }
     if *minute != w.clock.tick || sim.full_rebuild || night_moved {
         *minute = w.clock.tick;
         if let Some(mut m) = materials.get_mut(&mats.windows) {
@@ -365,15 +394,26 @@ mod tests {
     fn glow_marks_become_codes() {
         let mut g = Geometry::default();
         let m = g.part(Surface::Glow);
-        for a in [1.0, NEON_MARK, NIGHT_MARK, WINDOW_LIGHT_MARK + 0.25] {
+        for a in [1.0, NEON_MARK, NIGHT_MARK, WINDOW_LIGHT_MARK + 0.25, nd_procgen::ads::ad_alpha(2, 3, 5)] {
             m.positions.push([0.0; 3]);
             m.colors.push([1.0, 1.0, 1.0, a]);
             m.uvs.push([0.0; 2]);
         }
         tag_windows(&mut g, Some(9));
         let m = g.get(Surface::Glow);
-        assert_eq!(m.uvs, vec![[-1.0, 0.0], [-2.0, 0.0], [-3.0, 0.0], [9.0, 0.25]]);
+        let ad = -4.0 - (2 | (2 << 2) | (5 << 4)) as f32;
+        assert_eq!(m.uvs, vec![[-1.0, 0.0], [-2.0, 0.0], [-3.0, 0.0], [9.0, 0.25], [ad, 0.0]]);
         assert!(m.colors.iter().all(|c| c[3] == 1.0));
+    }
+
+    /// [r17-logos] The shader cycles a screen's ad frames as
+    /// `nd_procgen::ads::frame_at` says (the same period and phase step),
+    /// in both the main pass and the depth prepass (`window_dark`).
+    #[test]
+    fn the_ad_cycle_matches_the_procgen_clock() {
+        let line = WINDOW_COMMON_SRC.lines().find(|l| l.contains("let shown = ")).expect("the ad cycle");
+        assert!(line.contains(&format!("lights_clock.z / {:.1}", nd_procgen::ads::FRAME_SECONDS)) && line.contains("phase * 0.37"), "{line}");
+        assert!(WINDOW_COMMON_SRC.contains("return ad_hidden(uv.x);"));
     }
 
     /// [K40] The per-window flicker is keyed on whole numbers (the slot,

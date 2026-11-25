@@ -113,15 +113,15 @@ pub fn tourist_key(look: &Appearance, age: u8, class: Tier) -> PersonKey {
 pub const EMISSIVE_CELLS: usize = 1 + 2 * COLORS.len();
 const DIM: f32 = 0.11;
 
-fn bright_cell(i: u8) -> usize {
+pub(crate) fn bright_cell(i: u8) -> usize {
     1 + i as usize
 }
 
-fn dim_cell(i: u8) -> usize {
+pub(crate) fn dim_cell(i: u8) -> usize {
     1 + COLORS.len() + i as usize
 }
 
-fn cell_uv(cell: usize) -> [f32; 2] {
+pub(crate) fn cell_uv(cell: usize) -> [f32; 2] {
     [(cell as f32 + 0.5) / EMISSIVE_CELLS as f32, 0.5]
 }
 
@@ -151,7 +151,7 @@ pub fn emissive_palette() -> Vec<[f32; 3]> {
 use crate::color::rgba;
 
 /// Clothes by wear: worn ones faded and a little dark.
-fn worn(c: [f32; 3], wear: u8) -> [f32; 3] {
+pub(crate) fn worn(c: [f32; 3], wear: u8) -> [f32; 3] {
     match wear {
         0 => {
             let l = c[0] * 0.3 + c[1] * 0.55 + c[2] * 0.15;

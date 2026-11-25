@@ -48,6 +48,10 @@ struct Problem {
     message: String,
     hint: &'static str,
     at: Option<Vec2>,
+    /// [r17-roundabouts] For `roundabout_over_capacity`: the rings
+    /// (`RoadNetwork::rings` indices), each offered a "widen" (a lane
+    /// more, out of the island).
+    rings: Vec<usize>,
 }
 
 #[derive(Clone, Default)]
@@ -85,12 +89,20 @@ pub fn body(ui: &mut egui::Ui, p: &mut UiCtx) {
             at: now,
             rows: crate::remote::city_alerts(w)
                 .into_iter()
-                .map(|a: crate::remote::CityAlert| Problem { severity: a.severity, count: a.count, message: a.message.clone(), hint: a.hint, at: a.at().map(|v| Vec2::new(v.x, v.y)) })
+                .map(|a: crate::remote::CityAlert| Problem {
+                    severity: a.severity,
+                    count: a.count,
+                    message: a.message.clone(),
+                    hint: a.hint,
+                    at: a.at().map(|v| Vec2::new(v.x, v.y)),
+                    rings: if a.kind == "roundabout_over_capacity" { a.examples().iter().filter_map(|e| e.strip_prefix("ring ")?.parse().ok()).collect() } else { Vec::new() },
+                })
                 .collect(),
         };
         ui.data_mut(|d| d.insert_temp(problems_id(), problems.clone()));
     }
     let mut fly = None;
+    let mut widen: Option<nd_sim::roads::Ring> = None;
     section(ui, "AS IT HAPPENS");
     if p.flags.log.is_empty() {
         hint(ui, "Nothing yet: news and messages land here as they pop up.");
@@ -138,12 +150,56 @@ pub fn body(ui: &mut egui::Ui, p: &mut UiCtx) {
             }
             ui.add(egui::Label::new(egui::RichText::new(msg).color(if pr.severity >= 3 { WARN } else { IVORY })).wrap()).on_hover_text(pr.hint);
         });
+        // [r17-roundabouts] Each ring over capacity: fly there, or give it
+        // a lane more (out of its island: nothing round it is taken).
+        for &k in pr.rings.iter().take(6) {
+            let Some(&r) = w.roads.rings.get(k) else { continue };
+            let c = Vec2::new(r.center.x, r.center.y);
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                if ui.small_button("go").on_hover_text("Fly to this roundabout").clicked() {
+                    fly = Some(c);
+                }
+                ui.label(egui::RichText::new(format!("ring at ({:.0}, {:.0}), {:.0} m across, {} lane{}", c.x, c.y, r.radius * 2.0, r.lanes, super::fmt::s(r.lanes))).small());
+                let wider = nd_sim::roads::Ring::widened(r, r.lanes + 1);
+                let island = if r.lanes < nd_sim::roads::RING_MAX_LANES { w.ring_change_takes(r, wider).len() } else { 0 };
+                let tip = if island == 0 { "A lane more round the ring, taken from its island (the outer edge stays, so nothing round it comes down). Built at once, or added to your project if one is open.".to_string() } else { format!("A lane more round the ring, taken from its island: the outer edge stays, but {island} building{} on the island lose{} the ground and come{} down. Built at once, or added to your project if one is open.", super::fmt::s(island as u8), if island == 1 { "s" } else { "" }, if island == 1 { "s" } else { "" }) };
+                let label = if island == 0 { format!("Widen to {} lanes", r.lanes + 1) } else { format!("Widen to {} lanes ({island} on the island go)", r.lanes + 1) };
+                if r.lanes < nd_sim::roads::RING_MAX_LANES && ui.small_button(label).on_hover_text(tip).clicked() {
+                    widen = Some(r);
+                }
+            });
+        }
     }
     });
     ui.add_space(4.0);
     hint(ui, "Drag the window by any empty part. Hover a problem for what to do about it.");
     if let Some(at) = fly {
         p.fly_to = Some(at);
+    }
+    if let Some(r) = widen {
+        p.tools.status = widen_now(&mut p.sim.world, r);
+        // Read the problems again next frame.
+        ui.data_mut(|d| d.remove::<Problems>(problems_id()));
+    }
+}
+
+/// [r17-roundabouts] The Alerts window's "Widen": ring `r` a lane wider,
+/// implemented at once, or added to the project when one is already open
+/// (implementing would build that too). What happened, in words.
+pub fn widen_now(w: &mut nd_sim::World, r: nd_sim::roads::Ring) -> String {
+    let center = r.center;
+    let open = w.project.as_ref().is_some_and(|p| !p.is_empty());
+    let lanes = r.lanes + 1;
+    if let Err(e) = w.widen_roundabout(center, Some(r.radius), lanes) {
+        return format!("Not widened: {e}.");
+    }
+    if open {
+        return format!("Roundabout at ({:.0}, {:.0}) widened to {lanes} lanes in your project: Ctrl+Enter implements it with the rest.", center.x, center.y);
+    }
+    match w.try_implement() {
+        Ok(()) => format!("Roundabout at ({:.0}, {:.0}) widened to {lanes} lanes. Ctrl+Z in the Road tool undoes.", center.x, center.y),
+        Err(why) => format!("Widening the roundabout at ({:.0}, {:.0}) is in the project but was refused: {why}.", center.x, center.y),
     }
 }
 
