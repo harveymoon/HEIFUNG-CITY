@@ -271,6 +271,11 @@ pub struct IndustrySite {
     pub dirty: Vec<(IndustryKind, f32)>,
 }
 
+/// [r17-fixes] The shortest side (metres) of a lot a shut works is turned
+/// into a container yard on (`World::convert_to_storage_yard`): a forty-foot
+/// box (12.2 m) across it with the fence, or behind the lorry bays down it.
+pub const YARD_MIN_SIDE: f32 = 16.0;
+
 /// [dirty-industry] A dirty plant as its neighbours feel it: where, how
 /// dirty right now (its business's dirtiness, less when idle or shut) and
 /// how far that carries. `as_kind` is the kind the compatibility table

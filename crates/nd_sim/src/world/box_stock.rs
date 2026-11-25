@@ -561,7 +561,7 @@ impl World {
                 // Ground for the stacks (the whole plot, merged lots and all).
                 let ground = self.building_lot(id).map_or(0.0, |l| crate::zoning::polygon_area(&l.polygon).abs());
                 let lot = self.lots.get(b.lot)?;
-                if ground < 600.0 || !lot.car_access() {
+                if ground < 600.0 || !lot.car_access() || lot.width().min(lot.depth()) < crate::industry::YARD_MIN_SIDE {
                     return None;
                 }
                 let d = anchors.iter().map(|a| a.distance(lot.center)).fold(f32::INFINITY, f32::min);

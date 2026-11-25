@@ -67,6 +67,11 @@ pub(super) fn drive(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             }
         }
         *ctx.mode = CameraMode::Drive;
+        // [r17-fixes] The street and its limit from the start position (the
+        // reply had them null until the first frame or tick, r16 photo F13).
+        let mut d = std::mem::take(&mut *ctx.drive);
+        d.read_road(&ctx.sim, &mut ctx.flags);
+        *ctx.drive = d;
     }
     if let Some(a) = opt_bool(cmd, "assist")? {
         ctx.drive.assist = a;

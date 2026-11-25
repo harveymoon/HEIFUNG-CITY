@@ -704,7 +704,7 @@ kind's total, how much came `from_outside` and went `to_outside`), `days_kept` (
 - `{day: 12}`: one closed day (game day): `by_kind`, every `flow`, and its `summary` (as `flows`).
 - `{flows: true}`: the money-flow page's figures for `today` and `yesterday`: by group (property, sales,
   wages, profits, city, trade, other) each group's flows, and `in_from_outside`, `out_to_outside`,
-  `net_with_outside`.
+  `net_with_outside` (without the load's opening balances, [r17-fixes]), and `opening_balances` apart.
 - `{trace: "business 4:1"}` keeps every move of one account (up to 100 000) until `{trace: null}`;
   `{account}` then returns them as `trace`. `{check: true}` reconciles every account after every tick
   and logs drifts (dev; slow in a big city; also the env var `ND_LEDGER_CHECK=1`).

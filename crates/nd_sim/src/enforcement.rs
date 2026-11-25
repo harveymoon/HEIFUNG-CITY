@@ -138,7 +138,21 @@ pub struct TowJob {
 pub struct Patrol {
     pub car: CarId,
     pub office: BuildingId,
+    /// [r17-fixes] Tick until which its officers are busy writing the last
+    /// ticket (or putting on a clamp, calling the tow): they write the next
+    /// only after it ([`TICKET_MINUTES`]).
+    #[serde(default)]
+    pub busy_until: u64,
 }
+
+/// [r17-fixes] (photo 2026-11-24 F14) Minutes a patrol's two officers take
+/// over one ticket, clamp or tow call (stop, check the plate and the
+/// meter, write it, walk back): about six an hour a car, 80-odd a shift.
+/// The officers ticketed every car over its time within sight at once, so
+/// a 17k town short of parking wrote 1,100 tickets a day (one per 15
+/// residents; real cities write one per 250-750) and fines made 17 % of
+/// the city's income.
+pub const TICKET_MINUTES: u64 = 10;
 
 /// Counts for the report.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

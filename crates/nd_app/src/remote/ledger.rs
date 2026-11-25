@@ -86,10 +86,14 @@ pub fn flows(w: &World, cells: &[Cell]) -> Value {
         }
         groups.insert(g.into(), json!({ "total": r(dollars(mine.iter().map(|c| c.units).sum())), "flows": cells_json(&mine) }));
     }
-    let inn: i64 = cells.iter().filter(|c| c.from == Class::Outside).map(|c| c.units).sum();
-    let out: i64 = cells.iter().filter(|c| c.to == Class::Outside).map(|c| c.units).sum();
+    // [r17-fixes] Opening balances (a load reading the books back) are not
+    // money that crossed the edge: left out of the totals, given apart.
+    let edge = |c: &&Cell| c.kind != Kind::Opening;
+    let inn: i64 = cells.iter().filter(edge).filter(|c| c.from == Class::Outside).map(|c| c.units).sum();
+    let out: i64 = cells.iter().filter(edge).filter(|c| c.to == Class::Outside).map(|c| c.units).sum();
+    let opening: i64 = cells.iter().filter(|c| c.kind == Kind::Opening).map(|c| c.units).sum();
     let _ = w;
-    json!({ "groups": groups, "in_from_outside": r(dollars(inn)), "out_to_outside": r(dollars(out)), "net_with_outside": r(dollars(inn - out)) })
+    json!({ "groups": groups, "in_from_outside": r(dollars(inn)), "out_to_outside": r(dollars(out)), "net_with_outside": r(dollars(inn - out)), "opening_balances": r(dollars(opening)) })
 }
 
 pub fn command(cmd: &Value, w: &mut World) -> Result<Value, String> {

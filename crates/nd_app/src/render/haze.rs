@@ -157,7 +157,7 @@ pub(super) fn sync_haze(
     // umber at night (lit a little from below by the city).
     let t = if lighting.follow_clock { w.clock.day_fraction() } else { (lighting.hour / 24.0).rem_euclid(1.0) };
     let elev = ((t - 0.25) * std::f32::consts::TAU).sin();
-    let light = 0.16 + 0.84 * smoothstep(-0.12, 0.3, elev);
+    let light = smoke_light(elev);
     let light_key = (light * 64.0).round() as i32;
     if state.light_key != Some(light_key) {
         state.light_key = Some(light_key);
@@ -168,7 +168,7 @@ pub(super) fn sync_haze(
             // and sodium glow from below: a dim rust-orange.
             let warm = if i < ALPHA_STEPS { (1.0 - light) * 0.07 } else { 0.0 };
             if let Some(mut m) = materials.get_mut(h) {
-                m.base_color = Color::linear_rgba(rgb[0] * light + warm, rgb[1] * light * 0.97 + warm * 0.4, rgb[2] * light * 0.92 + warm * 0.1, a);
+                m.base_color = Color::linear_rgba(rgb[0] * light + warm, rgb[1] * light * 0.97 + warm * 0.4, rgb[2] * light * 0.92 + warm * 0.1, a * smoke_alpha(light));
             }
         }
     }
@@ -326,6 +326,21 @@ pub(super) fn sync_haze(
         // Smog lies flatter than it is tall from the street.
         tf.scale = if smog == 1 { Vec3::new(size, size * 0.45, 1.0) } else { Vec3::splat(size) };
     }
+}
+
+/// [r17-fixes] (photo 2026-11-24 F7) How much light unlit smoke and steam
+/// take at sun elevation `elev` (sine): full by day and still most of it
+/// in the dusk and dawn glow (the sky behind is lit then: a plume shaded
+/// dark read as a black tear in it), a dim floor at night, when the city's
+/// glow still catches it.
+pub(super) fn smoke_light(elev: f32) -> f32 {
+    0.3 + 0.7 * smoothstep(-0.28, 0.12, elev)
+}
+
+/// [r17-fixes] Smoke thins out against the night sky as its light goes,
+/// so a dark plume does not cut a hard shape out of the glow.
+pub(super) fn smoke_alpha(light: f32) -> f32 {
+    0.55 + 0.45 * light
 }
 
 /// [smoke-start] How hard a finished coal plant's smoke shows, 0..1: none
