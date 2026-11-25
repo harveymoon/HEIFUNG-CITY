@@ -142,12 +142,14 @@ fn car_surface(base: vec3<f32>, kind: u32, fin: u32, dirt: f32, wet: f32) -> Car
     return s;
 }
 
-// The street's neon round the horizon, as seen along `r` from `p`: lit
-// sign strips of three colours at different heights, sliding as the car
-// moves, and a faint glow band under them.
+// The street's neon as seen along `r` from `p`: lit sign strips of three
+// colours round the car, sliding as it moves, and the glow of the lit,
+// often wet street under them. Seen from the game's cameras (above the
+// cars) a door reflects mostly what is below the horizon, so the signs
+// are spread over both: shopfronts and their reflections in the road.
 fn neon_env(r: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
     let el = r.y;
-    if el < -0.08 || el > 0.75 {
+    if el > 0.75 {
         return vec3(0.0);
     }
     let az = atan2(r.z, r.x);
@@ -156,9 +158,9 @@ fn neon_env(r: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
     let f = fract(a);
     let lit = step(0.3, c_hash(vec2(k, 17.0))) * (0.6 + 0.8 * c_hash(vec2(k, 23.0)));
     let strip = smoothstep(0.04, 0.12, f) * (1.0 - smoothstep(0.42, 0.52, f));
-    let lo = 0.02 + 0.12 * c_hash(vec2(k + 5.0, 3.0));
-    let hi = lo + 0.08 + 0.3 * c_hash(vec2(k + 9.0, 7.0));
-    let v = smoothstep(lo - 0.02, lo + 0.01, el) * (1.0 - smoothstep(hi - 0.02, hi + 0.01, el));
+    let lo = -0.45 + 0.4 * c_hash(vec2(k + 5.0, 3.0));
+    let hi = lo + 0.18 + 0.35 * c_hash(vec2(k + 9.0, 7.0));
+    let v = smoothstep(lo - 0.03, lo + 0.02, el) * (1.0 - smoothstep(hi - 0.03, hi + 0.02, el));
     let pick = c_hash(vec2(k * 1.3, 11.0));
     var col = car.neon_c.rgb;
     if pick < 0.36 {
@@ -166,7 +168,8 @@ fn neon_env(r: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
     } else if pick < 0.7 {
         col = car.neon_b.rgb;
     }
-    let glow = (1.0 - smoothstep(0.0, 0.35, abs(el - 0.08))) * 0.16;
+    // The street's glow, strongest round the horizon and in the road.
+    let glow = (1.0 - smoothstep(0.0, 0.6, abs(el + 0.1))) * 0.14;
     return col * (lit * strip * v + glow);
 }
 "#;
