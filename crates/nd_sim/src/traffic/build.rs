@@ -341,7 +341,7 @@ impl LaneNetwork {
                     // side: a one-lane arm onto a two-lane ring enters
                     // either lane (outer for the first exits, inner for
                     // later ones and U-turns; `apply_roundabouts`).
-                    let onto_ring = n < m && !roads.segment(inc_seg).ring && roads.segment(out_seg).ring;
+                    let onto_ring = n < m && !roads.segment(inc_seg).ring && roads.is_compact_ring(roads.segment(out_seg));
                     let ok = match turn(angle) {
                         -1 => j == i.min(m - 1) || (onto_ring && i + 1 == n && j == i + 1),
                         1 => j == m - 1 - (n - 1 - i).min(m - 1) || (onto_ring && i == 0 && j + 2 == m - (n - 1).min(m - 1)),

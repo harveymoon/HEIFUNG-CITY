@@ -151,8 +151,9 @@ Citizens are rendered from their simulated positions every frame.
   (the adaptive junction arrows leave ring nodes alone). Hovering the tool shows the ring,
   the road it takes up, the joins and the lots under the ring road (red); clicking stamps it
   into the active project.
-  [r17-roundabouts] Two-lane rules: outer arms join and leave by the outer two lanes (inner
-  arms by the inner two), an arm narrower than the ring also reaches the next lane in, and
+  [r17-roundabouts] Two-lane rules on compact roundabouts (under 80 m across; ring roads keep
+  leaving from the edge lane, their arms far apart): outer arms join and leave by the outer
+  two lanes (inner arms by the inner two), an arm narrower than the ring also reaches the next lane in, and
   entering or leaving by a lane further in costs `RING_INNER_LANE` (4 m) each way, so the
   first exit goes from the outer lane and later exits and U-turns go in by the inner lane,
   round on it and out from it with no lane change. A car leaving from the inner lane

@@ -54,10 +54,12 @@ fn main() {
                 continue;
             };
             let r = w.roads.rings[k];
-            match w.widen_roundabout(r.center, Some(r.radius), lanes) {
-                Ok(id) => println!("  widen ring {k} at ({:.0},{:.0}) r {:.1} lanes {} -> gesture {} {:?}", r.center.x, r.center.y, r.radius, r.lanes, id.0, w.gesture(id).and_then(|g| g.ring()).map(|x| (x.radius, x.lanes))),
-                Err(e) => println!("  widen ring {k}: {e}"),
-            }
+            // By hand (outer edge kept), so the probe also builds on main.
+            let Some((id, pr)) = w.effective_plan().roundabouts().filter(|(_, x)| x.center.distance(r.center) < 1.0 && (x.radius - r.radius).abs() < 0.5).next() else { continue };
+            let outer = pr.radius + pr.half_width();
+            let radius = outer - nd_sim::roads::half_width_spec(nd_sim::roads::RoadKind::Street, lanes, 0);
+            w.set_gesture(id, nd_sim::Gesture::Roundabout { center: pr.center, radius, lanes, level: pr.level }, true);
+            println!("  widen ring {k} at ({:.0},{:.0}) r {:.1} lanes {} -> r {radius:.2} lanes {lanes}", r.center.x, r.center.y, r.radius, r.lanes);
         }
         let t = std::time::Instant::now();
         let r = w.try_implement();
@@ -94,9 +96,70 @@ fn main() {
     let mut samples = 0usize;
     let mut gridlock_samples = 0usize;
     let mut alert_samples = 0usize;
+    // City-wide: vehicles that left the road (trip done or given up) and
+    // their age then; per watched ring, distinct cars that came near it,
+    // distinct cars on its ring lanes, and car-minutes standing near it.
+    let mut alive: HashMap<nd_sim::CarId, (f32, bool)> = HashMap::new();
+    let (mut finished, mut age_sum, mut lorries_done) = (0usize, 0.0f64, 0usize);
+    let mut near_cars: BTreeMap<usize, std::collections::HashSet<nd_sim::CarId>> = BTreeMap::new();
+    let mut on_ring: BTreeMap<usize, std::collections::HashSet<nd_sim::CarId>> = BTreeMap::new();
+    let mut stand_near: BTreeMap<usize, (usize, usize)> = BTreeMap::new();
+    let mut ring_of_lane: HashMap<u32, usize> = HashMap::new();
+    let mut reasons: BTreeMap<(usize, String), usize> = BTreeMap::new();
     let t1 = std::time::Instant::now();
     for _ in 0..hours * 60 {
         w.tick(&mut minds);
+        {
+            let now: std::collections::HashSet<nd_sim::CarId> = w.traffic.cars.keys().collect();
+            alive.retain(|id, (age, cargo)| {
+                if now.contains(id) {
+                    return true;
+                }
+                finished += 1;
+                age_sum += *age as f64;
+                if *cargo {
+                    lorries_done += 1;
+                }
+                false
+            });
+            for (id, c) in w.traffic.cars.iter() {
+                alive.insert(id, (c.age, c.cargo.is_some()));
+            }
+            if ring_of_lane.is_empty() || w.traffic.net.lanes.len() as u64 != version {
+                ring_of_lane.clear();
+                for &l in &w.traffic.net.rings.circulating {
+                    if let nd_sim::traffic::LaneKind::Road { segment, .. } = w.traffic.net.lanes[l as usize].kind {
+                        if let Some(k) = w.roads.ring_of_segment(segment) {
+                            ring_of_lane.insert(l, k);
+                        }
+                    }
+                }
+            }
+            for &k in &watch_rings {
+                let r = w.roads.rings[k];
+                let reach = r.radius + r.half_width() + 80.0;
+                for (id, c) in w.traffic.cars.iter() {
+                    if c.pos.distance(r.center) < reach {
+                        near_cars.entry(k).or_default().insert(id);
+                        if c.v < 0.5 && c.hold <= 0.0 && !c.entering {
+                            let e = stand_near.entry(k).or_default();
+                            if c.pos.distance(r.center) < r.radius + r.half_width() + 1.0 { e.0 += 1 } else { e.1 += 1 }
+                            // Why: the head of its queue, and where that head is.
+                            let head = w.traffic.jam_chain(id).cars.last().copied().unwrap_or(id);
+                            let h = &w.traffic.cars[head];
+                            let why = format!("{:?}", w.traffic.stop_reason(head));
+                            let why = why.split(|ch: char| ch == ' ' || ch == '{').next().unwrap_or("").to_string();
+                            let hd = h.pos.distance(r.center);
+                            let at = if hd < r.radius + r.half_width() + 1.0 { "ring" } else if hd < r.radius + 40.0 { "near" } else if hd < r.radius + r.half_width() + 80.0 { "zone" } else { "beyond" };
+                            *reasons.entry((k, format!("{why} head {at}"))).or_default() += 1;
+                        }
+                    }
+                    if c.route.get(c.idx).and_then(|l| ring_of_lane.get(l)) == Some(&k) {
+                        on_ring.entry(k).or_default().insert(id);
+                    }
+                }
+            }
+        }
         if w.traffic.net.lanes.len() as u64 != version {
             version = w.traffic.net.lanes.len() as u64;
             entry_ring.clear();
@@ -135,6 +198,33 @@ fn main() {
                 println!("    {:02}:{:02} ring {} car {:?} on_ring {on_ring} next {what} stalled {:.0} wait {:?} lane {:?} at ({:.0},{:.0})", w.clock.hour(), m % 60, rn.ring, id, c.stalled, c.wait, w.traffic.net.lanes[here as usize].kind, c.pos.x, c.pos.y);
             }
         }
+        if m % 30 == 0 {
+            if let Ok(spec) = std::env::var("JAMS") {
+                // The biggest queues near a ring: their head, why, where.
+                for p in parse_points(&spec) {
+                    let Some(k) = ring_near(&w, p) else { continue };
+                    let r = w.roads.rings[k];
+                    let reach = r.radius + r.half_width() + 80.0;
+                    let mut heads: HashMap<nd_sim::CarId, usize> = HashMap::new();
+                    for (id, c) in w.traffic.cars.iter() {
+                        if c.v < 0.5 && c.hold <= 0.0 && !c.entering && c.pos.distance(r.center) < reach {
+                            let head = w.traffic.jam_chain(id).cars.last().copied().unwrap_or(id);
+                            *heads.entry(head).or_default() += 1;
+                        }
+                    }
+                    let mut v: Vec<(nd_sim::CarId, usize)> = heads.into_iter().collect();
+                    v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                    for (h, n) in v.into_iter().take(4).filter(|x| x.1 >= 5) {
+                        let c = &w.traffic.cars[h];
+                        let here = c.route[c.idx];
+                        let next = c.route.get(c.idx + 1).copied();
+                        let nk = next.map(|x| format!("{:?}", w.traffic.net.lanes[x as usize].kind));
+                        let ring_node = next.and_then(|x| match w.traffic.net.lanes[x as usize].kind { nd_sim::traffic::LaneKind::Connector { node, .. } => w.traffic.net.rings.nodes.get(&node).map(|rn| (rn.ring, if rn.exits.contains(&x) { "exit" } else if rn.entries.contains(&x) { "entry" } else { "through" })), _ => None });
+                        println!("    jam {:02}:{:02} ring {k}: {n} behind {:?} at ({:.0},{:.0}) v {:.1} stalled {:.0} why {:?} lane {:?} on_ring {} next {:?} {:?} wait {:?}", w.clock.hour(), m % 60, h, c.pos.x, c.pos.y, c.v, c.stalled, w.traffic.stop_reason(h), w.traffic.net.lanes[here as usize].kind, w.traffic.net.rings.circulating.contains(&here), ring_node, nk, c.wait);
+                    }
+                }
+            }
+        }
         if m % 10 == 0 {
             samples += 1;
             for (k, (n, stall)) in queues(&w) {
@@ -157,6 +247,16 @@ fn main() {
     }
     let ns = samples.max(1) as f32;
     println!("end day {} {:02}:{:02}: pop {pop0} -> {} treasury {tr0:.0} -> {:.0}; ran {:.0} s", w.clock.day(), w.clock.hour(), w.clock.minute_of_day() % 60, w.citizens.len(), w.economy.treasury, t1.elapsed().as_secs_f32());
+    println!("  city: vehicles off the road {finished} (lorries {lorries_done}), mean age then {:.0} s", age_sum / finished.max(1) as f64);
+    for &k in &watch_rings {
+        let (on, arms) = stand_near.get(&k).copied().unwrap_or_default();
+        println!("  ring {k:2}: distinct cars within 80 m {}, distinct cars on its lanes {}, car-minutes standing on the ring {on}, within 80 m off it {arms}", near_cars.get(&k).map_or(0, |s| s.len()), on_ring.get(&k).map_or(0, |s| s.len()));
+    }
+    for &k in &watch_rings {
+        let mut v: Vec<(&String, &usize)> = reasons.iter().filter(|((kk, _), _)| *kk == k).map(|((_, s), n)| (s, n)).collect();
+        v.sort_by(|a, b| b.1.cmp(a.1));
+        println!("  ring {k:2} standing car-minutes by queue head: {}", v.iter().take(8).map(|(s, n)| format!("{s} {n}")).collect::<Vec<_>>().join(", "));
+    }
     let total: usize = q_sum.values().sum();
     println!("  all rings: mean queued {:.1}, cars through {}; gridlock in {gridlock_samples}/{samples} samples; alert up in {alert_samples}/{samples}", total as f32 / ns, through.values().sum::<usize>());
     let mut order: Vec<usize> = q_sum.keys().copied().collect();

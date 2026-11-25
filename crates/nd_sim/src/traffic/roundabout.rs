@@ -230,16 +230,21 @@ impl LaneNetwork {
                 _ => 0,
             });
             let on_ring = lanes.first().is_some_and(|&l| ring_lane[l as usize]);
+            // [r17-roundabouts] Only a compact roundabout lets its next lane
+            // in leave too; a ring road (its arms far apart) keeps leaving
+            // from the edge lane, changing lanes between arms.
+            let compact = roads.ring_of_node(self.approaches[ai].node).is_some_and(|k| roads.rings[k].radius < crate::roads::RING_ROAD_RADIUS);
+            let edge = if compact { 1 } else { 0 };
             let turns = self.exits_of(&lanes);
             let n = lanes.len();
             let arrows: Vec<u8> = if on_ring {
                 (0..n)
                     .map(|i| {
                         let mut a = STRAIGHT & turns;
-                        if i <= 1 {
+                        if i <= edge {
                             a |= LEFT & turns;
                         }
-                        if i + 2 >= n {
+                        if i + 1 + edge >= n {
                             a |= RIGHT & turns;
                         }
                         if a == 0 { STRAIGHT } else { a }
