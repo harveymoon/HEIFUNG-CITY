@@ -46,6 +46,7 @@ pub mod palette;
 pub mod preview;
 /// [looks] Low-poly people from a citizen's look.
 pub mod people;
+pub mod people_near;
 /// [society] Camps, RVs and overflowing trash.
 pub mod society;
 /// [social] Murals and community gardens.

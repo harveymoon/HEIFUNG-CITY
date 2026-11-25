@@ -127,7 +127,7 @@ pub(super) fn status(ctx: &Ctx) -> Value {
     // [looks] The figure cache: meshes alive, people outdoors and their distinct looks.
     let st = &ctx.stats;
     v["render"]["cut_meshes"] = json!(st.cut_meshes);
-    v["render"]["people"] = json!({ "meshes": st.people_meshes, "mesh_cap": crate::render::PEOPLE_MESH_CAP, "visible": st.people_visible, "distinct_looks_visible": st.people_looks_visible, "built_total": st.people_built, "borrowed": st.people_borrowed, "materials": 1 });
+    v["render"]["people"] = json!({ "meshes": st.people_meshes, "mesh_cap": crate::render::PEOPLE_MESH_CAP, "visible": st.people_visible, "distinct_looks_visible": st.people_looks_visible, "built_total": st.people_built, "borrowed": st.people_borrowed, "materials": 1, "near": { "drawn": st.people_near, "triangles": st.people_near_tris, "lent": st.people_near_lent, "meshes": st.people_near_meshes, "built_total": st.people_near_built } });
     // The full alerts scan on every poll. Not cached: nothing cheap says
     // the world is unchanged (`step_sim` and other per-frame systems take
     // `Sim` mutably every frame, paused or not, so Bevy's change ticks

@@ -151,6 +151,23 @@ Citizens are rendered from their simulated positions every frame.
   (the adaptive junction arrows leave ring nodes alone). Hovering the tool shows the ring,
   the road it takes up, the joins and the lots under the ring road (red); clicking stamps it
   into the active project.
+  [r17-roundabouts] Two-lane rules on compact roundabouts (under 80 m across; ring roads keep
+  leaving from the edge lane, their arms far apart): outer arms join and leave by the outer
+  two lanes (inner arms by the inner two), an arm narrower than the ring also reaches the next lane in, and
+  entering or leaving by a lane further in costs `RING_INNER_LANE` (4 m) each way, so the
+  first exit goes from the outer lane and later exits and U-turns go in by the inner lane,
+  round on it and out from it with no lane change. A car leaving from the inner lane
+  crosses the outer one and gives way to moving outer-lane traffic within 2 s of the exit
+  (`inner_exit_blocked`; a standing car lets it out); entries give way to every lane. A
+  two-lane arm onto a multi-lane ring is painted by exit (right lane right+ahead, left lane
+  ahead+left). Widening keeps the outer edge (`Ring::widened`, `World::widen_roundabout`):
+  the lane comes out of the island, nothing round the ring is taken. Ways to widen: the
+  Edit tool's lane buttons, the Road tool's roundabout clicked on an existing ring's island
+  with another lane count, the Alerts window's "Widen to N lanes" under
+  `roundabout_over_capacity`, and remote `widen_roundabout`. New rings from 50 m across
+  default to two lanes (`ring_lanes_for`) unless the player picks. Arm zebras stand
+  `RING_CROSSWALK_BACK` (13 m) beyond the widest half width, about two car lengths out
+  from where the arm's lanes begin, so cars stopping for walkers stand on the arm.
 - **Driving** (`traffic.rs` `DriverProfile`, `world/driving/`, `takeover.rs`): turns follow a
   circular arc tangent to both lanes (the fillet of their corner), long vehicles swing wide, and
   cars are drawn along the poses of every physics substep (`Car::pose_at`) rather than a straight

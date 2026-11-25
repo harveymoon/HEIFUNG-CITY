@@ -267,3 +267,57 @@ fn a_raised_roundabout_takes_the_roads_at_its_level_and_passes_over_the_rest() {
     let w2 = World::from_ron(&ron).unwrap();
     assert_eq!(w2.roads.rings.first().map(|r| r.level), Some(8.0));
 }
+
+/// [r17-roundabouts] Widening a built one-lane ring to two keeps its outer
+/// edge (the lane comes out of the island), and the
+/// built ring has two lanes that the arms enter and leave by both.
+#[test]
+fn a_ring_widened_keeps_its_outer_edge_and_gets_two_lanes() {
+    let mut w = crossroads();
+    w.add_roundabout(Vec2::ZERO, 20.0, 1).expect("stamped");
+    w.implement();
+    let old = w.roads.rings[0];
+    assert!(w.widen_roundabout(Vec2::new(3.0, 2.0), None, 1).is_err(), "already one lane");
+    assert!(w.widen_roundabout(Vec2::new(200.0, 0.0), None, 2).is_err(), "no ring there");
+    let id = w.widen_roundabout(Vec2::new(3.0, 2.0), None, 2).expect("widened");
+    let new = w.gesture(id).and_then(|g| g.ring()).unwrap();
+    assert_eq!(new.lanes, 2);
+    assert!((new.outer_radius() - old.outer_radius()).abs() < 1e-3, "outer edge kept: {} vs {}", new.outer_radius(), old.outer_radius());
+    assert!(new.radius < old.radius && new.inner_radius() < old.inner_radius());
+    w.implement();
+    assert_eq!(w.implement_refused, None);
+    assert_eq!(w.roads.rings.len(), 1);
+    assert_eq!(w.roads.rings[0].lanes, 2);
+    let net = &w.traffic.net;
+    let index = |l: crate::traffic::LaneId| match net.lanes[l as usize].kind {
+        crate::traffic::LaneKind::Road { index, .. } => index,
+        _ => 9,
+    };
+    for rn in net.rings.nodes.values().filter(|n| !n.entries.is_empty()) {
+        let into: Vec<u8> = rn.entries.iter().filter(|&&e| net.lanes[e as usize].permitted).map(|&e| index(net.lanes[e as usize].next[0])).collect();
+        let out_of: Vec<u8> = rn.exits.iter().filter(|&&e| net.lanes[e as usize].permitted).map(|&e| index(net.lanes[e as usize].prev[0])).collect();
+        assert!(into.contains(&0) && into.contains(&1), "a one-lane arm enters both ring lanes: {into:?}");
+        assert!(out_of.contains(&0) && out_of.contains(&1), "both ring lanes leave to the arm: {out_of:?}");
+    }
+}
+
+/// [r17-roundabouts] Arm zebras stand two car lengths out: the lanes of
+/// an arm run at least 9 m from the ring node's radius to the zebra.
+#[test]
+fn ring_arm_zebras_are_set_back_from_the_ring() {
+    let mut w = crossroads();
+    w.add_roundabout(Vec2::ZERO, 20.0, 1).expect("stamped");
+    w.implement();
+    let mut seen = 0;
+    for (k, c) in w.walk.crossings.iter().enumerate() {
+        let Some(n) = c.node.filter(|&n| w.roads.ring_of_node(n).is_some()) else { continue };
+        if w.roads.ring_of_segment(c.segment).is_some() {
+            continue;
+        }
+        let r = w.traffic.net.node_radius[n.0 as usize];
+        let out = c.mid.distance(w.roads.node(n).pos) - crate::walk::CROSSWALK_HALF - r;
+        assert!(out >= 9.0, "crossing {k}: near edge only {out:.1} m past the node radius");
+        seen += 1;
+    }
+    assert_eq!(seen, 4, "a zebra on each arm");
+}

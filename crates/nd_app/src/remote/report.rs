@@ -1136,6 +1136,11 @@ pub struct Alert {
 }
 
 impl Alert {
+    /// Ids of the first cases (`ring 7` for a roundabout).
+    pub fn examples(&self) -> &[String] {
+        &self.examples
+    }
+
     pub(super) fn new(kind: &'static str, severity: u8, hint: &'static str) -> Self {
         Self { kind, severity, count: 0, message: String::new(), hint, points: Vec::new(), examples: Vec::new() }
     }

@@ -1026,8 +1026,9 @@ pub(super) fn draw_arm_marks(cx: &StreetCtx, g: &mut Geometry, nid: NodeId, node
             if roads.ring_of_segment(sid).is_none() {
                 // [r1-roads] (K48) No zebra where the walk graph closed the
                 // arm's crossing (a footbridge, a dead-end stub walked round).
-                let paint = !arm_crosswalk_closed(cx.inp.closed, node.pos, d, nd_sim::walk::crosswalk_setback(roads, nid, sid));
-                roundabout_arm(g, pal, node.pos, d, r, seg, seg.a.0 as usize == i, paint);
+                let mid = nd_sim::walk::crosswalk_setback(roads, nid, sid);
+                let paint = !arm_crosswalk_closed(cx.inp.closed, node.pos, d, mid);
+                roundabout_arm(g, pal, node.pos, d, r, mid, seg, seg.a.0 as usize == i, paint);
             }
             continue;
         }
@@ -1259,9 +1260,11 @@ pub(super) fn roundabout_apron(g: &mut Geometry, pal: &Palette, ring: &nd_sim::r
 
 /// Where an arm meets a roundabout: a splitter island down the middle of a
 /// two-way arm, a zebra set back from the ring across it (with a refuge in
-/// the island), and a dashed give-way line across the lanes going in.
+/// the island) with its middle `mid` out from the node, where the walk
+/// graph's crossing is (`nd_sim::walk::crosswalk_setback`), and a dashed
+/// give-way line across the lanes going in.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn roundabout_arm(g: &mut Geometry, pal: &Palette, at: Vec2, d: Vec2, r: f32, seg: &nd_sim::Segment, from_a: bool, with_zebra: bool) {
+pub(super) fn roundabout_arm(g: &mut Geometry, pal: &Palette, at: Vec2, d: Vec2, r: f32, mid: f32, seg: &nd_sim::Segment, from_a: bool, with_zebra: bool) {
     let right = Vec2::new(-d.y, d.x);
     let hw = seg.half_width();
     let (outgoing, incoming) = if from_a { (seg.lanes_fwd, seg.lanes_bwd) } else { (seg.lanes_bwd, seg.lanes_fwd) };
@@ -1269,9 +1272,12 @@ pub(super) fn roundabout_arm(g: &mut Geometry, pal: &Palette, at: Vec2, d: Vec2,
     // The boundary between the directions, as a lateral offset (right of
     // `d` positive): lanes going out keep right, lanes coming in are left.
     let divide = (incoming as f32 - total * 0.5) * LANE_WIDTH;
-    let (z0, z1) = (r + 5.0, r + 7.4);
+    // [r17-roundabouts] Set back two car lengths (it was at r + 5 to
+    // r + 7.4, one short car out); the island runs on past it.
+    let half = nd_sim::walk::CROSSWALK_HALF;
+    let (z0, z1) = ((mid - half).max(r + 2.0), (mid + half).max(r + 4.4));
     if outgoing > 0 && incoming > 0 {
-        for (s0, s1, w0) in [(r + 0.9, z0 - 0.3, 0.5), (z1 + 0.3, r + 12.0, 0.9)] {
+        for (s0, s1, w0) in [(r + 0.9, z0 - 0.3, 0.5), (z1 + 0.3, z1 + 4.6, 0.9)] {
             let a = at + d * s0 + right * divide;
             let b = at + d * s1 + right * divide;
             g.part(Concrete).path_box(&[a, b], 0.0, w0, 0.0, KERB_H, rgba(pal.curb));
