@@ -463,7 +463,10 @@ What changed for the old kinds:
 business's worth of its good imported a day (`Signals::imports`, read from `TaxRates::imported`); they
 place it on industrial land near the buyers (the sites, for batching plants and saw mills).
 `FashionDistrict` opens fashion wholesalers next to the garment workshops and each other (within
-450 m): one and a half per workshop, plus one per 50 clothes a day.
+450 m): one and a half per workshop, plus one per 50 clothes a day. With no free lot (a built-up town),
+a shut works of the land uses it takes, else one losing money that is not its town's only one, is turned
+over to the new chain, nearest the buyers first (`World::retool_for_chain`, like the container yards'
+`convert_to_storage_yard`).
 
 **Hospitals' medicine** (`crate::goods`, `world/goods.rs`): each hospital uses 0.08 a bed and 0.5 a
 patient a day, keeps three days, and at 07:00 orders back up from the cheapest drug maker in town (its
