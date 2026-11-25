@@ -129,6 +129,8 @@ places.
   `MeshTag` (`walk_tag`), advanced by the distance it moved. Riders pedal
   (a two-bone reach to the pedal). `pose_vertex` is the same motion in Rust
   for the tests.
+- The near material has its own prepass vertex shader posing the limbs the same way: without depth and motion vectors TAA ghosted the background through the figures.
+- In a tight crowd only one umbrella in 0.8 m stays up (by seed rank, with hysteresis): `spread_umbrellas`.
 - Off with `ND_NEAR_PEOPLE=0`, `ND_PLAIN_PEOPLE=1`, and in the stand-in views
   (heat, focus, ghost); the selected and spotlit keep their far figure.
 - `status.render.people.near`: drawn, triangles, lent, meshes cached, built.

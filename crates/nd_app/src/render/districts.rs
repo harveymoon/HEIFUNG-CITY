@@ -157,7 +157,7 @@ pub(super) fn sync_tourists(
         tf.scale = Vec3::splat(look.stature(t.age));
         if near_on && SVec2::new(pos.x - eye.x, pos.y - eye.z).length() < near_people::CANDIDATE_REACH {
             let extras = nd_procgen::people_near::near_extras(&key, t.seed, t.age, rain);
-            near.candidates.push(near_people::NearCandidate { src: e, key: nd_procgen::people_near::NearKey { base: key, extras }, stature: tf.scale.x });
+            near.candidates.push(near_people::NearCandidate { src: e, rank: nd_procgen::hash::hash2(t.seed, 0x756D_6272) as u32, key: nd_procgen::people_near::NearKey { base: key, extras }, stature: tf.scale.x });
         }
         let wanted: Handle<Mesh> = state.figures.get_or_build(key, |k: &PersonKey| meshes.add(shared_mesh(&person_mesh(k), false))).unwrap_or_else(|| mats.citizen_mesh.clone());
         if mesh.0 != wanted {

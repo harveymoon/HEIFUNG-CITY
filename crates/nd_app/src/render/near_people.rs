@@ -52,16 +52,17 @@ pub(super) const BUILDS_PER_FRAME: usize = 10;
 pub(super) const CANDIDATE_REACH: f32 = STREET_BAND.1 + KEEP_PAST + 2.0;
 
 pub(super) const RIG_SHADER: Handle<Shader> = uuid_handle!("6b1f2d0e-93c4-4a57-8e21-5d0c7a9e4f36");
+pub(super) const RIG_PREPASS_SHADER: Handle<Shader> = uuid_handle!("0c4e8a71-2f5b-4d93-a6e8-91b7d3c5f024");
 
-fn rig_shader_src() -> String {
+/// The rig shader: the main pass (`prepass` false) or the depth / normal /
+/// motion-vector prepass, both posing the vertices the same way.
+fn rig_shader_src_for(prepass: bool) -> String {
+    let header = if prepass { RIG_PREPASS_HEADER } else { RIG_MAIN_HEADER };
+    let vs = if prepass { RIG_PREPASS_VS } else { RIG_MAIN_VS };
     format!(
-        r#"
-#import bevy_pbr::{{
-    mesh_functions,
-    forward_io::{{Vertex, VertexOutput}},
-    view_transformations::position_world_to_clip,
-}}
-
+        "{header}{common}{vs}",
+        common = format!(
+            r#"
 @group(#{{MATERIAL_BIND_GROUP}}) @binding(100) var<uniform> rig_params: vec4<f32>;
 
 const TAU: f32 = 6.28318530718;
@@ -99,21 +100,23 @@ fn ride_leg(phi: f32) -> vec2<f32> {{
     return vec2<f32>(thigh, atan2(s.y, s.x));
 }}
 
-@vertex
-fn vertex(vertex: Vertex) -> VertexOutput {{
-    var out: VertexOutput;
-    var pos = vertex.position;
-#ifdef VERTEX_NORMALS
-    var nrm = vertex.normal;
-#endif
-#ifdef VERTEX_UVS_B
+// A vertex posed by its limb (uv_b: nd_procgen::people_near::rig_aux) and
+// the figure's stride in the mesh tag (walk_tag).
+struct Posed {{
+    pos: vec3<f32>,
+    nrm: vec3<f32>,
+}}
+
+fn pose(p_in: vec3<f32>, n_in: vec3<f32>, uv_b: vec2<f32>, instance_index: u32) -> Posed {{
+    var pos = p_in;
+    var nrm = n_in;
     // The limb this vertex belongs to and the joints it turns about
     // (nd_procgen::people_near::rig_aux), the stride in the mesh tag.
-    let tag = mesh_functions::get_tag(vertex.instance_index);
-    let a0 = u32(round(vertex.uv_b.x));
+    let tag = mesh_functions::get_tag(instance_index);
+    let a0 = u32(round(uv_b.x));
     let code = a0 & 31u;
     let parent = unpack_pivot(a0 >> 5u);
-    let own = unpack_pivot(u32(round(vertex.uv_b.y)));
+    let own = unpack_pivot(u32(round(uv_b.y)));
     let amp = f32((tag >> 16u) & 255u) / 255.0;
     let phi = f32(tag & 65535u) / 65536.0 * TAU;
     let s = sin(phi);
@@ -163,16 +166,66 @@ fn vertex(vertex: Vertex) -> VertexOutput {{
         var q = rot2(pos.xy, own, a_own);
         q = rot2(q, parent, a_par);
         pos = vec3<f32>(q, pos.z);
-#ifdef VERTEX_NORMALS
         let m = rot2(rot2(nrm.xy, vec2<f32>(0.0), a_own), vec2<f32>(0.0), a_par);
         nrm = vec3<f32>(m, nrm.z);
-#endif
     }}
     if (bob) {{
         pos.y = pos.y - amp * WALK_DIP * (0.5 - 0.5 * cos(2.0 * phi));
     }}
-#endif
+    return Posed(pos, nrm);
+}}
 
+"#,
+        hx = near::RIDE_HIP.x,
+        hy = near::RIDE_HIP.y,
+        bx = near::RIDE_BB.x,
+        by = near::RIDE_BB.y,
+        crank = near::RIDE_CRANK,
+        ax = near::RIDE_ANKLE.x,
+        ay = near::RIDE_ANKLE.y,
+        thigh = near::RIDE_THIGH,
+        shin = near::RIDE_SHIN,
+        rest = flt(near::RIDE_REST),
+        dip = near::WALK_DIP,
+    
+        )
+    )
+}
+
+fn rig_shader_src() -> String {
+    rig_shader_src_for(false)
+}
+
+const RIG_MAIN_HEADER: &str = r#"
+#import bevy_pbr::{
+    mesh_functions,
+    forward_io::{Vertex, VertexOutput},
+    view_transformations::position_world_to_clip,
+}
+"#;
+
+const RIG_PREPASS_HEADER: &str = r#"
+#import bevy_pbr::{
+    mesh_functions,
+    prepass_io::{Vertex, VertexOutput},
+    view_transformations::position_world_to_clip,
+}
+"#;
+
+const RIG_MAIN_VS: &str = r#"
+@vertex
+fn vertex(vertex: Vertex) -> VertexOutput {
+    var out: VertexOutput;
+    var pos = vertex.position;
+    var nrm = vec3<f32>(0.0, 1.0, 0.0);
+#ifdef VERTEX_NORMALS
+    nrm = vertex.normal;
+#endif
+#ifdef VERTEX_UVS_B
+    let posed = pose(pos, nrm, vertex.uv_b, vertex.instance_index);
+    pos = posed.pos;
+    nrm = posed.nrm;
+#endif
     let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
 #ifdef VERTEX_NORMALS
     out.world_normal = mesh_functions::mesh_normal_local_to_world(nrm, vertex.instance_index);
@@ -198,21 +251,63 @@ fn vertex(vertex: Vertex) -> VertexOutput {{
     out.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(vertex.instance_index, world_from_local[3]);
 #endif
     return out;
-}}
-"#,
-        hx = near::RIDE_HIP.x,
-        hy = near::RIDE_HIP.y,
-        bx = near::RIDE_BB.x,
-        by = near::RIDE_BB.y,
-        crank = near::RIDE_CRANK,
-        ax = near::RIDE_ANKLE.x,
-        ay = near::RIDE_ANKLE.y,
-        thigh = near::RIDE_THIGH,
-        shin = near::RIDE_SHIN,
-        rest = flt(near::RIDE_REST),
-        dip = near::WALK_DIP,
-    )
 }
+"#;
+
+const RIG_PREPASS_VS: &str = r#"
+@vertex
+fn vertex(vertex: Vertex) -> VertexOutput {
+    var out: VertexOutput;
+    var pos = vertex.position;
+    var nrm = vec3<f32>(0.0, 1.0, 0.0);
+#ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
+#ifdef VERTEX_NORMALS
+    nrm = vertex.normal;
+#endif
+#endif
+#ifdef VERTEX_UVS_B
+    let posed = pose(pos, nrm, vertex.uv_b, vertex.instance_index);
+    pos = posed.pos;
+    nrm = posed.nrm;
+#endif
+    let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
+    out.world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(pos, 1.0));
+    out.position = position_world_to_clip(out.world_position.xyz);
+#ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
+    out.unclipped_depth = out.position.z;
+    out.position.z = min(out.position.z, 1.0);
+#endif
+#ifdef VERTEX_UVS_A
+    out.uv = vertex.uv;
+#endif
+#ifdef VERTEX_UVS_B
+    out.uv_b = vertex.uv_b;
+#endif
+#ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
+#ifdef VERTEX_NORMALS
+    out.world_normal = mesh_functions::mesh_normal_local_to_world(nrm, vertex.instance_index);
+#endif
+#ifdef VERTEX_TANGENTS
+    out.world_tangent = mesh_functions::mesh_tangent_local_to_world(world_from_local, vertex.tangent, vertex.instance_index);
+#endif
+#endif
+#ifdef VERTEX_COLORS
+    out.color = vertex.color;
+#endif
+#ifdef MOTION_VECTOR_PREPASS
+    // The limbs' own motion is left out: the figure's move is what TAA needs.
+    let prev_model = mesh_functions::get_previous_world_from_local(vertex.instance_index);
+    out.previous_world_position = mesh_functions::mesh_position_local_to_world(prev_model, vec4<f32>(pos, 1.0));
+#endif
+#ifdef VERTEX_OUTPUT_INSTANCE_INDEX
+    out.instance_index = vertex.instance_index;
+#endif
+#ifdef VISIBILITY_RANGE_DITHER
+    out.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(vertex.instance_index, world_from_local[3]);
+#endif
+    return out;
+}
+"#;
 
 /// A float as WGSL wants it (always with a point).
 fn flt(v: f32) -> String {
@@ -221,7 +316,8 @@ fn flt(v: f32) -> String {
 }
 
 pub(super) fn add_rig_shader(mut shaders: ResMut<Assets<Shader>>) {
-    let _ = shaders.insert(RIG_SHADER.id(), Shader::from_wgsl(rig_shader_src(), "nd_app/people_rig.wgsl"));
+    let _ = shaders.insert(RIG_SHADER.id(), Shader::from_wgsl(rig_shader_src_for(false), "nd_app/people_rig.wgsl"));
+    let _ = shaders.insert(RIG_PREPASS_SHADER.id(), Shader::from_wgsl(rig_shader_src_for(true), "nd_app/people_rig_prepass.wgsl"));
 }
 
 /// The near figures' material: the far figures' (vertex colours, the
@@ -239,10 +335,11 @@ impl MaterialExtension for PeopleRig {
     fn vertex_shader() -> ShaderRef {
         RIG_SHADER.into()
     }
-    // No prepass and no shadows (figures cast none): the depth prepass
-    // would not see the limbs where the walk puts them.
-    fn enable_prepass() -> bool {
-        false
+    // [r17-people] The prepass poses the limbs too: without it the figures
+    // had no depth or motion vectors, and TAA blended the wall behind them
+    // through (stippled, half see-through people close to the camera).
+    fn prepass_vertex_shader() -> ShaderRef {
+        RIG_PREPASS_SHADER.into()
     }
     fn enable_shadows() -> bool {
         false
@@ -261,6 +358,9 @@ pub(super) struct NearCandidate {
     pub src: Entity,
     pub key: NearKey,
     pub stature: f32,
+    /// A fixed rank from the citizen's seed: who keeps their umbrella in a
+    /// tight crowd ([`spread_umbrellas`]).
+    pub rank: u32,
 }
 
 /// A near figure lent to a far one.
@@ -330,6 +430,43 @@ fn proxy_range(band: (f32, f32)) -> VisibilityRange {
 
 fn far_range(band: (f32, f32)) -> VisibilityRange {
     VisibilityRange { start_margin: band.0..band.1, end_margin: 1.0e6..1.0e6 + 1.0, use_aabb: false }
+}
+
+/// Umbrellas closer than this to another one: only one of them stays up.
+pub(super) const UMBRELLA_GAP: f32 = 0.8;
+
+/// [r17-people] People queued on almost the same spot (a bus stop in the
+/// snow) each put their umbrella up and the canopies piled into a layered
+/// stack. Going through the umbrella holders in a fixed order (their seed
+/// rank), one keeps it up only if no one kept before stands within
+/// [`UMBRELLA_GAP`] (a figure that put theirs down needs half as much
+/// again before it goes back up, so passers-by do not flicker); the others
+/// stand under it with it down (a hoodie's hood up instead).
+fn spread_umbrellas(by_src: &mut HashMap<Entity, NearCandidate>, candidates: &[NearCandidate], lent: &HashMap<Entity, Lent>, sources: &Query<(&Transform, &Visibility), Without<NearProxy>>) {
+    let mut holders: Vec<(u32, u64, Entity, SVec2)> = candidates
+        .iter()
+        .filter(|c| c.key.extras.umbrella)
+        .filter_map(|c| sources.get(c.src).ok().map(|(t, _)| (c.rank, c.src.to_bits(), c.src, SVec2::new(t.translation.x, t.translation.z))))
+        .collect();
+    holders.sort_by_key(|h| (h.0, h.1));
+    holders.dedup_by_key(|h| h.2);
+    let mut grid: HashMap<(i32, i32), Vec<SVec2>> = HashMap::new();
+    let cell = |p: SVec2| ((p.x / UMBRELLA_GAP).floor() as i32, (p.y / UMBRELLA_GAP).floor() as i32);
+    for (_, _, src, p) in holders {
+        let was_down = lent.get(&src).is_some_and(|l| !l.key.extras.umbrella);
+        let gap = if was_down { UMBRELLA_GAP * 1.5 } else { UMBRELLA_GAP };
+        let (cx, cy) = cell(p);
+        let crowded = (-2..=2).any(|dx| (-2..=2).any(|dy| grid.get(&(cx + dx, cy + dy)).is_some_and(|v| v.iter().any(|q| q.distance(p) < gap))));
+        if crowded {
+            if let Some(c) = by_src.get_mut(&src) {
+                let hoodie = nd_sim::looks::Outfit::ALL.get(c.key.base.outfit as usize) == Some(&nd_sim::looks::Outfit::Hoodie);
+                c.key.extras.umbrella = false;
+                c.key.extras.hood_up = hoodie;
+            }
+        } else {
+            grid.entry((cx, cy)).or_default().push(p);
+        }
+    }
 }
 
 /// Lend, update and take back the near figures (after the far figures
@@ -405,6 +542,7 @@ pub(super) fn sync_near_people(
     for c in &candidates {
         by_src.entry(c.src).or_insert(*c);
     }
+    spread_umbrellas(&mut by_src, &candidates, &st.lent, &sources);
     let lent_now: Vec<Entity> = st.lent.keys().copied().collect();
     for src in lent_now {
         let keep = by_src.contains_key(&src) && sources.get(src).is_ok_and(|(t, _)| t.translation.distance(eye) < band.1 + KEEP_PAST);
@@ -415,6 +553,7 @@ pub(super) fn sync_near_people(
     // Lend to the nearest not yet lent, up to the cap.
     let mut builds = 0usize;
     for c in &candidates {
+        let Some(c) = by_src.get(&c.src) else { continue };
         if st.lent.len() >= NEAR_CAP {
             break;
         }
@@ -516,6 +655,14 @@ mod tests {
         assert!(s.contains("const RIDE_HIP: vec2<f32> = vec2<f32>(-0.17, 0.97);"), "{s}");
         assert!(s.contains("const RIDE_REST: f32 = 0.0;"));
         assert!(!s.contains("{{"), "the braces came through formatting");
+    }
+
+    #[test]
+    fn the_prepass_poses_and_moves_too() {
+        let s = rig_shader_src_for(true);
+        assert!(s.contains("prepass_io::{Vertex, VertexOutput}") && s.contains("previous_world_position") && s.contains("fn pose("));
+        let m = rig_shader_src_for(false);
+        assert!(m.contains("forward_io::{Vertex, VertexOutput}") && m.contains("pose(pos, nrm, vertex.uv_b"));
     }
 
     #[test]

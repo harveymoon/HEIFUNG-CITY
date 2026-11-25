@@ -229,7 +229,7 @@ pub(super) fn sync_citizens(
                 continue;
             }
             let extras = nd_procgen::people_near::near_extras(&key, c.seed, c.age, rain);
-            near.candidates.push(near_people::NearCandidate { src: e, key: nd_procgen::people_near::NearKey { base: key, extras }, stature });
+            near.candidates.push(near_people::NearCandidate { src: e, rank: nd_procgen::hash::hash2(c.seed, 0x756D_6272) as u32, key: nd_procgen::people_near::NearKey { base: key, extras }, stature });
         }
     }
     drop(sp);
