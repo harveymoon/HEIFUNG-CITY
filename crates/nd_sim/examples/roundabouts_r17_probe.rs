@@ -115,6 +115,26 @@ fn main() {
             }
         }
         let m = w.clock.minute_of_day();
+        if m == 1439 {
+            let modes: Vec<String> = nd_sim::citizens::TripMode::ALL.iter().map(|md| format!("{} {}", md.key(), w.vehicles.stats.trips_today.get(md.index()).copied().unwrap_or(0))).collect();
+            println!("  day {} trips by mode: {}", w.clock.day(), modes.join(", "));
+        }
+        if m % 10 == 0 && std::env::var("HEADS").is_ok() {
+            // Heads held 300 s+ at a watched ring: where they stand.
+            for (id, c) in w.traffic.cars.iter() {
+                if c.stalled < 300.0 || c.v > 0.5 {
+                    continue;
+                }
+                let Some(&here) = c.route.get(c.idx) else { continue };
+                let Some(&next) = c.route.get(c.idx + 1) else { continue };
+                let nl = &w.traffic.net.lanes[next as usize];
+                let nd_sim::traffic::LaneKind::Connector { node, .. } = nl.kind else { continue };
+                let Some(rn) = w.traffic.net.rings.nodes.get(&node) else { continue };
+                let on_ring = w.traffic.net.rings.circulating.contains(&here);
+                let what = if rn.exits.contains(&next) { "exit" } else if rn.entries.contains(&next) { "entry" } else { "through" };
+                println!("    {:02}:{:02} ring {} car {:?} on_ring {on_ring} next {what} stalled {:.0} wait {:?} lane {:?} at ({:.0},{:.0})", w.clock.hour(), m % 60, rn.ring, id, c.stalled, c.wait, w.traffic.net.lanes[here as usize].kind, c.pos.x, c.pos.y);
+            }
+        }
         if m % 10 == 0 {
             samples += 1;
             for (k, (n, stall)) in queues(&w) {

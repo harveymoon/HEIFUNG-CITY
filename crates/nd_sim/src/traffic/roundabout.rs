@@ -55,6 +55,13 @@ const RING_INNER_LANE: f32 = 4.0;
 /// moving car in a lane it crosses less than this many seconds from the
 /// exit.
 const RING_EXIT_GAP: f32 = 2.0;
+/// [r17-roundabouts] After standing this many seconds at an inner-lane
+/// exit a driver takes any gap it can get: only a moving car about to be
+/// level with it (`RING_EXIT_FORCE` s off) holds it. On a big, busy ring
+/// the outer lane never left a 2 s gap and inner-lane cars stood for many
+/// minutes.
+const RING_EXIT_PATIENCE: f32 = 8.0;
+const RING_EXIT_FORCE: f32 = 0.7;
 /// Seconds a ring car stands behind a ring that does not move before it
 /// gets off at the arm it is at (`Traffic::bail_off_ring`).
 const RING_BAIL_AFTER: f32 = 20.0;
@@ -294,7 +301,8 @@ impl Traffic {
             }
             // [r17-roundabouts] From a lane further in: across the outer
             // lane(s), giving way to whoever is coming along them.
-            if self.inner_exit_blocked(rn, conn, dist / car.v.max(1.5)) {
+            let gap = if car.stalled > RING_EXIT_PATIENCE { RING_EXIT_FORCE } else { RING_EXIT_GAP };
+            if self.inner_exit_blocked(rn, conn, dist / car.v.max(1.5), gap) {
                 return stop;
             }
             return RingCall::Go;
@@ -413,9 +421,10 @@ impl Traffic {
     /// [r17-roundabouts] Must a car leaving the ring by exit `conn`, from
     /// a lane further in than the arm's side, wait for traffic in the
     /// lanes it crosses: a moving car in the junction from one of them, or
-    /// a moving one there arriving within `RING_EXIT_GAP` of this car (one
-    /// standing still lets it out).
-    fn inner_exit_blocked(&self, rn: &RingNode, conn: LaneId, reach: f32) -> bool {
+    /// a moving one there arriving within `gap` seconds of this car
+    /// (`RING_EXIT_GAP`, less once it has waited; one standing still lets
+    /// it out).
+    fn inner_exit_blocked(&self, rn: &RingNode, conn: LaneId, reach: f32, gap: f32) -> bool {
         let lanes = &self.net.lanes;
         let c = &lanes[conn as usize];
         let Some(&from) = c.prev.first() else { return false };
@@ -458,7 +467,7 @@ impl Traffic {
                 }
                 // Coming up to the exit before this car is out, or within
                 // the gap after it.
-                if (off + lane.length - car.s) / car.v < reach + RING_EXIT_GAP {
+                if (off + lane.length - car.s) / car.v < reach + gap {
                     return true;
                 }
             }
