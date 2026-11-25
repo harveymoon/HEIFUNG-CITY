@@ -29,7 +29,12 @@ fn main() {
         for (b, k, _) in w.box_depots() {
             let (old, new) = (saved.get(&b).copied(), w.containers.layout_room.get(&b).copied());
             if old == new { same += 1 } else { diff += 1 }
-            println!("   depot {:?} {:?} {}: saved room {:?}, layout room {:?}", b, k, w.buildings.get(b).map(|x| x.name.as_str()).unwrap_or(""), old, new);
+            // [r17-fixes] The style and the footprint's sides, to see why a
+            // layout holds nothing.
+            let style = nd_procgen::buildings::building_style(&w, b, &BuildingRules::default(), None);
+            let sides: Vec<String> = w.footprint(b).map(|l| (0..l.polygon.len()).map(|i| format!("{:.1}", l.polygon[i].distance(l.polygon[(i + 1) % l.polygon.len()]))).collect()).unwrap_or_default();
+            let fl = w.buildings.get(b).map_or(0, |x| x.floors);
+            println!("   depot {:?} {:?} {}: saved room {:?}, layout room {:?}; style {:?}, floors {fl}, footprint sides [{}]", b, k, w.buildings.get(b).map(|x| x.name.as_str()).unwrap_or(""), old, new, style, sides.join(", "));
         }
         println!("layout rooms: {same} same as saved, {diff} differ ({} depots laid out in {ms:.1} ms)", same + diff);
     }

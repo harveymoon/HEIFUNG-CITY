@@ -8,6 +8,26 @@ use super::*;
 /// records for a building is the one that is drawn.
 #[allow(clippy::too_many_arguments)]
 pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: u64, rules: &BuildingRules, extras: &Extras) -> Style {
+    let style = pick_style(lot, land_use, floors, tier, seed, rules, extras);
+    // [r17-fixes] (photo 2026-11-24 F4) A container yard in the depot look
+    // keeps its stacks between the front bays and a warehouse along the
+    // back: on a lot too shallow or narrow for both it laid none, so the
+    // yard's room was 0 while it held boxes. Such a lot is drawn as an open
+    // container yard instead (same draw, the look only).
+    if style == Style::Depot && extras.business == Some(nd_sim::BusinessKind::ContainerYard) && !(lot.depth() >= DEPOT_YARD_MIN_DEPTH && lot.width() >= DEPOT_YARD_MIN_WIDTH) {
+        return Style::ContainerYard;
+    }
+    style
+}
+
+/// [r17-fixes] The smallest lot (depth, frontage, metres) the depot look
+/// lays a container yard's stacks on: 14 m of front apron and bays, the
+/// stacks, 4 m of dock apron and a warehouse of 40 % of the depth.
+pub const DEPOT_YARD_MIN_DEPTH: f32 = 40.0;
+pub const DEPOT_YARD_MIN_WIDTH: f32 = 20.0;
+
+#[allow(clippy::too_many_arguments)]
+fn pick_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: u64, rules: &BuildingRules, extras: &Extras) -> Style {
     let mut rng = rng_for(seed, 11);
     match (extras.plant, extras.parking) {
         _ if extras.service.is_some() => Style::for_service(extras.service.unwrap()),

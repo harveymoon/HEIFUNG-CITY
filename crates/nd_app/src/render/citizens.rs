@@ -74,6 +74,26 @@ fn height_key(c: &nd_sim::Citizen, pos: SVec2, stamp: u64) -> HeightKey {
     ([b(pos.x), b(pos.y), b(c.pos.x), b(c.pos.y), b(from.x), b(from.y), b(to.x), b(to.y)], flags, stamp)
 }
 
+/// [r17-fixes] (photo 2026-11-24 F9) Riders standing at a red (or in any
+/// queue) are drawn spread across the stop box: each a little to one side
+/// and a little back or forward by its id, so a dozen waiting riders do
+/// not stand inside one another (the sim keeps them a bike apart along
+/// one line only). Draw-only; a moving rider (a metre or more a tick) is
+/// drawn on its line.
+fn rider_spread(id: nd_sim::CitizenId, prev: SVec2, now: SVec2, heading: f32) -> SVec2 {
+    let moved = prev.distance(now);
+    if moved >= 1.0 {
+        return SVec2::ZERO;
+    }
+    let k = slotmap::Key::data(&id).as_ffi();
+    let h = nd_sim::hash::finish(k ^ 0x5B1D_E5A7);
+    let lane = (h % 4) as f32 - 1.5;
+    let back = ((h >> 8) % 3) as f32 - 1.0;
+    let (s, c) = heading.sin_cos();
+    let fwd = SVec2::new(c, s);
+    (fwd.perp() * (lane * 0.55) + fwd * (back * 0.45)) * (1.0 - moved)
+}
+
 pub(super) fn sync_citizens(
     mut commands: Commands,
     sim: Res<Sim>,
@@ -230,6 +250,7 @@ pub(super) fn sync_citizens(
         let lying = pose == nd_sim::world::Pose::Lying;
         // Thrown clear of the wreck: beside it, not under it.
         let pos = if lying && down.contains(&id) { pos + SVec2::new(-c.heading.sin(), c.heading.cos()) * 2.6 } else { pos };
+        let pos = if key.ride { pos + rider_spread(id, c.prev_pos, c.pos, heading) } else { pos };
         // [r6-perf] The heights, worked out again only when what they are
         // read from changed (`FigureCache`).
         let hkey = height_key(c, pos, stamp);

@@ -374,8 +374,9 @@ impl World {
         st.response_min_yesterday = std::mem::take(&mut st.response_min_today);
         st.saturated_min_yesterday = st.saturated_min_today;
         st.saturated_min_today = [0; 3];
+        st.queue_max_yesterday = st.queue_max_today;
         st.queue_max_today = st.queued;
-        st.unanswered_why_today = Default::default();
+        st.unanswered_why_yesterday = std::mem::take(&mut st.unanswered_why_today);
         st.mutual_aid_today = 0;
         st.diverted_today = 0;
         st.chases_today = 0;
