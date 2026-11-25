@@ -239,8 +239,10 @@ fn extent(g: &Geometry, lot: &Lot, link: Option<&RailLink>) -> (f32, f32, f32, S
 
 /// Triangles a style may spend on a lot: a base, a share per floor for
 /// facades, and a share per square metre for yards and parks.
+/// [r17-logos] Signs spell real letters now (stroke font, about 12
+/// triangles a letter where a lit block was 2): 600 more for them.
 fn budget(floors: u8, lot: &Lot) -> usize {
-    4000 + 300 * floors as usize + 2 * polygon_area(&lot.polygon).abs() as usize
+    4600 + 300 * floors as usize + 2 * polygon_area(&lot.polygon).abs() as usize
 }
 
 /// Building sites at every stage stay on their lot and are well formed.

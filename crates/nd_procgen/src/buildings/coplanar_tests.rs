@@ -81,6 +81,9 @@ pub(super) fn clash_list(g: &Geometry) -> Vec<Clash> {
         key: (u8, [i32; 3]),
         s: Surface,
         what: String,
+        /// [r17-logos] An ad frame: frames of one screen are never shown
+        /// together (the shader shows one at a time).
+        frame: Option<u32>,
     }
     let mut tris: Vec<Tri> = Vec::new();
     // [r4-style] The detail layers are drawn over the base near the camera.
@@ -95,7 +98,8 @@ pub(super) fn clash_list(g: &Geometry) -> Vec<Clash> {
             let n = [c[0] / len, c[1] / len, c[2] / len];
             let col = m.colors[t[0] as usize];
             let q = |v: f32| (v * 50.0).round() as i32;
-            tris.push(Tri { n, p, key: (s as u8, [q(col[0]), q(col[1]), q(col[2])]), s, what: format!("{s:?} {:.2},{:.2},{:.2}", col[0], col[1], col[2]) });
+            let frame = crate::ads::ad_code(col[3]).map(|c| c & 3);
+            tris.push(Tri { n, p, key: (s as u8, [q(col[0]), q(col[1]), q(col[2])]), s, what: format!("{s:?} {:.2},{:.2},{:.2}", col[0], col[1], col[2]), frame });
         }
     }
     // Bucket by plane: the normal to a few degrees and the offset to 2 mm,
@@ -117,6 +121,9 @@ pub(super) fn clash_list(g: &Geometry) -> Vec<Clash> {
                     }
                     let (a, b) = (&tris[i], &tris[j]);
                     if a.key == b.key || dot(a.n, b.n) < 0.999 {
+                        continue;
+                    }
+                    if a.frame.is_some() && b.frame.is_some() && a.frame != b.frame {
                         continue;
                     }
                     if (dot(a.n, a.p[0]) - dot(a.n, b.p[0])).abs() > 0.0005 {

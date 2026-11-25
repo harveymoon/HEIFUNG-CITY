@@ -186,7 +186,7 @@ fn rounded_square(r: f32, round: f32) -> Vec<Vec2> {
 /// The outline of a shape hint, radius about `r`, counter-clockwise.
 pub fn shape_outline(shape: LogoShape, r: f32) -> Vec<Vec2> {
     match shape {
-        LogoShape::Circle | LogoShape::Ring => ngon(36, r, 0.0),
+        LogoShape::Circle | LogoShape::Ring => ngon(26, r, 0.0),
         LogoShape::Hexagon => ngon(6, r, PI / 6.0),
         LogoShape::Diamond => ngon(4, r, PI / 2.0),
         LogoShape::Triangle => ngon(3, r * 1.08, PI / 2.0).into_iter().map(|p| p - Vec2::new(0.0, r * 0.18)).collect(),
@@ -259,9 +259,9 @@ pub fn design(m: &Mark) -> Logo {
         }
         Family::Orbit => {
             let core = r(s, 5, 0.26, 0.42);
-            p.push(Prim::Fill { pts: ngon(28, core, 0.0), ink: Ink::Brand });
+            p.push(Prim::Fill { pts: ngon(20, core, 0.0), ink: Ink::Brand });
             let tilt = r(s, 6, -0.9, 0.9);
-            let ell = |a: f32, b: f32, t: f32| -> Vec<Vec2> { (0..40).map(|k| rot(Vec2::new((TAU * k as f32 / 40.0).cos() * a, (TAU * k as f32 / 40.0).sin() * b), t)).collect() };
+            let ell = |a: f32, b: f32, t: f32| -> Vec<Vec2> { (0..28).map(|k| rot(Vec2::new((TAU * k as f32 / 28.0).cos() * a, (TAU * k as f32 / 28.0).sin() * b), t)).collect() };
             let b = r(s, 7, 0.22, 0.42);
             p.push(Prim::Stroke { pts: ell(0.92, b, tilt), closed: true, w: 0.07, ink: Ink::Accent });
             if mix(s, 8) % 2 == 0 {
@@ -277,7 +277,7 @@ pub fn design(m: &Mark) -> Logo {
             let a0 = r(s, 11, 0.0, PI);
             let pts: Vec<Vec2> = (0..n * 2).map(|k| Vec2::from_angle(a0 + PI * k as f32 / n as f32) * if k % 2 == 0 { 0.95 } else { 0.95 * inner }).collect();
             p.push(Prim::Fill { pts, ink: Ink::Brand });
-            p.push(Prim::Fill { pts: ngon(20, 0.95 * inner * 0.55, 0.0), ink: if mix(s, 12) % 2 == 0 { Ink::Light } else { Ink::Dark } });
+            p.push(Prim::Fill { pts: ngon(14, 0.95 * inner * 0.55, 0.0), ink: if mix(s, 12) % 2 == 0 { Ink::Light } else { Ink::Dark } });
         }
         Family::Stripes => {
             let n = 4 + (mix(s, 13) % 4) as usize;
@@ -319,7 +319,7 @@ pub fn design(m: &Mark) -> Logo {
             let inks = [Ink::Brand, Ink::Accent, Ink::Light];
             for k in 0..n {
                 let c = if n == 2 { Vec2::new(if k == 0 { -0.36 } else { 0.36 }, 0.0) } else { Vec2::from_angle(a0 + TAU * k as f32 / 3.0) * 0.42 };
-                p.push(Prim::Stroke { pts: ngon(32, rr, 0.0).into_iter().map(|q| q + c).collect(), closed: true, w: r(s, 21, 0.08, 0.12), ink: inks[k] });
+                p.push(Prim::Stroke { pts: ngon(24, rr, 0.0).into_iter().map(|q| q + c).collect(), closed: true, w: r(s, 21, 0.08, 0.12), ink: inks[k] });
             }
         }
         Family::Blades => {
@@ -362,7 +362,7 @@ pub fn design(m: &Mark) -> Logo {
             }
             let biggest = dots.iter().enumerate().max_by(|a, b| a.1 .1.total_cmp(&b.1 .1)).map_or(0, |(k, _)| k);
             for (k, (c, rad)) in dots.into_iter().enumerate() {
-                p.push(Prim::Fill { pts: ngon(10, rad, 0.0).into_iter().map(|q| q + c).collect(), ink: if k == biggest { Ink::Accent } else { Ink::Brand } });
+                p.push(Prim::Fill { pts: ngon(8, rad, 0.0).into_iter().map(|q| q + c).collect(), ink: if k == biggest { Ink::Accent } else { Ink::Brand } });
             }
         }
         Family::Waves => {
@@ -378,7 +378,7 @@ pub fn design(m: &Mark) -> Logo {
                 p.push(Prim::Stroke { pts: pts.collect(), closed: false, w: r(s, 37, 0.1, 0.16), ink: if k == 1 { Ink::Accent } else { Ink::Brand } });
             }
             if mix(s, 38) % 2 == 0 {
-                p.push(Prim::Stroke { pts: ngon(36, 0.98, 0.0), closed: true, w: 0.05, ink: Ink::Light });
+                p.push(Prim::Stroke { pts: ngon(26, 0.98, 0.0), closed: true, w: 0.05, ink: Ink::Light });
             }
         }
         Family::Cube => {
@@ -470,6 +470,35 @@ pub fn text_prims(text: &str, x0: f32, y0: f32, h: f32, ty: Type, ink: Ink) -> (
 /// Width of `text` at letter height `h`.
 pub fn text_w(text: &str, h: f32, ty: Type) -> f32 {
     logo_font::text_width(text) * h / logo_font::GLYPH_H + ty.slant * h
+}
+
+/// [r17-logos] One line of a sign `w` x `h` metres centred at `centre`
+/// (read along `right`, facing `normal`): the mark (when given) at its left
+/// end, `text` beside it as large as fits, in `ink`.
+#[allow(clippy::too_many_arguments)]
+pub fn sign_line(m: &mut MeshData, centre: Vec3, right: Vec3, normal: Vec3, w: f32, h: f32, mark: Option<&Mark>, text: &str, paint: &Paint, ink: Ink) {
+    let ty = match mark {
+        Some(mk) => Type { underline: false, ..type_of(mk) },
+        None => Type { slant: 0.0, weight: 0.14, underline: false },
+    };
+    let side = if mark.is_some() { h * 0.9 } else { 0.0 };
+    let gap = if mark.is_some() { h * 0.25 } else { 0.0 };
+    let room = (w - side - gap).max(0.0);
+    let th = (room / text_w(text, 1.0, ty).max(0.01)).min(h * 0.72);
+    let tw = text_w(text, th, ty);
+    let total = side + gap + if th >= h * 0.25 { tw } else { 0.0 };
+    let x0 = -total * 0.5;
+    let mut t = Tess::default();
+    if let Some(mk) = mark {
+        let mut lt = tessellate(mk);
+        lt.place(side * 0.5, Vec2::new(x0 + side * 0.5, 0.0));
+        t.add_tess(lt);
+    }
+    if th >= h * 0.25 {
+        let (p, _) = text_prims(text, x0 + side + gap, -th * 0.5, th, ty, ink);
+        t.add(&p);
+    }
+    emit(m, &t, &Place { centre, right: right.normalize_or_zero(), up: Vec3::Y, normal, lift: (h * 0.01).clamp(0.003, 0.01) }, paint, 1.0);
 }
 
 // ── tessellation ──────────────────────────────────────────────────────────────
@@ -610,6 +639,16 @@ impl Tess {
         }
     }
 
+    /// Append another tessellation as the next layers.
+    pub fn add_tess(&mut self, src: Tess) {
+        let base_layer = self.layers.iter().copied().max().map_or(0, |l| l + 1);
+        let base = self.pts.len() as u32;
+        self.pts.extend(src.pts);
+        self.inks.extend(src.inks);
+        self.layers.extend(src.layers.into_iter().map(|l| l + base_layer));
+        self.tris.extend(src.tris.into_iter().map(|tri| tri.map(|i| i + base)));
+    }
+
     /// Scale and move every point (`p * k + at`).
     pub fn place(&mut self, k: f32, at: Vec2) {
         for p in &mut self.pts {
@@ -701,8 +740,13 @@ pub fn emit(m: &mut MeshData, t: &Tess, place: &Place, paint: &Paint, alpha: f32
     }
     // Wound to face the normal.
     let face = place.right.cross(place.up).dot(n) >= 0.0;
+    let at = |i: u32| Vec3::from(m.positions[(i + base) as usize]);
     for tri in &t.tris {
         let [a, b, c] = tri.map(|i| i + base);
+        // A sliver (a tiny letter's joint, three points on a line) is left out.
+        if (at(tri[1]) - at(tri[0])).cross(at(tri[2]) - at(tri[0])).length() < 4e-6 {
+            continue;
+        }
         let (pa, pb, pc) = (t.pts[tri[0] as usize], t.pts[tri[1] as usize], t.pts[tri[2] as usize]);
         let ccw = (pb - pa).perp_dot(pc - pa) >= 0.0;
         if ccw == face {
@@ -848,7 +892,7 @@ mod tests {
         let mut mesh = MeshData::default();
         let place = Place { centre: Vec3::ZERO, right: Vec3::X, up: Vec3::Y, normal: Vec3::Z, lift: 0.01 };
         emit(&mut mesh, &t, &place, &Paint::lit(&m, 2.0), 1.0);
-        assert_eq!(mesh.indices.len(), t.tris.len() * 3);
+        assert!(mesh.indices.len() <= t.tris.len() * 3 && mesh.indices.len() * 10 >= t.tris.len() * 27);
         for tri in mesh.indices.chunks(3) {
             let [a, b, c] = [tri[0], tri[1], tri[2]].map(|i| Vec3::from(mesh.positions[i as usize]));
             let n = (b - a).cross(c - a);

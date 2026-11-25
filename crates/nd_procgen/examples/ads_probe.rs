@@ -35,7 +35,8 @@ fn main() {
         let Some(lot) = w.footprint(id) else { continue };
         let src = |salt: u64| ads_for(&w, id, salt);
         let marks = shop_marks(&w, id);
-        let ex = Extras { dynamic_lights: true, ads: Some(AdSource(&src)), shop_marks: &marks, ..style_extras(&w, id, &[]) };
+        let own = nd_procgen::ads::ad_of(&w, id, 0);
+        let ex = Extras { dynamic_lights: true, ads: Some(AdSource(&src)), shop_marks: &marks, own: own.as_ref(), ..style_extras(&w, id, &[]) };
         let tg = Instant::now();
         let g = generate_building(&lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &rules, &pal, &ex);
         gen_ms += tg.elapsed().as_secs_f64() * 1000.0;

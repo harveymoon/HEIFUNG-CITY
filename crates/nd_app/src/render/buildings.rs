@@ -152,6 +152,7 @@ pub(crate) fn building_geometry(world: &World, kit: Kit, styles: &StyleBook, id:
     // shops' own marks.
     let ad_source = |salt: u64| nd_procgen::ads::ads_for(world, id, salt);
     let shop_marks = if b.units.iter().any(|u| u.shopfront) { nd_procgen::ads::shop_marks(world, id) } else { Vec::new() };
+    let own = nd_procgen::ads::ad_of(world, id, 0);
     // What decides the style comes from `style_extras`, the same inputs the
     // style book and the inspector's label use (a taxi company's yard is a
     // surface lot whose cabs `render/taxis.rs` stands in the bays); only
@@ -171,6 +172,7 @@ pub(crate) fn building_geometry(world: &World, kit: Kit, styles: &StyleBook, id:
         site_pile: &pile,
         ads: Some(nd_procgen::ads::AdSource(&ad_source)),
         shop_marks: &shop_marks,
+        own: own.as_ref(),
         ..nd_procgen::style_extras(world, id, styles.neighbours(id))
     };
     let g = match &b.demolition {

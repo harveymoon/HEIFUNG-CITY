@@ -232,7 +232,7 @@ fn logo_at(m: &Mark, at: Vec2, side: f32) -> Tess {
     t
 }
 
-/// The logo and the name (and the slogan under it when there is room).
+/// The logo and the name.
 fn brand_frame(ad: &Ad, w: f32, h: f32) -> (Tess, Paint) {
     let mut t = Tess::default();
     t.add(&[back(w, h, Ink::Dark), border(w, h)]);
@@ -250,18 +250,13 @@ fn brand_frame(ad: &Ad, w: f32, h: f32) -> (Tess, Paint) {
         let two = lines.as_ref().map_or(0.0, |(a, b)| (room / logo::text_w(a, 1.0, ty).max(logo::text_w(b, 1.0, ty))).min(h * 0.27));
         if one >= h * 0.14 && one >= two * 0.85 {
             add(&mut t, logo_at(&ad.mark, Vec2::new(lx, 0.0), side));
+            // (The slogan has its own frame on a wide screen.)
             let nh = one;
-            let sh = (room / logo::text_w(&ad.slogan, 1.0, ty)).min(nh * 0.45);
-            let with_line = sh >= h * 0.06;
-            let ny = if with_line { h * 0.02 } else { -nh * 0.5 };
+            let ny = -nh * 0.5;
             let (p, _) = logo::text_prims(&name, x0, ny, nh, ty, Ink::Brand);
             let mut parts = p;
             if ty.underline {
                 parts.push(Prim::Stroke { pts: vec![Vec2::new(x0, ny - nh * 0.22), Vec2::new(x0 + logo::text_w(&name, nh, ty), ny - nh * 0.22)], closed: false, w: nh * 0.08, ink: Ink::Accent });
-            }
-            if with_line {
-                let (p, _) = logo::text_prims(&ad.slogan, x0, ny - nh * 0.45 - sh, sh, logo::Type { slant: 0.0, weight: 0.14, underline: false }, Ink::Light);
-                parts.extend(p);
             }
             t.add(&parts);
         } else if two >= h * 0.14 {
@@ -327,12 +322,7 @@ fn slogan_frame(ad: &Ad, w: f32, h: f32) -> (Tess, Paint) {
 
 /// Append `src` to `t` as the next layers.
 fn add(t: &mut Tess, src: Tess) {
-    let base_layer = t.layers.iter().copied().max().map_or(0, |l| l + 1);
-    let base = t.pts.len() as u32;
-    t.pts.extend(src.pts);
-    t.inks.extend(src.inks);
-    t.layers.extend(src.layers.into_iter().map(|l| l + base_layer));
-    t.tris.extend(src.tris.into_iter().map(|tri| tri.map(|i| i + base)));
+    t.add_tess(src);
 }
 
 /// Draw a screen's frames into `m` (a Glow mesh), centred at `centre`,
@@ -343,14 +333,13 @@ pub fn draw_screen(m: &mut MeshData, centre: Vec3, right: Vec3, normal: Vec3, w:
     let fr = frames(ads, w, h);
     let n = if animate { fr.len() } else { fr.len().min(1) };
     let lift = (h * 0.004).clamp(0.003, 0.02);
-    let mut tris = 0;
+    let before = m.indices.len();
     for (k, (t, paint)) in fr.iter().take(n).enumerate() {
         let alpha = if n > 1 { ad_alpha(k as u8, n as u8, phase) } else { 1.0 };
         let place = Place { centre, right: right.normalize_or_zero(), up: Vec3::Y, normal, lift };
         logo::emit(m, t, &place, paint, alpha);
-        tris += t.triangles();
     }
-    tris
+    (m.indices.len() - before) / 3
 }
 
 #[cfg(test)]
