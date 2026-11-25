@@ -10,13 +10,17 @@
 //!   of it onto the same lane.
 //! - No signals, ever: a junction stamped over becomes plain give-way.
 //! - Multi-lane rings (two or three lanes): arms on the outer perimeter
-//!   join and leave by the outer lane, arms joining from the open middle of
-//!   the ring (roads inside it) by the inner lane; every ring lane may
-//!   continue (lane arrows). Passing an arm in a lane on that arm's side
-//!   costs routing a little, more the further out (or in) the lane, so a
-//!   car bound for the next exit keeps to the outside, one bound for a
-//!   later exit takes a lane further in and changes back out between
-//!   junctions before its exit, as drivers are taught.
+//!   join and leave by the outer two lanes, arms joining from the open
+//!   middle of the ring (roads inside it) by the inner two; every ring lane
+//!   may continue (lane arrows). [r17-roundabouts] Lane choice by exit, as
+//!   drivers are taught: passing an arm in a lane on that arm's side costs
+//!   routing a little (more the further out), and entering or leaving by a
+//!   lane further in costs `RING_INNER_LANE` each way, so a car bound for
+//!   the first exit keeps to the outside and one bound for a later exit or
+//!   going all the way round takes the inner lane in and out. A car
+//!   leaving from the inner lane crosses the outer lane: it gives way to
+//!   moving outer-lane traffic there (`ring_wait`); entering traffic gives
+//!   way to every lane.
 //!
 //! Kept apart from the car-following code in `traffic.rs`: the rebuild calls
 //! `apply_roundabouts`, routing reads `RingLanes::penalty`, and `lookahead`
@@ -41,6 +45,23 @@ const RING_LOOKBACK: f32 = 45.0;
 /// change costs `LANE_CHANGE_COST`: first and second exits stay outside,
 /// later ones go round further in.
 const RING_OUTER_THROUGH: f32 = 5.0;
+/// [r17-roundabouts] Routing cost of entering, and again of leaving, a
+/// multi-lane ring by a lane one further in from the arm's side than the
+/// outer lane (the inner lane of a two-lane ring). With the lane's shorter
+/// way round and `RING_OUTER_THROUGH` per arm passed outside: first exits
+/// from the outer lane, later exits and U-turns from the inner.
+const RING_INNER_LANE: f32 = 4.0;
+/// [r17-roundabouts] A car leaving by a lane further in waits for a
+/// moving car in a lane it crosses less than this many seconds from the
+/// exit.
+const RING_EXIT_GAP: f32 = 2.0;
+/// [r17-roundabouts] After standing this many seconds at an inner-lane
+/// exit a driver takes any gap it can get: only a moving car about to be
+/// level with it (`RING_EXIT_FORCE` s off) holds it. On a big, busy ring
+/// the outer lane never left a 2 s gap and inner-lane cars stood for many
+/// minutes.
+const RING_EXIT_PATIENCE: f32 = 8.0;
+const RING_EXIT_FORCE: f32 = 0.7;
 /// Seconds a ring car stands behind a ring that does not move before it
 /// gets off at the arm it is at (`Traffic::bail_off_ring`).
 const RING_BAIL_AFTER: f32 = 20.0;
@@ -114,6 +135,16 @@ impl LaneNetwork {
             let Some(ring) = roads.ring_of_node(nid) else { continue };
             let rg = roads.rings[ring];
             let lanes_on_ring = rg.lanes;
+            // How many lanes in from an arm's side a ring lane is (0 for
+            // the outer lane and an arm outside; 0 for the inner lane and
+            // an arm in the middle).
+            let lanes_in = |l: &Lane, middle: bool| match l.kind {
+                LaneKind::Road { index, .. } => {
+                    let i = index.min(lanes_on_ring - 1);
+                    (if middle { i } else { lanes_on_ring - 1 - i }) as f32
+                }
+                _ => 0.0,
+            };
             let speed = rg.speed();
             let lookback = (speed * 3.0 * RING_CRITICAL_GAP + 10.0).max(RING_LOOKBACK);
             let mut rn = RingNode { ring, lookback, ..Default::default() };
@@ -160,13 +191,17 @@ impl LaneNetwork {
                     (false, true) => {
                         // Onto the ring: a right turn from outside, a left
                         // turn from the middle.
-                        self.lanes[c].turn = if inside(self.lanes[inc as usize].start(), &rg) { -1 } else { 1 };
+                        let from_middle = inside(self.lanes[inc as usize].start(), &rg);
+                        self.lanes[c].turn = if from_middle { -1 } else { 1 };
                         self.lanes[c].set_limit(RING_ENTRY_SPEED);
+                        penalty[c] += RING_INNER_LANE * lanes_in(&self.lanes[out as usize], from_middle);
                         rn.entries.push(conn);
                     }
                     (true, false) => {
-                        self.lanes[c].turn = if inside(self.lanes[out as usize].end(), &rg) { -1 } else { 1 };
+                        let to_middle = inside(self.lanes[out as usize].end(), &rg);
+                        self.lanes[c].turn = if to_middle { -1 } else { 1 };
                         self.lanes[c].set_limit(RING_SPEED);
+                        penalty[c] += RING_INNER_LANE * lanes_in(&self.lanes[inc as usize], to_middle);
                         rn.exits.push(conn);
                     }
                     // Two arms meeting at one ring node do not cut across:
@@ -181,9 +216,9 @@ impl LaneNetwork {
         }
         // Arrows: arms from outside only turn right onto the ring, arms
         // from the middle only left; every ring lane continues, the outer
-        // lane may leave to the right (an outer arm), the inner lane to the
-        // left (an arm inside the ring). On a one-lane ring the lane does
-        // all three. Fixed here: the junction arrows that adapt to the
+        // two lanes may leave to the right (an outer arm), the inner two to
+        // the left (an arm inside the ring). On a one-lane ring the lane
+        // does all three. Fixed here: the junction arrows that adapt to the
         // counted turns (`Traffic::adapt_arrows`) leave ring nodes alone.
         for ai in 0..self.approaches.len() {
             if !self.rings.nodes.contains_key(&self.approaches[ai].node) {
@@ -195,16 +230,21 @@ impl LaneNetwork {
                 _ => 0,
             });
             let on_ring = lanes.first().is_some_and(|&l| ring_lane[l as usize]);
+            // [r17-roundabouts] Only a compact roundabout lets its next lane
+            // in leave too; a ring road (its arms far apart) keeps leaving
+            // from the edge lane, changing lanes between arms.
+            let compact = roads.ring_of_node(self.approaches[ai].node).is_some_and(|k| roads.rings[k].radius < crate::roads::RING_ROAD_RADIUS);
+            let edge = if compact { 1 } else { 0 };
             let turns = self.exits_of(&lanes);
             let n = lanes.len();
             let arrows: Vec<u8> = if on_ring {
                 (0..n)
                     .map(|i| {
                         let mut a = STRAIGHT & turns;
-                        if i == 0 {
+                        if i <= edge {
                             a |= LEFT & turns;
                         }
-                        if i + 1 == n {
+                        if i + 1 + edge >= n {
                             a |= RIGHT & turns;
                         }
                         if a == 0 { STRAIGHT } else { a }
@@ -259,10 +299,18 @@ impl Traffic {
         }
         if rn.exits.contains(&conn) {
             // Leaving: only into room on the arm, as at any junction.
-            return match (exit, car.route.iter().position(|&l| l == conn)) {
-                (Some(x), Some(_)) if self.exit_blocked(&lanes[conn as usize], x, false) => RingCall::Wait(dist - 1.0 + IDM_MIN_GAP, 0.0, Wait::ExitFull),
-                _ => RingCall::Go,
-            };
+            if let (Some(x), Some(_)) = (exit, car.route.iter().position(|&l| l == conn)) {
+                if self.exit_blocked(&lanes[conn as usize], x, false) {
+                    return RingCall::Wait(dist - 1.0 + IDM_MIN_GAP, 0.0, Wait::ExitFull);
+                }
+            }
+            // [r17-roundabouts] From a lane further in: across the outer
+            // lane(s), giving way to whoever is coming along them.
+            let gap = if car.stalled > RING_EXIT_PATIENCE { RING_EXIT_FORCE } else { RING_EXIT_GAP };
+            if self.inner_exit_blocked(rn, conn, dist / car.v.max(1.5), gap) {
+                return stop;
+            }
+            return RingCall::Go;
         }
         if rn.through.contains(&conn) && !rn.entries.is_empty() {
             // Follow a car that merged ahead onto the lane this one joins.
@@ -373,6 +421,73 @@ impl Traffic {
             e.1 = e.1.max(h.stalled);
         }
         out
+    }
+
+    /// [r17-roundabouts] Must a car leaving the ring by exit `conn`, from
+    /// a lane further in than the arm's side, wait for traffic in the
+    /// lanes it crosses: a moving car in the junction from one of them, or
+    /// a moving one there arriving within `gap` seconds of this car
+    /// (`RING_EXIT_GAP`, less once it has waited; one standing still lets
+    /// it out).
+    fn inner_exit_blocked(&self, rn: &RingNode, conn: LaneId, reach: f32, gap: f32) -> bool {
+        let lanes = &self.net.lanes;
+        let c = &lanes[conn as usize];
+        let Some(&from) = c.prev.first() else { return false };
+        let LaneKind::Road { index: mine, .. } = lanes[from as usize].kind else { return false };
+        // Right (an outer arm): the lanes outside this one; left: inside.
+        let crosses = |l: LaneId| match lanes[l as usize].kind {
+            LaneKind::Road { index, .. } => {
+                if c.turn >= 0 {
+                    index > mine
+                } else {
+                    index < mine
+                }
+            }
+            _ => false,
+        };
+        if reach > 2.0 * RING_CRITICAL_GAP || !rn.ring_in.iter().any(|&l| crosses(l)) {
+            return false;
+        }
+        if reach < RING_CRITICAL_GAP {
+            for &k in rn.through.iter().chain(rn.exits.iter()) {
+                let kl = &lanes[k as usize];
+                if k != conn && kl.prev.first().is_some_and(|&p| crosses(p)) && kl.cars.iter().any(|&o| self.cars[o].v >= 1.0) {
+                    return true;
+                }
+            }
+        }
+        // Back along the lanes crossed (and the connectors between their
+        // pieces), as far as a car covers in the time judged.
+        let mut stack: Vec<(LaneId, f32)> = rn.ring_in.iter().filter(|&&l| crosses(l)).map(|&l| (l, 0.0)).collect();
+        let mut seen: HashSet<LaneId> = HashSet::new();
+        while let Some((l, off)) = stack.pop() {
+            if !seen.insert(l) {
+                continue;
+            }
+            let lane = &lanes[l as usize];
+            for &o in &lane.cars {
+                let car = &self.cars[o];
+                if car.v < 1.0 {
+                    continue;
+                }
+                // Coming up to the exit before this car is out, or within
+                // the gap after it.
+                if (off + lane.length - car.s) / car.v < reach + gap {
+                    return true;
+                }
+            }
+            let further = off + lane.length;
+            if further > RING_LOOKBACK * 0.5 {
+                continue;
+            }
+            for &p in &lane.prev {
+                let pl = &lanes[p as usize];
+                if self.net.rings.circulating.contains(&p) && (pl.is_connector() || crosses(p)) {
+                    stack.push((p, further));
+                }
+            }
+        }
+        false
     }
 
     fn ring_blocks_entry(&self, rn: &RingNode, reach: f32) -> bool {
@@ -640,20 +755,118 @@ mod tests {
         // Travel runs clockwise in the sim plane: from the east arm the
         // first exit is the south (-y) arm, the third the north (+y).
         let first = route(Vec2::X, 1, Vec2::NEG_Y);
-        let third = route(Vec2::X, 0, Vec2::Y);
+        // Later exits bound for the arm's left (inner) lane, which the
+        // inner ring lane leads to (the kerb lane would cost a change).
+        let to_left = |from_arm: Vec2, to_arm: Vec2| {
+            let (from, _) = arm_points(from_arm, 2, 0);
+            let to = to_arm * 260.0 - Vec2::new(to_arm.y, -to_arm.x) * 0.5 * LANE_WIDTH;
+            let (fs, _, _) = roads.nearest_street(from).unwrap();
+            let (ts, _, _) = roads.nearest_street(to).unwrap();
+            t.net.find_route(fs, from, ts, to).expect("route").0
+        };
+        let second = to_left(Vec2::X, Vec2::NEG_X);
+        let third = to_left(Vec2::X, Vec2::Y);
         assert_eq!(on_ring(&first, 0), 0, "first exit: outer lane only");
         assert!(on_ring(&first, 1) > 0);
-        assert!(on_ring(&third, 0) > on_ring(&third, 1), "third exit: round on the inside ({} inner, {} outer)", on_ring(&third, 0), on_ring(&third, 1));
-        // Only the outer lane may leave the ring.
+        // [r17-roundabouts] Later exits: in by the inner lane, round on it
+        // and out from it, no lane change on the ring.
+        for (label, r) in [("second", &second), ("third", &third)] {
+            assert!(on_ring(r, 0) > 0 && on_ring(r, 1) == 0, "{label} exit: round on the inside only ({} inner, {} outer)", on_ring(r, 0), on_ring(r, 1));
+        }
+        // Both lanes may leave the ring to an outer arm, and arms enter both.
         for n in t.net.rings.nodes.values() {
-            for &e in &n.exits {
-                let from = t.net.lanes[e as usize].prev[0];
-                assert!(!t.net.lanes[e as usize].permitted || matches!(t.net.lanes[from as usize].kind, LaneKind::Road { index: 1, .. }), "exits from the outer lane only");
+            let from: Vec<u8> = n.exits.iter().filter(|&&e| t.net.lanes[e as usize].permitted).filter_map(|&e| match t.net.lanes[t.net.lanes[e as usize].prev[0] as usize].kind {
+                LaneKind::Road { index, .. } => Some(index),
+                _ => None,
+            }).collect();
+            if !n.exits.is_empty() {
+                assert!(from.contains(&0) && from.contains(&1), "exits from both lanes: {from:?}");
             }
         }
         // And a two-lane ring with two-lane arms carries a steady load.
         let (spawned, arrived, _, _) = load(&roads, 2, 4);
         assert_eq!(arrived, spawned);
+    }
+
+    /// [r17-roundabouts] A one-lane arm onto a two-lane ring: the first
+    /// exit by the outer lane, later ones and the U-turn by the inner, in
+    /// and out with no lane change on the ring.
+    #[test]
+    fn one_lane_arms_choose_their_ring_lane_by_exit() {
+        let roads = city(1, Some((26.0, 2)));
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let ring_lanes = |route: &[LaneId]| -> Vec<u8> {
+            route.iter().filter(|&&l| t.net.rings.circulating.contains(&l)).filter_map(|&l| match t.net.lanes[l as usize].kind {
+                LaneKind::Road { index, .. } => Some(index),
+                _ => None,
+            }).collect()
+        };
+        let route = |from_arm: Vec2, to_arm: Vec2| {
+            let (from, _) = arm_points(from_arm, 1, 0);
+            let (_, to) = arm_points(to_arm, 1, 0);
+            let (fs, _, _) = roads.nearest_street(from).unwrap();
+            let (ts, _, _) = roads.nearest_street(to).unwrap();
+            t.net.find_route(fs, from, ts, to).expect("route").0
+        };
+        for a in ARMS {
+            // Clockwise in the sim plane: the first exit after arm `a`.
+            let first = Vec2::new(-a.y, a.x) * -1.0;
+            let first = ARMS.into_iter().find(|b| b.distance(Vec2::new(a.y, -a.x)) < 0.1).unwrap_or(first);
+            let lanes = ring_lanes(&route(a, first));
+            assert!(!lanes.is_empty() && lanes.iter().all(|&i| i == 1), "first exit from {a}: outer lane only, got {lanes:?}");
+            for b in ARMS.into_iter().filter(|b| *b != a && *b != first) {
+                let lanes = ring_lanes(&route(a, b));
+                assert!(!lanes.is_empty() && lanes.iter().all(|&i| i == 0), "{a} to {b}: inner lane only, got {lanes:?}");
+            }
+        }
+        let (spawned, arrived, _, rest) = load(&roads, 1, 4);
+        assert_eq!(arrived, spawned, "left on the ring: {rest:?}");
+    }
+
+    /// [r17-roundabouts] A car leaving from the inner lane gives way to a
+    /// moving car coming along the outer lane at about the same time; not
+    /// to one standing, nor one far off; an outer-lane car never waits.
+    #[test]
+    fn an_inner_lane_car_leaving_gives_way_to_the_outer_lane() {
+        let roads = city(1, Some((26.0, 2)));
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let index = |t: &Traffic, l: LaneId| match t.net.lanes[l as usize].kind {
+            LaneKind::Road { index, .. } => index,
+            _ => 9,
+        };
+        let rn = t.net.rings.nodes.values().find(|n| n.exits.len() >= 2).unwrap().clone();
+        let x_in = *rn.exits.iter().find(|&&x| index(&t, t.net.lanes[x as usize].prev[0]) == 0).unwrap();
+        let x_out = *rn.exits.iter().find(|&&x| index(&t, t.net.lanes[x as usize].prev[0]) == 1).unwrap();
+        let l_in = t.net.lanes[x_in as usize].prev[0];
+        let l_out = t.net.lanes[x_out as usize].prev[0];
+        let arm = t.net.lanes[x_in as usize].next[0];
+        let len_in = t.net.lanes[l_in as usize].length;
+        let len_out = t.net.lanes[l_out as usize].length;
+        let call = |outer_at: Option<(f32, f32)>| {
+            let mut t = t.clone();
+            let me = t.spawn_car(CitizenId::default(), None, vec![l_in, x_in, arm], len_in - 3.0, 10.0, 0);
+            t.cars[me].v = 1.5;
+            if let Some((back, v)) = outer_at {
+                let o = t.spawn_car(CitizenId::default(), None, vec![l_out, x_out, arm], len_out - back, 10.0, 0);
+                t.cars[o].v = v;
+            }
+            let car = t.cars[me].clone();
+            matches!(t.ring_wait(&car, x_in, 3.0), RingCall::Wait(_, _, Wait::Yield))
+        };
+        assert!(!call(None), "nobody outside: out it goes");
+        assert!(call(Some((len_out * 0.8, 6.0))), "an outer-lane car arriving with it: wait");
+        assert!(!call(Some((len_out * 0.8, 0.0))), "an outer-lane car standing: go");
+        assert!(!call(Some((len_out - 0.5, 0.5))), "one far back and slow: go");
+        // From the outer lane nobody is crossed.
+        let mut t2 = t.clone();
+        let me = t2.spawn_car(CitizenId::default(), None, vec![l_out, x_out, arm], len_out - 3.0, 10.0, 0);
+        t2.cars[me].v = 1.5;
+        let o = t2.spawn_car(CitizenId::default(), None, vec![l_in, x_in, arm], len_in - 8.0, 10.0, 0);
+        t2.cars[o].v = 6.0;
+        let car = t2.cars[me].clone();
+        assert!(!matches!(t2.ring_wait(&car, x_out, 3.0), RingCall::Wait(_, _, Wait::Yield)), "outer lane leaves freely");
     }
 
     #[test]
@@ -788,11 +1001,11 @@ mod tests {
         let entries: usize = t.net.rings.nodes.values().map(|n| n.entries.len()).sum();
         assert!(entries >= 4, "every arm enters the ring ({entries} entries)");
         assert!(t.net.intersections.iter().all(|i| !i.signalized));
-        // Ring lanes: the outer may continue or leave right, the others only
-        // continue; arms only turn right onto it.
+        // Ring lanes: the outer two may continue or leave right, the inner
+        // only continues; arms only turn right onto it.
         for ap in t.net.approaches.iter().filter(|a| t.net.rings.nodes.contains_key(&a.node)) {
             if t.net.rings.circulating.contains(&ap.lanes[0]) {
-                assert_eq!(ap.arrows, vec![STRAIGHT, STRAIGHT, STRAIGHT | RIGHT], "{ap:?}");
+                assert_eq!(ap.arrows, vec![STRAIGHT, STRAIGHT | RIGHT, STRAIGHT | RIGHT], "{ap:?}");
             } else {
                 assert!(ap.arrows.iter().all(|&a| a == RIGHT), "{ap:?}");
             }
@@ -850,14 +1063,15 @@ mod tests {
             LaneKind::Road { index, .. } => index,
             _ => 99,
         };
-        // Entering from the middle: a left turn into the inner lane only.
+        // Entering from the middle: a left turn into the inner two lanes
+        // ([r17-roundabouts] the one-lane arm reaches the next lane out too).
         let entries: Vec<LaneId> = node.entries.iter().copied().filter(|&e| t.net.lanes[e as usize].permitted).collect();
         assert!(!entries.is_empty());
-        assert!(entries.iter().all(|&e| t.net.lanes[e as usize].turn == -1 && ring_index(t.net.lanes[e as usize].next[0]) == 0), "into the inner lane");
-        // Leaving for the middle: only from the inner lane.
+        assert!(entries.iter().all(|&e| t.net.lanes[e as usize].turn == -1 && ring_index(t.net.lanes[e as usize].next[0]) <= 1), "into the inner lanes");
+        // Leaving for the middle: only from the inner two lanes.
         let exits: Vec<LaneId> = node.exits.iter().copied().filter(|&e| t.net.lanes[e as usize].permitted).collect();
         assert!(!exits.is_empty());
-        assert!(exits.iter().all(|&e| ring_index(t.net.lanes[e as usize].prev[0]) == 0), "out of the inner lane");
+        assert!(exits.iter().all(|&e| ring_index(t.net.lanes[e as usize].prev[0]) <= 1), "out of the inner lanes");
         // And cars get in and out: from the east arm to the inner street
         // and from it to the north arm, round the ring.
         let inward = (on_ring - inner_end).normalize();
