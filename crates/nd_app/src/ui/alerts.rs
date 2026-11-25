@@ -161,7 +161,11 @@ pub fn body(ui: &mut egui::Ui, p: &mut UiCtx) {
                     fly = Some(c);
                 }
                 ui.label(egui::RichText::new(format!("ring at ({:.0}, {:.0}), {:.0} m across, {} lane{}", c.x, c.y, r.radius * 2.0, r.lanes, super::fmt::s(r.lanes))).small());
-                if r.lanes < nd_sim::roads::RING_MAX_LANES && ui.small_button(format!("Widen to {} lanes", r.lanes + 1)).on_hover_text("A lane more round the ring, taken from its island (the outer edge stays, so nothing round it comes down). Built at once, or added to your project if one is open.").clicked() {
+                let wider = nd_sim::roads::Ring::widened(r, r.lanes + 1);
+                let island = if r.lanes < nd_sim::roads::RING_MAX_LANES { w.ring_change_takes(r, wider).len() } else { 0 };
+                let tip = if island == 0 { "A lane more round the ring, taken from its island (the outer edge stays, so nothing round it comes down). Built at once, or added to your project if one is open.".to_string() } else { format!("A lane more round the ring, taken from its island: the outer edge stays, but {island} building{} on the island lose{} the ground and come{} down. Built at once, or added to your project if one is open.", super::fmt::s(island as u8), if island == 1 { "s" } else { "" }, if island == 1 { "s" } else { "" }) };
+                let label = if island == 0 { format!("Widen to {} lanes", r.lanes + 1) } else { format!("Widen to {} lanes ({island} on the island go)", r.lanes + 1) };
+                if r.lanes < nd_sim::roads::RING_MAX_LANES && ui.small_button(label).on_hover_text(tip).clicked() {
                     widen = Some(r);
                 }
             });

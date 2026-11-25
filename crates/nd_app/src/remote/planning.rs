@@ -422,7 +422,8 @@ pub(super) fn widen_roundabout(cmd: &Value, ctx: &mut Ctx) -> Result<Value, Stri
     }
     let id = ctx.sim.world.widen_roundabout(before.center, Some(before.radius), lanes)?;
     let ring = ctx.sim.world.gesture(id).and_then(|g| g.ring()).ok_or("roundabout not in the plan")?;
-    let takes: Vec<Value> = ctx.sim.world.roundabout_takes(ring).into_iter().filter_map(|l| ctx.sim.world.lots.get(l).and_then(|x| x.building)).map(|b| json!(key_str(b))).collect();
+    // What the change itself takes (not what the old ring already stood on).
+    let takes: Vec<Value> = ctx.sim.world.ring_change_takes(before, ring).into_iter().filter_map(|l| ctx.sim.world.lots.get(l).and_then(|x| x.building)).map(|b| json!(key_str(b))).collect();
     let implemented = opt_bool(cmd, "implement")?.unwrap_or(false);
     if implemented {
         ctx.sim.world.implement();

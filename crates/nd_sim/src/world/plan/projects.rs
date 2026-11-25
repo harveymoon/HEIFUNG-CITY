@@ -485,6 +485,27 @@ impl World {
         Ok(id)
     }
 
+    /// [r17-roundabouts] Lots with a building that changing ring `old`
+    /// into `new` takes and `old` did not: under the new ring road and its
+    /// pavements, or on the island where the ring grows inward (the
+    /// island's lots are cut again to the smaller island and what stood
+    /// there comes down).
+    pub fn ring_change_takes(&self, old: crate::roads::Ring, new: crate::roads::Ring) -> Vec<LotId> {
+        let before = self.roundabout_takes(old);
+        let mut out: Vec<LotId> = self.roundabout_takes(new).into_iter().filter(|l| !before.contains(l)).collect();
+        if new.inner_radius() < old.inner_radius() - 0.1 {
+            let grid = LotGrid::new(&self.lots);
+            for id in grid.near(old.center, old.inner_radius()) {
+                let l = &self.lots[id];
+                let far = l.polygon.iter().map(|p| p.distance(old.center)).fold(0.0, f32::max);
+                if l.building.is_some() && l.center.distance(old.center) < old.inner_radius() && far > new.inner_radius() - 0.5 && !out.contains(&id) {
+                    out.push(id);
+                }
+            }
+        }
+        out
+    }
+
     /// Where a roundabout centre dropped at `p` lands: on a junction within
     /// 12 m (that junction becomes the roundabout), else on a street within
     /// 6 m, else `p`.
