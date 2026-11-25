@@ -119,27 +119,32 @@ fn brand_color(b: &nd_sim::corp::Brand) -> egui::Color32 {
     egui::Color32::from_rgb(r, g, bl)
 }
 
-/// Paint a brand's logo (the same pixel mark as on the buildings), `size`
-/// points square.
+/// Paint a brand's logo, `size` points square: [r17-logos] the same vector
+/// mark as on its buildings and lorries (`nd_procgen::logo`), as an egui
+/// mesh of its triangles.
 fn paint_logo(ui: &mut egui::Ui, b: &nd_sim::corp::Brand, size: f32) -> egui::Response {
-    use nd_sim::corp::{LogoPixel, LOGO_N};
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 3.0, egui::Color32::from_rgb(10, 10, 14));
-    let px = (size - 2.0) / LOGO_N as f32;
-    let col = brand_color(b);
-    for (r, row) in b.logo_bitmap().iter().enumerate() {
-        for (c, p) in row.iter().enumerate() {
-            let fill = match p {
-                LogoPixel::Empty => continue,
-                LogoPixel::Shape => col,
-                LogoPixel::LetterOnShape => egui::Color32::from_rgb(12, 12, 16),
-                LogoPixel::LetterAlone => egui::Color32::from_rgb(240, 240, 235),
-            };
-            let min = rect.min + egui::vec2(1.0 + c as f32 * px, 1.0 + r as f32 * px);
-            painter.rect_filled(egui::Rect::from_min_size(min, egui::vec2(px + 0.3, px + 0.3)), 0.0, fill);
-        }
+    let mark = nd_procgen::logo::Mark::of_brand(b);
+    let t = nd_procgen::logo::tessellate(&mark);
+    let paint = nd_procgen::logo::Paint::lit(&mark, 1.0);
+    let srgb = |x: f32| -> u8 {
+        let x = x.clamp(0.0, 1.0);
+        let s = if x <= 0.003_130_8 { x * 12.92 } else { 1.055 * x.powf(1.0 / 2.4) - 0.055 };
+        (s * 255.0 + 0.5) as u8
+    };
+    let half = size * 0.5 - 2.0;
+    let mut mesh = egui::Mesh::default();
+    for (p, ink) in t.pts.iter().zip(&t.inks) {
+        let c = paint.of(*ink);
+        let col = if *ink == nd_procgen::logo::Ink::Dark { egui::Color32::from_rgb(10, 10, 14) } else { egui::Color32::from_rgb(srgb(c[0]), srgb(c[1]), srgb(c[2])) };
+        mesh.colored_vertex(rect.center() + egui::vec2(p.x * half, -p.y * half), col);
     }
+    for tri in &t.tris {
+        mesh.add_triangle(tri[0], tri[1], tri[2]);
+    }
+    painter.add(egui::Shape::mesh(mesh));
     resp
 }
 

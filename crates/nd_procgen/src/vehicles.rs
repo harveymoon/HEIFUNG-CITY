@@ -106,30 +106,21 @@ fn brand_rgb(c: u8) -> [f32; 3] {
 
 /// [megacorp] The corp's mark (shape and monogram packed in `mark`, see
 /// `World::corp_livery`) lit on both sides of the body, read the right way
-/// round from each side, on a dark panel.
+/// round from each side, on a dark panel. [r17-logos] The same vector mark
+/// as on its buildings and pages (`crate::logo::Mark::corp`).
 fn corp_logo(b: &mut B, x: f32, y: f32, hw: f32, size: f32, colour: u8, mark: u8) {
-    use nd_sim::corp::{LogoPixel, LogoShape, LOGO_N};
+    use nd_sim::corp::LogoShape;
     let shape = [LogoShape::Circle, LogoShape::Ring, LogoShape::Hexagon, LogoShape::Diamond, LogoShape::Triangle, LogoShape::Square, LogoShape::Chevron, LogoShape::Shield][(mark & 7) as usize];
     let monogram = (b'A' + (mark >> 3).min(25)) as char;
-    let bmp = nd_sim::corp::Brand { colour, shape, monogram, name: String::new() }.logo_bitmap();
-    let lit = mul(brand_rgb(colour), 2.6);
-    let px = size / LOGO_N as f32;
-    let half = (LOGO_N as f32 - 1.0) * 0.5;
+    let m = crate::logo::Mark::corp(colour, shape, monogram);
+    let t = crate::logo::tessellate(&m);
+    let paint = crate::logo::Paint::lit(&m, 2.6);
+    let pad = size / 11.0;
     for s in [-1.0f32, 1.0] {
-        b.body.decal(Vec3::new(x, y, s * (hw + 0.018)), Vec3::X, Vec3::Y, size + px, size + px, Vec3::Z * s, c4([0.02, 0.02, 0.025]));
-        for (r, row) in bmp.iter().enumerate() {
-            for (c, p) in row.iter().enumerate() {
-                let col = match p {
-                    LogoPixel::Shape => lit,
-                    LogoPixel::LetterAlone => [2.6, 2.6, 2.5],
-                    _ => continue,
-                };
-                // Viewer's right is +x on the +z side, -x on the -z side.
-                let px_x = x + s * (c as f32 - half) * px;
-                let px_y = y + (half - r as f32) * px;
-                b.lights.decal(Vec3::new(px_x, px_y, s * (hw + 0.03)), Vec3::X, Vec3::Y, px * 1.02, px * 1.02, Vec3::Z * s, c4(col));
-            }
-        }
+        b.body.decal(Vec3::new(x, y, s * (hw + 0.018)), Vec3::X, Vec3::Y, size + pad, size + pad, Vec3::Z * s, c4([0.02, 0.02, 0.025]));
+        // Viewer's right is +x on the +z side, -x on the -z side.
+        let place = crate::logo::Place { centre: Vec3::new(x, y, s * (hw + 0.03)), right: Vec3::X * (s * size * 0.5), up: Vec3::Y * (size * 0.5), normal: Vec3::Z * s, lift: 0.002 };
+        crate::logo::emit(&mut b.lights, &t, &place, &paint, 1.0);
     }
 }
 

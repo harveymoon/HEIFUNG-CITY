@@ -5,9 +5,9 @@
 //! annexes and the plazas it claimed (flags on poles). And the university's
 //! own style: a hall with a portico, a clock tower and a lawn quad.
 //!
-//! The logo is the sim's pixel mark (`nd_sim::corp::BrandMark::bitmap`):
-//! the shape lit in the brand colour, the monogram cut dark into it, on a
-//! dark backing board so it reads by day as well as glowing at night.
+//! The logo is the company's vector mark ([r17-logos] `crate::logo`, from
+//! the brand's colour, shape and monogram) in flat light, on a dark
+//! backing board so it reads by day as well as glowing at night.
 //! Everything is placed off the geometry already drawn (its top and the
 //! extent of its upper half), so it works on any style.
 
@@ -15,12 +15,10 @@ use super::parts::*;
 use super::{Ctx, Face};
 use crate::surface::{Geometry, Surface, Surface::*};
 use glam::{Vec2, Vec3};
-use nd_sim::corp::{Annex, BrandMark, BrandRole, LogoPixel, LOGO_N};
+use nd_sim::corp::{Annex, BrandMark, BrandRole};
 use rand::Rng;
 
 const BOARD: [f32; 3] = [0.025, 0.026, 0.032];
-const LETTER_DARK: [f32; 3] = [0.02, 0.02, 0.025];
-const LETTER_LIT: [f32; 3] = [2.6, 2.6, 2.5];
 const POLE: [f32; 3] = [0.5, 0.52, 0.55];
 
 /// The mark's colour, lit.
@@ -75,7 +73,9 @@ fn on_lot(c: &Ctx, at: Vec2, out: Vec2, half: f32, proud: f32) -> bool {
 
 /// The logo, `size` metres square, standing in the vertical plane through
 /// `at` (lot-local) facing `out` (lot-local), centred at height `y`, on a
-/// dark board a little bigger. Rows of equal pixels are merged.
+/// dark board a little bigger. [r17-logos] The company's vector mark
+/// (`crate::logo`), the same one its lorries and the corp pages show, in
+/// smooth flat light; it was an 11 x 11 grid of glowing boxes.
 pub fn logo(g: &mut Geometry, c: &Ctx, m: &BrandMark, at: Vec2, out: Vec2, y: f32, size: f32) {
     let f = &c.frame;
     let out = out.normalize_or_zero();
@@ -85,43 +85,26 @@ pub fn logo(g: &mut Geometry, c: &Ctx, m: &BrandMark, at: Vec2, out: Vec2, y: f3
     // The viewer's right, looking at the face from outside.
     let right = Vec2::new(out.y, -out.x);
     let yaw = right.y.atan2(right.x);
-    let px = size / LOGO_N as f32;
-    let half = (LOGO_N as f32 - 1.0) * 0.5;
+    let px = size / 11.0;
     if !on_lot(c, at, out, size * 0.5 + px, 0.1) {
         return;
     }
     // The board.
     let b = at - out * 0.06;
     f.bx_yaw(g, Matte, b.x, y, b.y, Vec3::new(size + px * 1.4, size + px * 1.4, 0.12), BOARD, yaw);
-    let bmp = m.bitmap();
-    let shape = lit(m, 2.4);
-    for (r, row) in bmp.iter().enumerate() {
-        let mut c0 = 0;
-        while c0 < LOGO_N {
-            let kind = row[c0];
-            let mut c1 = c0 + 1;
-            while c1 < LOGO_N && row[c1] == kind {
-                c1 += 1;
-            }
-            if kind != LogoPixel::Empty {
-                let (surf, col, d) = match kind {
-                    LogoPixel::Shape => (Glow, shape, 0.04),
-                    LogoPixel::LetterOnShape => (Matte, LETTER_DARK, 0.07),
-                    _ => (Glow, LETTER_LIT, 0.04),
-                };
-                let mid = (c0 as f32 + c1 as f32 - 1.0) * 0.5;
-                let p = at + right * ((mid - half) * px) + out * d;
-                let yy = y + (half - r as f32) * px;
-                f.bx_yaw(g, surf, p.x, yy, p.y, Vec3::new(px * (c1 - c0) as f32, px, 0.05), col, yaw);
-                // The letter cut into the shape sits on a lit backing.
-                if kind == LogoPixel::LetterOnShape {
-                    let q = at + right * ((mid - half) * px) + out * 0.03;
-                    f.bx_yaw(g, Glow, q.x, yy, q.y, Vec3::new(px * (c1 - c0) as f32, px, 0.02), mul(shape, 0.25), yaw);
-                }
-            }
-            c0 = c1;
-        }
-    }
+    draw_mark(g, f, m, at + out * 0.02, out, y, size);
+}
+
+/// The mark itself, `size` metres square, flat in the plane through `at`
+/// facing `out` (lot-local): no board.
+pub fn draw_mark(g: &mut Geometry, f: &super::Frame, m: &BrandMark, at: Vec2, out: Vec2, y: f32, size: f32) {
+    let mark = crate::logo::Mark::corp(m.colour_index, m.shape, m.monogram);
+    let t = crate::logo::tessellate(&mark);
+    let out3 = f.dir3(out.normalize_or_zero()).normalize_or_zero();
+    let read = (-out3).cross(Vec3::Y).normalize_or_zero();
+    let half = size * 0.5;
+    let place = crate::logo::Place { centre: f.at2(at, y), right: read * half, up: Vec3::Y * half, normal: out3, lift: (size * 0.003).clamp(0.004, 0.05) };
+    crate::logo::emit(g.part(Glow), &t, &place, &crate::logo::Paint::lit(&mark, 2.4), 1.0);
 }
 
 /// A logo on a frame standing on the roof at `p` (lot-local), facing `out`.

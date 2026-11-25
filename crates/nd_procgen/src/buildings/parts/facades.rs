@@ -250,28 +250,35 @@ pub fn vertical_sign(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face,
     }
 }
 
-/// A framed LED billboard: a grid of brightly lit cells in two colours plus a
-/// dim frame. Dead pixels appear with wear.
+/// A framed LED billboard showing ads for real companies in town
+/// ([r17-logos] `crate::ads`): each ad a frame with the company's logo and
+/// name (and a slogan frame on a wide screen), cycled by the window-lights
+/// shader. It was a 5 x 3 grid of cells in two random LED colours. A
+/// screen on a ruin is dead.
 pub fn led_screen(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f32, y: f32, w: f32, h: f32) {
     let f = &c.frame;
     face.bx(g, f, Matte, t, y, 0.18, Vec3::new(w + 0.4, h + 0.4, 0.36), DARK);
-    let a = pick(rng, &c.palette.led_colors);
-    let b = pick(rng, &c.palette.led_colors);
-    let cols = 5;
-    let rows = 3;
-    let cw = w / cols as f32;
-    let ch = h / rows as f32;
-    for i in 0..cols {
-        for j in 0..rows {
-            if coin(rng, c.wear * 0.5) {
-                continue;
-            }
-            let tt = ((i as f32 / cols as f32 + j as f32 / rows as f32) * 0.5 + rng.random_range(-0.2..0.2)).clamp(0.0, 1.0);
-            let col = mix(a, b, tt);
-            let k = rng.random_range(0.6..1.1);
-            face.decal(g, f, Glow, t - w * 0.5 + (i as f32 + 0.5) * cw, y - h * 0.5 + (j as f32 + 0.5) * ch, 0.37, cw * 0.96, ch * 0.96, mul(col, k));
+    // The old cells' draws, kept so the rest of the building comes out of
+    // its random stream as before.
+    let _ = pick(rng, &c.palette.led_colors);
+    let _ = pick(rng, &c.palette.led_colors);
+    for _ in 0..15 {
+        if coin(rng, c.wear * 0.5) {
+            continue;
         }
+        let _ = rng.random_range(-0.2f32..0.2);
+        let _ = rng.random_range(0.6f32..1.1);
     }
+    let mid = face.at(t, 0.0);
+    let salt = nd_sim::hash::mix(nd_sim::hash::mix(c.seed, mid.x.to_bits() as u64), (mid.y.to_bits() as u64) << 32 | y.to_bits() as u64);
+    if c.wear > 0.6 && nd_sim::hash::unit(nd_sim::hash::mix(salt, 0xDEAD)) < (c.wear - 0.6) * 1.2 {
+        return;
+    }
+    let ads = c.ads.map(|s| (s.0)(salt)).filter(|v| !v.is_empty()).unwrap_or_else(|| crate::ads::fallback_ads(nd_sim::hash::mix(c.seed, salt)));
+    let centre = f.at2(face.at(t, 0.37), y);
+    let out = f.dir3(face.out);
+    let read = (-out).cross(Vec3::Y).normalize_or_zero();
+    crate::ads::draw_screen(g.part(Glow), centre, read, out, w * 0.97, h * 0.97, &ads, c.dynamic_lights, (salt % 16) as u8);
 }
 
 /// Roof billboard on steel legs.
