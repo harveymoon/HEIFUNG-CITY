@@ -499,6 +499,53 @@ impl World {
 
     // ── opening what the city wants ─────────────────────────────────────
 
+    /// [r17-goods] No free lot for a new chain's business: a shut works of
+    /// the land uses it takes (or one losing money, not its town's only one)
+    /// is turned over to it, the nearest to the buyers first, as a shut
+    /// works becomes a container yard (`convert_to_storage_yard`).
+    fn retool_for_chain(&mut self, kind: PressureKind, bk: BusinessKind, why: &str) -> Option<BuildingId> {
+        let p = self.placement(kind)?;
+        let supply = self.pressure_supply();
+        let pick = self
+            .buildings
+            .iter()
+            .filter(|(_, b)| p.uses.contains(&b.land_use) && b.operating() && !b.is_derelict() && !b.is_tenant() && b.port.is_none() && b.rail.is_none() && !b.is_power() && b.construction.is_none())
+            .filter_map(|(id, b)| {
+                let z = b.business.as_ref()?;
+                if z.kind == bk || z.kind.needs_site() || z.kind.row().rooted || z.kind.is_truck_lot() || matches!(z.kind, BusinessKind::Office | BusinessKind::Parking | BusinessKind::CargoHub) {
+                    return None;
+                }
+                let rank = if z.closed {
+                    0
+                } else if (z.broke_days > 0 || z.losing_days(5) >= 3) && supply.open[z.kind.index()] > 1 {
+                    1
+                } else {
+                    return None;
+                };
+                let lot = self.lots.get(b.lot)?;
+                if lot.area() < p.min_area || (p.needs_street && !lot.car_access()) {
+                    return None;
+                }
+                let d = p.anchors.iter().map(|a| a.distance(lot.center)).fold(f32::INFINITY, f32::min);
+                (d <= p.reach).then_some((rank, d, id))
+            })
+            .min_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)))
+            .map(|x| x.2)?;
+        let jobs = self.buildings[pick].jobs;
+        let (old_kind, shut) = self.buildings[pick].business.as_ref().map(|z| (z.kind, z.closed)).unwrap_or((bk, true));
+        let old = format!("{} {}", if shut { "shut-down" } else { "struggling" }, old_kind.label());
+        self.set_business(pick, Some(Business::new(bk, jobs)));
+        self.fit_business_name(pick);
+        if let Some(z) = self.buildings[pick].business.as_mut() {
+            z.origin = Some(format!("A {old} turned into {}: {why}.", crate::names::a(bk.label())));
+        }
+        self.events.push(SimEvent::BuildingChanged(pick));
+        let (name, at) = (self.buildings[pick].name.clone(), self.building_lot(pick).map(|l| l.center).unwrap_or_default());
+        let tick = self.clock.tick;
+        self.social.push_news(tick, format!("A {old} became {name}, {}.", crate::names::a(bk.label())), at, None);
+        Some(pick)
+    }
+
     /// Development's pressure branch: the strongest pressure that has held
     /// for `OPEN_DAYS` opens one business on the lot that suits it. True if
     /// one opened.
@@ -526,6 +573,23 @@ impl World {
                 if kind == PressureKind::ContainerStorage {
                     let why = self.pressure.reading(kind).map(|r| r.why.split(';').next().unwrap_or("").trim().to_string()).unwrap_or_default();
                     if self.convert_to_storage_yard(&why).is_some() {
+                        *self.pressure.opened_total.entry(kind.key().to_string()).or_insert(0) += 1;
+                        self.pressure.held_days[kind.index()] = 0;
+                        self.pressure.last_opened_day[kind.index()] = day + 1;
+                        if let Some(r) = self.pressure.readings.iter_mut().find(|r| r.kind == kind) {
+                            r.have += 1;
+                            r.gap -= 1.0;
+                            r.strength = r.gap.clamp(0.0, 1.0);
+                            r.held = None;
+                        }
+                        return true;
+                    }
+                }
+                // [r17-goods] A built-up town has no lot for a new chain's
+                // works: a shut or struggling works takes up the trade.
+                if crate::pressure::import_pressure(kind).is_some() || kind == PressureKind::FashionDistrict {
+                    let why = self.pressure.reading(kind).map(|r| r.why.split(';').next().unwrap_or("").trim().to_string()).unwrap_or_default();
+                    if self.retool_for_chain(kind, bk, &why).is_some() {
                         *self.pressure.opened_total.entry(kind.key().to_string()).or_insert(0) += 1;
                         self.pressure.held_days[kind.index()] = 0;
                         self.pressure.last_opened_day[kind.index()] = day + 1;

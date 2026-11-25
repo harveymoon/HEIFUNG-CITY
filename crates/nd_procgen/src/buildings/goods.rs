@@ -380,6 +380,25 @@ pub fn saw_mill(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             }
         }
     }
+    // A narrow deep lot: the logs lie along it instead, in stacks side by side.
+    if area.w() - 13.0 < 6.0 && area.v1 - 4.0 - back > 8.0 {
+        let cols = (((area.w() - 3.0) / 3.2).floor() as i32).clamp(1, 4);
+        for col in 0..cols {
+            let u = area.u0 + 1.8 + col as f32 * 3.2;
+            let (v0, v1) = (back + 1.5, area.v1 - 4.0);
+            for layer in 0..3 {
+                let y = 0.4 + layer as f32 * 0.7;
+                for k in 0..(3 - layer) {
+                    let uu = u - 0.8 + k as f32 * 0.8 + layer as f32 * 0.4;
+                    let (a, b) = (Vec2::new(uu, v0), Vec2::new(uu, v1));
+                    if !(c.inside_local(a) && c.inside_local(b)) || distance_to_boundary(a, &c.lot_poly) < 0.5 || distance_to_boundary(b, &c.lot_poly) < 0.5 {
+                        continue;
+                    }
+                    g.part(Wood).tube_capped(f.at(a.x, y, a.y), f.at(b.x, y, b.y), 0.36, 7, true, true, rgba(if (col + k + layer) % 2 == 0 { BARK } else { mul(BARK, 1.2) }));
+                }
+            }
+        }
+    }
     // Board packs and the sawdust heap at the far end.
     pallets(g, c, rng, Vec2::new(area.u1 - 8.0, back + 2.0), 6, &[SAWN, mul(SAWN, 0.9)]);
     heap(g, c, Vec2::new(area.u1 - 5.0, area.v1 - 5.0), 3.5, 3.0, [0.82, 0.66, 0.42]);
