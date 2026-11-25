@@ -1359,7 +1359,11 @@ Citizens are rendered from their simulated positions every frame.
   a negative vertex alpha (`ads::ad_alpha`: frame, frames, phase), tagged `uv.x = -4 - code` by
   `render/lights.rs tag_windows`, and the window-lights shader shows one at a time, 5 s each on
   a real-time clock (`clock.z`, quarter-second steps), screens out of step by their phase. No
-  mesh is rebuilt and no draw call added; previews draw the first frame only.
+  mesh is rebuilt and no draw call added; previews draw the first frame only. *Signs*: a style's sign boards
+  (`parts::sign_board`) spell the building's business (its mark and trading name, `Ctx::own`)
+  or a trade word in neon (`sign_word`: NOODLES, PHARMACY, OPEN 24H, ...; works words in
+  industry), and hanging signs (`vertical_sign`) stack a word a letter a cell; both were rows
+  of lit blocks. Shop signs over let units (`shopfronts`) carry the tenant's logo and name.
   *Its day*: it skims 40% of each holding's profit (a till keeps 500) into its purse, pays
   the player's levy and [r15-money] its bank (0.03% interest a day on its debt and 0.5% of the debt
   paid back, out of its cash; unpaid interest is added to the debt); with no HQ it buys the dearest, most pressed commercial plots downtown it

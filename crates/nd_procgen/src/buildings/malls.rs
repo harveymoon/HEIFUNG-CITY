@@ -34,16 +34,34 @@ struct ShopUnit {
     main: bool,
     /// [r4-leisure-places] The word over a place to eat or go out.
     word: Option<&'static [u8]>,
+    /// [r17-logos] The tenant's mark and trading name (`Extras::shop_marks`).
+    mark: Option<(crate::logo::Mark, String)>,
 }
 
 /// The shop units, or a stand-in row of `n` (a style preview with no sim
 /// building behind it: half of them let).
-fn shops_or(units: &[Unit], n: usize) -> Vec<ShopUnit> {
-    let v: Vec<ShopUnit> = units.iter().filter(|u| u.shopfront).map(|u| ShopUnit { lit: !u.vacant(), role: u.role, lo: u.lo, main: u.occupant == nd_sim::buildings::Occupant::Main, word: u.sign.and_then(nd_sim::leisure::sign_word) }).collect();
+fn shops_or(units: &[Unit], marks: &[Option<(crate::logo::Mark, String)>], n: usize) -> Vec<ShopUnit> {
+    let v: Vec<ShopUnit> = units
+        .iter()
+        .enumerate()
+        .filter(|(_, u)| u.shopfront)
+        .map(|(k, u)| ShopUnit { lit: !u.vacant(), role: u.role, lo: u.lo, main: u.occupant == nd_sim::buildings::Occupant::Main, word: u.sign.and_then(nd_sim::leisure::sign_word), mark: marks.get(k).cloned().flatten().filter(|_| !u.vacant()) })
+        .collect();
     if !v.is_empty() {
         return v;
     }
-    (0..n).map(|i| ShopUnit { lit: i % 2 == 0, role: UnitRole::Shop, lo: (i % 2) as u8, main: false, word: None }).collect()
+    (0..n).map(|i| ShopUnit { lit: i % 2 == 0, role: UnitRole::Shop, lo: (i % 2) as u8, main: false, word: None, mark: None }).collect()
+}
+
+/// [r17-logos] A tenant's logo and name on a sign board `w` x `h` centred
+/// at (`t`, `y`), `d` out from `face`.
+#[allow(clippy::too_many_arguments)]
+fn mark_on_board(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, d: f32, w: f32, h: f32, mark: &(crate::logo::Mark, String)) {
+    let f = &c.frame;
+    let out = f.dir3(face.out).normalize_or_zero();
+    let read = (-out).cross(Vec3::Y).normalize_or_zero();
+    let paint = crate::logo::Paint::lit(&mark.0, 2.0 * (1.0 - 0.4 * c.wear));
+    crate::logo::sign_line(g.part(Glow), f.at2(face.at(t, d), y), read, out, w, h, Some(&mark.0), &mark.1.to_uppercase(), &paint, crate::logo::Ink::Brand);
 }
 
 /// A shop's sign colour: its unit's place in the building and the seed.
@@ -56,14 +74,17 @@ fn sign_colour(c: &Ctx, i: usize) -> [f32; 3] {
 /// A sign over a shop door on `face`, `t` along it at height `y`, `w` wide:
 /// a dark board with its tenant's neon, or a pale board when to let.
 #[allow(clippy::too_many_arguments)]
-fn shop_sign(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, w: f32, let_: bool, col: [f32; 3]) {
+fn shop_sign(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, w: f32, let_: bool, col: [f32; 3], mark: Option<&(crate::logo::Mark, String)>) {
     let f = &c.frame;
     if !let_ {
         face.bx(g, f, Matte, t, y, 0.06, Vec3::new(w * 0.6, 0.6, 0.12), TO_LET);
         return;
     }
     face.bx(g, f, Matte, t, y, 0.08, Vec3::new(w, 0.8, 0.16), DARK);
-    face.decal(g, f, Glow, t, y, 0.18, w * 0.9, 0.42, mul(col, 2.2 * (1.0 - 0.4 * c.wear)));
+    match mark {
+        Some(m) => mark_on_board(g, c, face, t, y, 0.18, w * 0.9, 0.62, m),
+        None => face.decal(g, f, Glow, t, y, 0.18, w * 0.9, 0.42, mul(col, 2.2 * (1.0 - 0.4 * c.wear))),
+    }
 }
 
 /// Painted bays in a lot-local rectangle (rows across `r`, bays facing the
@@ -106,7 +127,7 @@ fn bays_in(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, r: &R, share: f32, row
 /// `walk` out from the face: lit box letters in its tenant's neon on a
 /// dark board, or a pale board when to let.
 #[allow(clippy::too_many_arguments)]
-fn fascia_sign(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, walk: f32, w: f32, let_: bool, col: [f32; 3], word: Option<&[u8]>) {
+fn fascia_sign(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, walk: f32, w: f32, let_: bool, col: [f32; 3], word: Option<&[u8]>, mark: Option<&(crate::logo::Mark, String)>) {
     let f = &c.frame;
     let d = walk + 0.2;
     if !let_ {
@@ -114,17 +135,24 @@ fn fascia_sign(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, walk: f32
         return;
     }
     face.bx(g, f, Matte, t, y, d, Vec3::new(w, 0.95, 0.12), DARK);
+    // [r17-logos] The tenant's logo and name; else its trade word; else a
+    // shop word in neon (they were blocks of light for letters).
+    if let Some(m) = mark {
+        mark_on_board(g, c, face, t, y, d + 0.07, w * 0.9, 0.72, m);
+        return;
+    }
     if let Some(word) = word {
         let h = ((w * 0.85) / ((4 * word.len()) as f32 - 1.0) * 5.0).min(0.6);
         super::eatout::neon_word(g, c, face, t, y, d + 0.07, h, word, mul(col, 1.8));
         return;
     }
-    let letters = ((w / 0.75).floor() as i32).clamp(3, 9);
-    let lw = w * 0.86 / letters as f32;
-    for k in 0..letters {
-        let lt = t - w * 0.43 + (k as f32 + 0.5) * lw;
-        face.decal(g, f, Glow, lt, y, d + 0.07, lw * 0.72, 0.55, mul(col, 2.2 * (1.0 - 0.4 * c.wear)));
-    }
+    let salt = nd_sim::hash::mix(c.seed, t.to_bits() as u64);
+    let shop = super::parts::sign_word(c, salt, w / 0.95);
+    let out = f.dir3(face.out).normalize_or_zero();
+    let read = (-out).cross(Vec3::Y).normalize_or_zero();
+    let mut paint = crate::logo::Paint::lit(&crate::logo::Mark::local(shop), 1.0);
+    paint.light = mul(col, 2.2 * (1.0 - 0.4 * c.wear));
+    crate::logo::sign_line(g.part(Glow), f.at2(face.at(t, d + 0.07), y), read, out, w * 0.9, 0.75, None, shop, &paint, crate::logo::Ink::Light);
 }
 
 /// Sodium lamps over a car park rectangle, every `step` m along its middle.
@@ -187,7 +215,7 @@ pub fn strip_mall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras) {
     parapet(g, c, &poly, height, 0.9, 0.25, Concrete, mul(stucco, 0.9));
     roof_gear(g, c, rng, &poly, height, 0.8);
     let front = br.front();
-    let units = shops_or(e.units, ((front.len / 7.0).floor() as usize).clamp(3, 8));
+    let units = shops_or(e.units, e.shop_marks, ((front.len / 7.0).floor() as usize).clamp(3, 8));
     let n = units.len().max(1);
     let seg = front.len / n as f32;
     // The covered walk along the shops, on posts at the car park's edge.
@@ -216,10 +244,10 @@ pub fn strip_mall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras) {
         // walk's roof it was hidden from every camera above it); a small
         // board over the door under the walk.
         if walk > 1.0 {
-            fascia_sign(g, c, &front, t, ground_h - 0.25, walk, (seg * 0.82).min(7.0), *let_, sign_colour(c, i), u.word);
+            fascia_sign(g, c, &front, t, ground_h - 0.25, walk, (seg * 0.82).min(7.0), *let_, sign_colour(c, i), u.word, u.mark.as_ref());
             front.bx(g, f, Matte, t + seg * 0.28, 2.75, 0.12, Vec3::new(1.2, 0.35, 0.08), if *let_ { mul(sign_colour(c, i), 0.6) } else { TO_LET });
         } else {
-            shop_sign(g, c, &front, t, ground_h - 0.55, (seg * 0.8).min(7.0), *let_, sign_colour(c, i));
+            shop_sign(g, c, &front, t, ground_h - 0.55, (seg * 0.8).min(7.0), *let_, sign_colour(c, i), u.mark.as_ref());
         }
     }
     // The top gallery's floor: the posts run up to it.
@@ -515,7 +543,7 @@ fn halls(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, r: R, height: f32, level
         let seg = front.len * 0.9 / n as f32;
         for (k, (i, lit)) in mine.iter().enumerate() {
             let t = -front.len * 0.45 + seg * (k as f32 + 0.5);
-            shop_sign(g, c, &front, t, y, (seg * 0.75).min(6.0), *lit, sign_colour(c, *i));
+            shop_sign(g, c, &front, t, y, (seg * 0.75).min(6.0), *lit, sign_colour(c, *i), None);
             if lv == 0 {
                 front.glaze(g, c, t, 1.6, 0.04, seg * 0.6, 2.4, if *lit { Pane::Lit(mul(pick(rng, &pal.glow_colors), 0.45)) } else { Pane::Dark });
             }
@@ -582,7 +610,7 @@ pub fn mall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras) {
     let park_d = (lot.d() * 0.38).clamp(12.0, 30.0);
     let side = (lot.w() * 0.06).clamp(1.5, 6.0);
     let Some(block) = fit(c, R::new(lot.u0 + side, lot.u1 - side, lot.v0 + park_d, lot.v1 - 3.0), 8.0) else { return };
-    let units = shops_or(e.units, 8);
+    let units = shops_or(e.units, e.shop_marks, 8);
     // The owner's store is the anchor, at the end the seed picks.
     let main = units.iter().position(|u| u.main || u.role == UnitRole::Anchor);
     let left = nd_sim::hash::mix2(c.seed, 0xA11) % 2 == 0;
@@ -641,7 +669,7 @@ pub fn mega_mall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras) {
     let mall_back = if wide { lot.v1 - 3.0 } else { lot.v1 - deck_d - 6.0 };
     let want = R::new(lot.u0 + 2.0, lot.u1 - if wide { deck_w + 5.0 } else { 2.0 }, lot.v0 + park_d, mall_back.max(lot.v0 + park_d + 14.0));
     let Some(block) = fit(c, want, 10.0) else { return };
-    let units = shops_or(e.units, 18);
+    let units = shops_or(e.units, e.shop_marks, 18);
     let anchors: Vec<usize> = units.iter().enumerate().filter(|(_, u)| u.role == UnitRole::Anchor).map(|(i, _)| i).collect();
     let aw = (block.w() * 0.24).clamp(10.0, 30.0);
     let hall_r = R::new(block.u0 + aw, block.u1 - aw, block.v0, block.v1 - 2.0);
