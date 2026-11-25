@@ -81,7 +81,7 @@ pub(super) fn sync_citizens(
     selection: Res<Selection>,
     lighting: Res<Lighting>,
     mut state: ResMut<RenderState>,
-    mut people: ResMut<people::PeopleRender>,
+    (mut people, mut near): (ResMut<people::PeopleRender>, ResMut<near_people::NearPeople>),
     mut stats: ResMut<RenderStats>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -192,6 +192,24 @@ pub(super) fn sync_citizens(
         }
         if protected.insert(o.2) {
             people.cache.touch(&o.2);
+        }
+    }
+    // [r17-people] Those close enough for a near figure (the nearest
+    // first), with their extras: what they carry, umbrellas and hoods
+    // up in heavy rain or snow.
+    if near_people::NearPeople::wanted(plain) {
+        let rain = climate::precip_now(w).is_some_and(|(_, i)| i > 0.3);
+        let reach2 = near_people::CANDIDATE_REACH * near_people::CANDIDATE_REACH;
+        for &(id, e, key, stature, d2) in &outdoors {
+            if d2 > reach2 {
+                break;
+            }
+            let Some(c) = w.citizens.get(id) else { continue };
+            if c.spotlight || lifted.citizen == Some(id) {
+                continue;
+            }
+            let extras = nd_procgen::people_near::near_extras(&key, c.seed, c.age, rain);
+            near.candidates.push(near_people::NearCandidate { src: e, key: nd_procgen::people_near::NearKey { base: key, extras }, stature });
         }
     }
     drop(sp);
