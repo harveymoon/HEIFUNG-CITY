@@ -132,7 +132,7 @@ impl World {
                 let c = &mut self.traffic.cars[car];
                 c.model = patrol_model();
                 c.errand = Errand::Patrol(office);
-                self.enforcement.patrols.push(Patrol { car, office });
+                self.enforcement.patrols.push(Patrol { car, office, busy_until: 0 });
             } else if mine.len() > want {
                 for &car in &mine[want..] {
                     self.send_patrol_home(car, office);
@@ -180,16 +180,25 @@ impl World {
         if self.enforcement.patrols.is_empty() {
             return;
         }
-        let eyes: Vec<Vec2> = self.enforcement.patrols.iter().filter_map(|p| self.traffic.cars.get(p.car).map(|c| c.pos)).collect();
-        let seen: Vec<VehicleId> = self
-            .vehicles
-            .cars
-            .iter()
-            .filter(|(_, c)| c.spot().is_some_and(|s| s.kind.on_street() && eyes.iter().any(|e| e.distance(s.pos) < SPOT_RANGE)))
-            .map(|(id, _)| id)
-            .collect();
-        for vid in seen {
-            self.check_parked(vid);
+        // [r17-fixes] Each patrol free to write (`Patrol::busy_until`) looks
+        // at the cars in sight, in order, until it writes one; then its
+        // officers are busy for `TICKET_MINUTES`.
+        let tick = self.clock.tick;
+        for k in 0..self.enforcement.patrols.len() {
+            let p = self.enforcement.patrols[k];
+            if p.busy_until > tick {
+                continue;
+            }
+            let Some(eye) = self.traffic.cars.get(p.car).map(|c| c.pos) else { continue };
+            let seen: Vec<VehicleId> = self.vehicles.cars.iter().filter(|(_, c)| c.spot().is_some_and(|s| s.kind.on_street() && eye.distance(s.pos) < SPOT_RANGE)).map(|(id, _)| id).collect();
+            for vid in seen {
+                if self.check_parked(vid) {
+                    if let Some(p) = self.enforcement.patrols.get_mut(k) {
+                        p.busy_until = tick + TICKET_MINUTES;
+                    }
+                    break;
+                }
+            }
         }
     }
 
@@ -221,26 +230,33 @@ impl World {
     /// or parked illegally; [clamp] the clamp once the grace has run out
     /// (towed if the fine goes unpaid), or the tow truck at once for an
     /// illegal one.
-    pub(super) fn check_parked(&mut self, vid: VehicleId) {
+    /// [r17-fixes] True when the officers did something (a ticket, a tow
+    /// call, a clamp): that takes them a while.
+    pub(super) fn check_parked(&mut self, vid: VehicleId) -> bool {
         let tick = self.clock.tick;
         if self.enforcement.job_for(vid).is_some() {
-            return;
+            return false;
         }
-        let Some(spot) = self.vehicles.cars.get(vid).and_then(|c| c.spot().copied()).filter(|s| s.kind.on_street()) else { return };
+        let Some(spot) = self.vehicles.cars.get(vid).and_then(|c| c.spot().copied()).filter(|s| s.kind.on_street()) else { return false };
         let illegal = self.parked_illegally(&spot);
         let over = self.kerb_limit(vid).is_some_and(|l| tick >= spot.since + l);
         if !illegal && !over {
-            return;
+            return false;
         }
+        let jobs = self.enforcement.jobs.len();
         if spot.ticketed == 0 {
             self.ticket(vid, illegal);
             if illegal {
                 self.call_tow_if_room(vid);
             }
+            true
         } else if illegal {
             self.call_tow_if_room(vid);
+            self.enforcement.jobs.len() != jobs
         } else if tick >= spot.ticketed + GRACE {
-            self.clamp(vid);
+            self.clamp(vid).is_some()
+        } else {
+            false
         }
     }
 

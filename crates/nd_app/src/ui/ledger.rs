@@ -77,7 +77,12 @@ pub fn page(ui: &mut egui::Ui, p: &mut UiCtx) {
         }
     });
     ui.ctx().data_mut(|d| d.insert_temp(id, yesterday));
-    let cells: Vec<Cell> = if yesterday && have_yesterday { bank.yesterday().map(|d| d.cells.clone()).unwrap_or_default() } else { bank.today_cells() };
+    let all: Vec<Cell> = if yesterday && have_yesterday { bank.yesterday().map(|d| d.cells.clone()).unwrap_or_default() } else { bank.today_cells() };
+    // [r17-fixes] A load books every balance back as opening balances from
+    // outside (`World::open_ledger`): not money that came in (r16 photo F3:
+    // "$1.6B in from outside" on any day the game was loaded). Shown apart.
+    let opening: i64 = all.iter().filter(|c| c.kind == Kind::Opening).map(|c| c.units).sum();
+    let cells: Vec<Cell> = all.into_iter().filter(|c| c.kind != Kind::Opening).collect();
     let inn: i64 = cells.iter().filter(|c| c.from == Class::Outside).map(|c| c.units).sum();
     let out: i64 = cells.iter().filter(|c| c.to == Class::Outside).map(|c| c.units).sum();
     let rent = |k: Kind| dollars(cells.iter().filter(|c| c.kind == k).map(|c| c.units).sum());
@@ -86,6 +91,9 @@ pub fn page(ui: &mut egui::Ui, p: &mut UiCtx) {
         pane::kpi(ui, "in from outside", egui::RichText::new(super::fmt::money(dollars(inn))).color(theme::GOOD));
         pane::kpi(ui, "out of town", egui::RichText::new(super::fmt::money(dollars(out))).color(WARN));
         pane::kpi(ui, "books balance", egui::RichText::new(if w.ledger_sum() == 0 { "to the cent".to_string() } else { format!("off by {}", w.ledger_sum()) }));
+        if opening != 0 {
+            pane::kpi(ui, "books opened on load", egui::RichText::new(super::fmt::money(dollars(opening))).weak());
+        }
         if bank.untracked_moves > 0 {
             pane::kpi(ui, "untracked", egui::RichText::new(format!("{} ({}×)", super::fmt::money(dollars(bank.untracked_units)), bank.untracked_moves)).color(WARN));
         }

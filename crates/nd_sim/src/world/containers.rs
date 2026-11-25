@@ -150,8 +150,16 @@ impl World {
         (n as usize).clamp(6, 400)
     }
 
+    /// [r17-fixes] (photo 2026-11-24 F4) Whether depot `b` stacks boxes at
+    /// all: a yard whose layout lays no stacks (`layout_room` 0: a lot too
+    /// small for a forty-footer beside its lorry bays) is sent none, so what
+    /// it holds drains away and it reports what it holds, 0 of 0.
+    pub fn depot_takes_boxes(&self, b: BuildingId) -> bool {
+        self.containers.layout_room.get(&b) != Some(&0)
+    }
+
     fn nearest_depot(&self, p: Vec2, want: impl Fn(DepotKind) -> bool) -> Option<BuildingId> {
-        self.box_depots().into_iter().filter(|d| want(d.1)).min_by(|a, b| a.2.distance_squared(p).total_cmp(&b.2.distance_squared(p)).then(a.0.cmp(&b.0))).map(|d| d.0)
+        self.box_depots().into_iter().filter(|d| want(d.1) && self.depot_takes_boxes(d.0)).min_by(|a, b| a.2.distance_squared(p).total_cmp(&b.2.distance_squared(p)).then(a.0.cmp(&b.0))).map(|d| d.0)
     }
 
     pub(super) fn place_pos(&self, b: BuildingId) -> Option<Vec2> {

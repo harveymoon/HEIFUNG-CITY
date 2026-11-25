@@ -1,6 +1,7 @@
 //! [climate] Weather you can see. When the sky is heavy (`world.weather.cloud`
-//! over [`CLOUD_START`]) it rains on Temperate and Tropical maps and snows
-//! on Arctic and Volcanic ones: a few blocks of streaks or flakes round the
+//! over [`CLOUD_START`]) it rains or snows by the air temperature
+//! ([`snows_at`], [r17-fixes]; Arctic and Volcanic lean to snow, deserts stay
+//! dry): a few blocks of streaks or flakes round the
 //! camera, scrolled down (and downwind) every frame, one shared mesh and one
 //! material, nothing per particle on the CPU. Off at the Low graphics tier.
 //!
@@ -65,15 +66,92 @@ pub fn precip_shown(w: &World, lighting: &Lighting) -> Option<(&'static str, f32
     precip_now(w).filter(|_| lighting.show_weather)
 }
 
-/// What is falling now and how hard (0..1), if anything.
+/// [r17-fixes] Air temperature (°C) under which it snows, before the
+/// climate's lean: a sleet band of [`SLEET_BAND`] either side of it falls
+/// as one or the other, hour by hour.
+pub const SNOW_BELOW_C: f32 = 1.0;
+pub const SLEET_BAND: f32 = 1.0;
+
+/// Whether what falls at `temp_c` is snow: under [`SNOW_BELOW_C`] (moved up
+/// a little where the climate snows, so its sleet leans to snow), and in the
+/// sleet band either side of it one or the other by `hour_hash` (0..1, the
+/// same for the hour), more often snow the colder it is.
+pub fn snows_at(temp_c: f32, snowy_climate: bool, hour_hash: f32) -> bool {
+    let line = SNOW_BELOW_C + if snowy_climate { 0.5 } else { 0.0 };
+    let snow_share = ((line + SLEET_BAND - temp_c) / (2.0 * SLEET_BAND)).clamp(0.0, 1.0);
+    hour_hash < snow_share
+}
+
+/// What is falling now and how hard (0..1), if anything. [r17-fixes] Rain
+/// or snow by the air temperature (`weather.temp_c`), the climate only a
+/// lean (r16 photo F1: a Volcanic city snowed at 8 °C and never rained); a
+/// climate that never rains (desert) stays dry.
 pub fn precip_now(w: &World) -> Option<(&'static str, f32)> {
-    let kind = match look(w.landscape.params.climate).precip {
+    let snowy = match look(w.landscape.params.climate).precip {
         Precip::None => return None,
-        Precip::Rain => "rain",
-        Precip::Snow => "snow",
+        Precip::Rain => false,
+        Precip::Snow => true,
     };
     let i = ((w.weather.cloud - CLOUD_START) / (1.0 - CLOUD_START)).clamp(0.0, 1.0);
+    let kind = if snows_at(w.weather.temp_c, snowy, hash(w.clock.tick as u32 / 60 ^ 0x5EE7)) { "snow" } else { "rain" };
     (i > 0.0).then_some((kind, i))
+}
+
+// ── [r17-fixes] flakes and drops fade near the eye ──────────────────────────
+
+/// (photo 2026-11-24 F12) A flake passing a metre from the camera filled
+/// the view as a big white star: rain and snow fade out within
+/// [`NEAR_FADE`] metres of the eye (by the fragment's distance, in the
+/// material), so only the ones a few metres off and beyond are seen.
+pub type PrecipMaterial = bevy::pbr::ExtendedMaterial<StandardMaterial, NearFade>;
+
+/// Gone nearer than the first, whole from the second (metres).
+pub const NEAR_FADE: (f32, f32) = (2.0, 6.0);
+
+#[derive(Asset, bevy::render::render_resource::AsBindGroup, Reflect, Debug, Clone)]
+pub struct NearFade {
+    /// x, y: [`NEAR_FADE`].
+    #[uniform(100)]
+    pub fade: Vec4,
+}
+
+impl bevy::pbr::MaterialExtension for NearFade {
+    fn fragment_shader() -> bevy::shader::ShaderRef {
+        NEAR_FADE_SHADER.into()
+    }
+}
+
+const NEAR_FADE_SHADER: Handle<bevy::shader::Shader> = bevy::asset::uuid_handle!("5d0c7e21-94b3-4a6f-8e1d-3b7f2a9c4e60");
+
+const NEAR_FADE_SRC: &str = r#"
+#import bevy_pbr::{
+    pbr_fragment::pbr_input_from_standard_material,
+    forward_io::{VertexOutput, FragmentOutput},
+    pbr_functions::main_pass_post_lighting_processing,
+    mesh_view_bindings::view,
+}
+
+@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> near_fade: vec4<f32>;
+
+@fragment
+fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    var pbr_input = pbr_input_from_standard_material(in, is_front);
+    let d = distance(in.world_position.xyz, view.world_position);
+    let f = smoothstep(near_fade.x, near_fade.y, d);
+    if f <= 0.0 {
+        discard;
+    }
+    var out: FragmentOutput;
+    out.color = pbr_input.material.base_color;
+    out.color.a = out.color.a * f;
+    out.color = main_pass_post_lighting_processing(pbr_input, out.color);
+    return out;
+}
+"#;
+
+/// Put the near-fade shader in the shader store (at start-up).
+pub(super) fn add_precip_shader(mut shaders: ResMut<Assets<bevy::shader::Shader>>) {
+    let _ = shaders.insert(NEAR_FADE_SHADER.id(), bevy::shader::Shader::from_wgsl(NEAR_FADE_SRC, "nd_app/precip_near_fade.wgsl"));
 }
 
 #[derive(Component)]
@@ -85,7 +163,7 @@ pub(super) struct Precipitation {
 pub(super) struct PrecipState {
     rain: Option<Handle<Mesh>>,
     snow: Option<Handle<Mesh>>,
-    material: Option<Handle<StandardMaterial>>,
+    material: Option<Handle<PrecipMaterial>>,
     spawned: bool,
     shown: Option<Precip>,
 }
@@ -142,7 +220,7 @@ fn daylight(w: &World, lighting: &Lighting) -> f32 {
 pub(super) fn sync_precipitation(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<PrecipMaterial>>,
     sim: Res<Sim>,
     lighting: Res<Lighting>,
     stats: Res<RenderStats>,
@@ -167,7 +245,8 @@ pub(super) fn sync_precipitation(
         state.spawned = true;
         state.rain = Some(meshes.add(particle_block(false)));
         state.snow = Some(meshes.add(particle_block(true)));
-        let mat = materials.add(StandardMaterial { base_color: Color::NONE, unlit: true, alpha_mode: AlphaMode::Blend, double_sided: true, cull_mode: None, fog_enabled: true, ..default() });
+        let base = StandardMaterial { base_color: Color::NONE, unlit: true, alpha_mode: AlphaMode::Blend, double_sided: true, cull_mode: None, fog_enabled: true, ..default() };
+        let mat = materials.add(PrecipMaterial { base, extension: NearFade { fade: Vec4::new(NEAR_FADE.0, NEAR_FADE.1, 0.0, 0.0) } });
         state.material = Some(mat.clone());
         let mesh = state.rain.clone().unwrap_or_default();
         for block in 0..4 * LAYERS {
@@ -182,8 +261,8 @@ pub(super) fn sync_precipitation(
         let (rgb, a) = if snow { ([0.86, 0.89, 0.95], 0.85) } else { ([0.62, 0.68, 0.78], 0.32) };
         let a = a * (0.35 + 0.65 * intensity);
         let want = Color::linear_rgba(rgb[0] * light, rgb[1] * light, rgb[2] * light, a);
-        if m.base_color != want {
-            m.base_color = want;
+        if m.base.base_color != want {
+            m.base.base_color = want;
         }
     }
     let Some(cam) = cams.iter().next() else { return };
@@ -306,14 +385,17 @@ pub(super) fn sync_steam(
     if state.entities.is_empty() {
         return;
     }
-    let light = daylight(w, &lighting);
+    // [r17-fixes] (photo F7) Steam takes the smoke's light: lit in the
+    // dusk glow, not dark against it.
+    let t = if lighting.follow_clock { w.clock.day_fraction() } else { (lighting.hour / 24.0).rem_euclid(1.0) };
+    let light = haze::smoke_light(((t - 0.25) * std::f32::consts::TAU).sin());
     let light_key = (light * 48.0).round() as i32;
     if state.light_key != Some(light_key) {
         state.light_key = Some(light_key);
         for (k, h) in state.materials.iter().enumerate() {
             let a = 0.7 * (k + 1) as f32 / STEAM_STEPS as f32;
             if let Some(mut m) = materials.get_mut(h) {
-                m.base_color = Color::linear_rgba(STEAM_RGB[0] * light, STEAM_RGB[1] * light, STEAM_RGB[2] * light, a);
+                m.base_color = Color::linear_rgba(STEAM_RGB[0] * light, STEAM_RGB[1] * light, STEAM_RGB[2] * light, a * haze::smoke_alpha(light));
             }
         }
     }
@@ -351,6 +433,20 @@ pub(super) fn sync_steam(
 
 #[cfg(test)]
 mod tests {
+    /// [r17-fixes] (photo 2026-11-24 F1) Rain or snow by the air: a storm
+    /// at 8 °C rains even where the climate leans to snow, frost snows
+    /// anywhere, and the sleet band falls as either.
+    #[test]
+    fn rain_or_snow_by_the_temperature() {
+        for h in [0.0, 0.3, 0.7, 0.99] {
+            assert!(!super::snows_at(8.0, true, h), "8 °C rains on a snowy map");
+            assert!(!super::snows_at(4.0, false, h));
+            assert!(super::snows_at(-3.0, false, h), "frost snows anywhere");
+            assert!(super::snows_at(-0.5, true, h));
+        }
+        assert!(super::snows_at(1.0, false, 0.2) && !super::snows_at(1.0, false, 0.8), "the sleet band falls as either");
+    }
+
     use super::*;
 
     /// [scene-clock] Paused, the weather stands still; faster game speeds
