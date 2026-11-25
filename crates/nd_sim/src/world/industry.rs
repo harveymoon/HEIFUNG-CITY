@@ -186,9 +186,7 @@ impl World {
         let lot = self.lots.get(lot_id)?;
         let c = lot.center;
         let ctx = self.site_context();
-        let mut site = ctx.site(self, c, ground::sample_area(&self.landscape, c, &lot.polygon), self.contamination.over(c, &lot.polygon), Some(lot_id));
-        site.too_small_for_yard = lot.width().min(lot.depth()) < industry::YARD_MIN_SIDE;
-        Some(site)
+        Some(ctx.site(self, c, ground::sample_area(&self.landscape, c, &lot.polygon), self.contamination.over(c, &lot.polygon), Some(lot_id)))
     }
 
     /// The weight of each industry kind on a lot, in `IndustryKind::ALL`

@@ -79,7 +79,7 @@ impl SiteContext {
         let livestock_farms = self.livestock.iter().filter(|(lot, at)| Some(*lot) != exclude && at.distance(c) < industry::LIVESTOCK_REACH).count() as u32;
         let slaughterhouses = self.slaughterhouses.iter().filter(|(lot, at)| Some(*lot) != exclude && at.distance(c) < industry::LIVESTOCK_REACH).count() as u32;
         let fishing_port = near(nearest(&self.fishing_ports), 120.0, 700.0);
-        IndustrySite { ground, contamination, land_value: w.land_value.at(c), port, yard, highway, depot, neighbours, fleet_lot_near, crude_wells, livestock_farms, slaughterhouses, fishing_port, ore_mines, smelters, dirty, too_small_for_yard: false }
+        IndustrySite { ground, contamination, land_value: w.land_value.at(c), port, yard, highway, depot, neighbours, fleet_lot_near, crude_wells, livestock_farms, slaughterhouses, fishing_port, ore_mines, smelters, dirty }
     }
 }
 

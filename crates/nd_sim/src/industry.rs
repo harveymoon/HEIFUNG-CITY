@@ -269,16 +269,11 @@ pub struct IndustrySite {
     /// distance (see [`exposure`]). Unlike `neighbours` this reaches as far
     /// as each plant's [`IndustryKind::dirt_reach`].
     pub dirty: Vec<(IndustryKind, f32)>,
-    /// [r17-fixes] (photo 2026-11-24 F4) The lot is too small for a
-    /// container yard's stacks (a side under [`YARD_MIN_SIDE`]): a
-    /// forty-footer and the lorry bays in front of it do not fit, so the
-    /// yard would hold nothing.
-    pub too_small_for_yard: bool,
 }
 
-/// [r17-fixes] The shortest side (metres) of a lot a container yard opens
-/// on: a forty-foot box (12.2 m) across it with the fence, or behind the
-/// lorry bays down it.
+/// [r17-fixes] The shortest side (metres) of a lot a shut works is turned
+/// into a container yard on (`World::convert_to_storage_yard`): a forty-foot
+/// box (12.2 m) across it with the fence, or behind the lorry bays down it.
 pub const YARD_MIN_SIDE: f32 = 16.0;
 
 /// [dirty-industry] A dirty plant as its neighbours feel it: where, how
@@ -559,7 +554,7 @@ pub fn business_weights(kind: IndustryKind, site: &IndustrySite) -> Vec<(Busines
         IndustryKind::Logistics => {
             let fleet = if site.fleet_lot_near { 0.15 } else { 0.5 + 1.5 * site.depot + 0.8 * site.port.max(site.yard) };
             // [parking] A tow company now and then: towing pays wherever cars are.
-            vec![(BusinessKind::ContainerYard, if site.too_small_for_yard { 0.0 } else { 1.0 + 1.0 * site.port + 0.6 * site.yard + 0.4 * site.highway }), (BusinessKind::FleetLot, fleet), (BusinessKind::TowYard, 0.4)]
+            vec![(BusinessKind::ContainerYard, 1.0 + 1.0 * site.port + 0.6 * site.yard + 0.4 * site.highway), (BusinessKind::FleetLot, fleet), (BusinessKind::TowYard, 0.4)]
         }
         IndustryKind::Fishing => {
             let processors = site.neighbours.iter().filter(|(k, _)| *k == IndustryKind::Fishing).count() as f32;

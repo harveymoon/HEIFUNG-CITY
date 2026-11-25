@@ -335,10 +335,14 @@ fn culverts(land: &Landscape, probe: &TerrainProbe, stone: [f32; 3], wet: [f32; 
         }
         for (end, prev) in [(r.points[0], r.points[1]), (r.points[n - 1], r.points[n - 2])] {
             let dir = (end - prev).normalize_or_zero();
-            if dir == Vec2::ZERO || end.x.abs() > half || end.y.abs() > half || land.is_water(end + dir * 1.5) {
+            let hw = r.width * 0.5;
+            // (The sim's river is round at its ends, `hw` past the last
+            // point: look beyond that cap for more water.)
+            if dir == Vec2::ZERO || end.x.abs() > half || end.y.abs() > half || land.is_water(end + dir * (hw + 2.0)) {
                 continue;
             }
-            let hw = r.width * 0.5;
+            // The headwall across the cap, half way into it.
+            let end = end + dir * (hw * 0.5);
             let side = dir.perp();
             let (a, b) = (end - side * hw, end + side * hw);
             let into = Vec3::new(-dir.x, 0.0, -dir.y);
