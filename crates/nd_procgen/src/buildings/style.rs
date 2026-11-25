@@ -607,6 +607,26 @@ styles! {
     BuildersYard { label: "builder's yard", family: Logistics, cluster: -0.2, draw: |g, c, r, e| builders::builders_yard(g, c, r, e) },
     /// A big clad shed, a covered timber yard, pallets, a car park.
     BuildersMerchant { label: "builders' merchant", family: Retail, cluster: -1.0, draw: |g, c, r, e| builders::builders_merchant(g, c, r, e) },
+    // -- [r17-goods] the new chains (`buildings/goods.rs`), forced by the
+    // business. Appended so `ALL` keeps its order. --
+    /// A brewhouse with copper kettles behind glass, fermenters, silos, kegs.
+    Brewery { label: "brewery", family: Logistics, cluster: -0.2, draw: |g, c, r, _| goods::brewery(g, c, r) },
+    /// Bonded warehouses, a pagoda kiln and copper pot stills.
+    Distillery { label: "distillery", family: Logistics, cluster: -0.3, draw: |g, c, r, _| goods::distillery(g, c, r) },
+    /// A clean shed with a lit bottling line, syrup tanks, crates.
+    BottlingPlant { label: "bottling plant", family: Logistics, cluster: 0.0, draw: |g, c, r, _| goods::bottler(g, c, r) },
+    /// A white pharmaceutical plant with a green cross and a tank compound.
+    DrugPlant { label: "pharmaceutical plant", family: Logistics, cluster: -0.2, draw: |g, c, r, _| goods::drug_plant(g, c, r) },
+    /// Preheater tower, long rotary kiln, silos and a limestone heap.
+    CementWorks { label: "cement works", family: Heavy, cluster: -0.5, draw: |g, c, r, _| goods::cement_works(g, c, r) },
+    /// Silos over a mixer house, a conveyor, aggregate bays.
+    BatchingPlant { label: "concrete batching plant", family: Heavy, cluster: -0.3, draw: |g, c, r, _| goods::batching_plant(g, c, r) },
+    /// An open saw shed, the log yard, board packs, a sawdust heap.
+    SawMill { label: "saw mill", family: Heavy, cluster: -0.3, draw: |g, c, r, _| goods::saw_mill(g, c, r) },
+    /// A brick mill under a lit sawtooth roof, a chimney, bales on the dock.
+    TextileMill { label: "textile mill", family: Heavy, cluster: 0.2, draw: |g, c, r, _| goods::textile_mill(g, c, r) },
+    /// Shop units with racks, mannequins and stalls out on the pavement.
+    FashionWholesale { label: "fashion wholesaler", family: Retail, cluster: 1.2, draw: |g, c, r, _| goods::fashion_wholesale(g, c, r) },
 }
 
 impl Style {

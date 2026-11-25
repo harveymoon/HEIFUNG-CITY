@@ -86,6 +86,8 @@ pub mod placeable;
 pub mod places;
 pub mod plan;
 pub mod fishing;
+/// [r17-goods] Hospitals' medicine and nuclear fuel.
+pub mod goods;
 pub mod ports;
 pub mod power;
 pub mod pressure;

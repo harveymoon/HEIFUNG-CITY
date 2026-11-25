@@ -264,6 +264,10 @@ mod tests;
 mod materials_tests;
 #[cfg(test)]
 mod gameplay_tests;
+// [r17-goods] hospitals' medicine, nuclear fuel convoys
+mod goods;
+#[cfg(test)]
+mod goods_tests;
 mod taxes;
 pub use taxes::TaxRow;
 pub use towers::{TowerOrder, TowerSite};
@@ -1006,6 +1010,10 @@ pub struct World {
     /// `world/builders.rs`). Old saves load with none.
     #[serde(default)]
     pub builders: crate::builders::BuildersBook,
+    /// [r17-goods] The hospitals' medicine and the nuclear plants' fuel
+    /// (`crate::goods`, `world/goods.rs`). Old saves load with none.
+    #[serde(default)]
+    pub goods: crate::goods::GoodsBook,
     /// [r14-builders] Each contractor's sites under way, rebuilt on the hour
     /// and when a job is let (`World::refresh_builder_sites`): where its
     /// crews go to work. Not saved.
@@ -1148,6 +1156,7 @@ impl World {
             containers: crate::containers::Containers { live: true, ..Default::default() },
             talks: Default::default(),
             builders: Default::default(),
+            goods: Default::default(),
             builder_sites: BTreeMap::new(),
         };
         w.landscape.set(Landscape::new(&w.config.landscape));

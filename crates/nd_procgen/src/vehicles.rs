@@ -95,6 +95,10 @@ fn livery_code(l: Livery) -> u64 {
         Livery::Transit => 6,
         Livery::Taxi => 7,
         Livery::FoodTruck(k) => 90_000 + k as u64,
+        Livery::Drinks => 8,
+        Livery::Medical => 9,
+        Livery::Fashion => 10,
+        Livery::Escort => 11,
     }
 }
 
@@ -148,6 +152,11 @@ pub fn livery_colors(l: Livery, paint: u8, pal: &Palette) -> Option<([f32; 3], [
         Livery::Taxi => (TAXI_YELLOW, [0.02, 0.02, 0.025], [3.2, 2.6, 0.5]),
         // [r14-foodtrucks] Each type's paint job.
         Livery::FoodTruck(k) => food_truck_colors(k),
+        // [r17-goods] The new trades' fleets.
+        Livery::Drinks => ([0.5, 0.05, 0.05], [0.95, 0.7, 0.18], [2.8, 1.9, 0.4]),
+        Livery::Medical => ([0.86, 0.88, 0.88], [0.05, 0.55, 0.25], [0.3, 2.6, 0.9]),
+        Livery::Fashion => ([0.05, 0.04, 0.05], [0.95, 0.15, 0.55], [2.8, 0.4, 1.8]),
+        Livery::Escort => ([0.05, 0.08, 0.22], [0.85, 0.85, 0.88], [0.4, 0.9, 3.0]),
         // [megacorp] A dark body tinted with the brand, the brand as accent
         // and lit sign.
         Livery::Corp(c, _) => {
@@ -198,6 +207,9 @@ pub fn body_length(b: BodyType) -> f32 {
         BodyType::Tipper => 7.4,
         BodyType::Curtainsider => 8.4,
         BodyType::FoodTruck => 6.2,
+        BodyType::DrinksTruck => 8.0,
+        BodyType::CementTanker => 8.6,
+        BodyType::FlaskCarrier => 11.0,
     }
 }
 
@@ -264,6 +276,10 @@ pub fn vehicle_mesh_with(model: &VehicleModel, pal: &Palette) -> VehicleMesh {
 // ── builder ─────────────────────────────────────────────────────────────────
 
 use crate::color::{at, mix, mul, rgba as c4};
+
+// [r17-goods] The new goods' lorries (drinks, cement tanker, flask carrier, logs).
+#[path = "vehicles_goods.rs"]
+mod goods;
 
 struct B<'a> {
     m: &'a VehicleModel,
@@ -411,6 +427,9 @@ fn build(m: &VehicleModel, paint: [f32; 3], detail: bool, pal: &Palette) -> Vehi
         BodyType::Tipper => tipper(&mut b, col),
         BodyType::Curtainsider => curtainsider(&mut b, col),
         BodyType::FoodTruck => food_truck(&mut b, col),
+        BodyType::DrinksTruck => goods::drinks_truck(&mut b, col),
+        BodyType::CementTanker => goods::cement_tanker(&mut b, col),
+        BodyType::FlaskCarrier => goods::flask_carrier(&mut b, col),
     }
     if let Some((_, accent, sign)) = livery {
         if m.body != BodyType::FoodTruck {
@@ -744,6 +763,7 @@ fn flatbed(b: &mut B, col: [f32; 3]) {
             b.bx((mid, deck + 0.25, 0.0), (l, 0.5, hw * 1.7), rust);
             b.bx((mid - 0.6, deck + 0.6, 0.2), (l * 0.5, 0.3, hw), mul(rust, 0.8));
         }
+        Some(L::Logs) => goods::logs_on_deck(b, d0, d1, deck, hw),
         Some(L::Crates) => {
             let wood = [0.6, 0.48, 0.32];
             b.bx((mid, deck + 0.5, 0.0), (l * 0.8, 1.0, hw * 1.6), wood);
@@ -1616,8 +1636,9 @@ fn livery_marks(b: &mut B, accent: [f32; 3], sign: [f32; 3]) {
     }
     let len = if m.body == BodyType::Semi { nd_sim::vehicle::semi_length(m.boxed) } else { body_length(m.body) };
     match m.body {
-        BodyType::DeliveryVan | BodyType::BoxVan | BodyType::PanelTruck | BodyType::GarbageTruck | BodyType::Curtainsider => {
+        BodyType::DeliveryVan | BodyType::BoxVan | BodyType::PanelTruck | BodyType::GarbageTruck | BodyType::Curtainsider | BodyType::CementTanker => {
             let (hw, x, y, w, h) = match m.body {
+                BodyType::CementTanker => (0.97, -0.6, 2.05, 3.6, 1.0),
                 BodyType::DeliveryVan => (1.0, -0.6, 1.6, 2.6, 0.9),
                 BodyType::BoxVan => (1.05, -1.2, 1.9, 3.4, 1.4),
                 BodyType::PanelTruck => (1.2, -1.0, 2.2, 4.4, 1.6),
@@ -1642,6 +1663,8 @@ fn livery_marks(b: &mut B, accent: [f32; 3], sign: [f32; 3]) {
             }
         }
         BodyType::Hatchback | BodyType::Sedan | BodyType::Suv | BodyType::Coupe if m.livery.base() == Livery::Taxi => taxi_marks(b, accent, sign),
+        // [r17-goods] A nuclear convoy's escort.
+        BodyType::Suv | BodyType::Pickup if m.livery == Livery::Escort => goods::escort_marks(b, 1.87, 0.97),
         BodyType::Hatchback | BodyType::Sedan | BodyType::Suv | BodyType::Pickup | BodyType::Coupe | BodyType::CyberTruck => {
             // Door decal and a lit roof topper.
             b.sides(0.0, 0.7, if matches!(m.body, BodyType::Suv | BodyType::Pickup | BodyType::CyberTruck) { 0.97 } else { 0.89 }, 1.2, 0.3, accent);
@@ -1670,7 +1693,7 @@ fn livery_marks(b: &mut B, accent: [f32; 3], sign: [f32; 3]) {
     if matches!(m.livery.base(), Livery::Construction | Livery::Utility) {
         // Beacon on the roof of the cab.
         let (x, y) = match m.body {
-            BodyType::PanelTruck | BodyType::BoxVan | BodyType::Flatbed | BodyType::Mixer | BodyType::Tipper | BodyType::Curtainsider => (len * 0.5 - 1.0, 2.5),
+            BodyType::PanelTruck | BodyType::BoxVan | BodyType::Flatbed | BodyType::Mixer | BodyType::Tipper | BodyType::Curtainsider | BodyType::DrinksTruck | BodyType::CementTanker | BodyType::FlaskCarrier => (len * 0.5 - 1.0, 2.5),
             BodyType::Semi => (len * 0.5 - 1.0, 3.2),
             BodyType::GarbageTruck => (len * 0.5 - 1.0, 2.85),
             BodyType::Pickup => (0.0, 1.9),

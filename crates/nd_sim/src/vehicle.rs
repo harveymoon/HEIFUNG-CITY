@@ -77,10 +77,19 @@ pub enum BodyType {
     /// [r14-foodtrucks] A food truck: a step van with a serving hatch and an
     /// awning, or a three-wheeler cart, by its livery (`Livery::FoodTruck`).
     FoodTruck,
+    /// [r17-goods] A drinks lorry: roller-shutter bays down both sides,
+    /// kegs and crates showing.
+    DrinksTruck,
+    /// [r17-goods] A cement tanker: the dry-bulk tank on a rigid lorry,
+    /// cement powder from the works to the batching plants.
+    CementTanker,
+    /// [r17-goods] A low-loader with a shielded nuclear fuel flask, in an
+    /// escorted convoy.
+    FlaskCarrier,
 }
 
 impl BodyType {
-    pub const ALL: [BodyType; 26] = [
+    pub const ALL: [BodyType; 29] = [
         BodyType::Hatchback,
         BodyType::Sedan,
         BodyType::Coupe,
@@ -107,6 +116,9 @@ impl BodyType {
         BodyType::Tipper,
         BodyType::Curtainsider,
         BodyType::FoodTruck,
+        BodyType::DrinksTruck,
+        BodyType::CementTanker,
+        BodyType::FlaskCarrier,
     ];
 
     pub fn two_wheeler(self) -> bool {
@@ -122,13 +134,13 @@ impl BodyType {
     }
 
     pub fn is_truck(self) -> bool {
-        matches!(self, BodyType::BoxVan | BodyType::DeliveryVan | BodyType::PanelTruck | BodyType::Semi | BodyType::GarbageTruck | BodyType::TowTruck | BodyType::HeavyTow | BodyType::Flatbed | BodyType::Mixer | BodyType::Tipper | BodyType::Curtainsider)
+        matches!(self, BodyType::BoxVan | BodyType::DeliveryVan | BodyType::PanelTruck | BodyType::Semi | BodyType::GarbageTruck | BodyType::TowTruck | BodyType::HeavyTow | BodyType::Flatbed | BodyType::Mixer | BodyType::Tipper | BodyType::Curtainsider | BodyType::DrinksTruck | BodyType::CementTanker | BodyType::FlaskCarrier)
     }
 
     /// [tow] Too big for an ordinary wrecker's wheel lift: a lorry, a bus,
     /// an RV. A heavy tow truck comes for it.
     pub fn needs_heavy_tow(self) -> bool {
-        matches!(self, BodyType::BoxVan | BodyType::PanelTruck | BodyType::Semi | BodyType::GarbageTruck | BodyType::BubbleBus | BodyType::ArticulatedBus | BodyType::HeavyTow | BodyType::Flatbed | BodyType::Mixer | BodyType::Tipper | BodyType::Curtainsider)
+        matches!(self, BodyType::BoxVan | BodyType::PanelTruck | BodyType::Semi | BodyType::GarbageTruck | BodyType::BubbleBus | BodyType::ArticulatedBus | BodyType::HeavyTow | BodyType::Flatbed | BodyType::Mixer | BodyType::Tipper | BodyType::Curtainsider | BodyType::DrinksTruck | BodyType::CementTanker | BodyType::FlaskCarrier)
     }
 
     pub fn label(self) -> &'static str {
@@ -159,6 +171,9 @@ impl BodyType {
             BodyType::Tipper => "tipper",
             BodyType::Curtainsider => "curtainsider",
             BodyType::FoodTruck => "food_truck",
+            BodyType::DrinksTruck => "drinks_lorry",
+            BodyType::CementTanker => "cement_tanker",
+            BodyType::FlaskCarrier => "nuclear_flask_carrier",
         }
     }
 }
@@ -195,13 +210,21 @@ pub enum Livery {
     /// (`food_trucks::TruckKind as u8`): an ice-cream van's pastels and
     /// cone, a taco truck's red and yellow, and so on.
     FoodTruck(u8),
+    /// [r17-goods] Breweries' and bottlers' lorries: deep red and gold.
+    Drinks,
+    /// [r17-goods] Drug makers' and pharmacies' vans: white with a green cross.
+    Medical,
+    /// [r17-goods] The rag trade's vans: black and hot pink.
+    Fashion,
+    /// [r17-goods] A nuclear convoy's escort: dark blue, a light bar.
+    Escort,
 }
 
 impl Livery {
-    pub const ALL: [Livery; 13] = [Livery::None, Livery::Pizza, Livery::Parcels, Livery::Grocery, Livery::Construction, Livery::Utility, Livery::Transit, Livery::Taxi, Livery::Corp(6, 2), Livery::Fleet(7, 4), Livery::Fleet(4, 1), Livery::FoodTruck(0), Livery::FoodTruck(4)];
+    pub const ALL: [Livery; 17] = [Livery::None, Livery::Pizza, Livery::Parcels, Livery::Grocery, Livery::Construction, Livery::Utility, Livery::Transit, Livery::Taxi, Livery::Corp(6, 2), Livery::Fleet(7, 4), Livery::Fleet(4, 1), Livery::FoodTruck(0), Livery::FoodTruck(4), Livery::Drinks, Livery::Medical, Livery::Fashion, Livery::Escort];
 
     /// [companies] The plain liveries by number, for `Livery::Fleet`.
-    const PLAIN: [Livery; 8] = [Livery::None, Livery::Pizza, Livery::Parcels, Livery::Grocery, Livery::Construction, Livery::Utility, Livery::Transit, Livery::Taxi];
+    const PLAIN: [Livery; 12] = [Livery::None, Livery::Pizza, Livery::Parcels, Livery::Grocery, Livery::Construction, Livery::Utility, Livery::Transit, Livery::Taxi, Livery::Drinks, Livery::Medical, Livery::Fashion, Livery::Escort];
 
     /// [companies] A plain livery's number (`Fleet`'s first field); a
     /// corp's or fleet's own counts as none.
@@ -281,12 +304,14 @@ pub enum Load {
     Pipe,
     Scrap,
     Crates,
+    /// [r17-goods] Logs between the stanchions of a log lorry.
+    Logs,
 }
 
 pub const LOAD_BASE: u8 = 150;
 
 impl Load {
-    pub const ALL: [Load; 8] = [Load::Timber, Load::Steel, Load::Rebar, Load::BrickPallets, Load::Glass, Load::Pipe, Load::Scrap, Load::Crates];
+    pub const ALL: [Load; 9] = [Load::Timber, Load::Steel, Load::Rebar, Load::BrickPallets, Load::Glass, Load::Pipe, Load::Scrap, Load::Crates, Load::Logs];
 
     /// The load a flatbed of `r` shows.
     pub fn of(r: Resource) -> Load {
@@ -298,6 +323,7 @@ impl Load {
             Resource::Glass => Load::Glass,
             Resource::Pipe => Load::Pipe,
             Resource::Metal => Load::Scrap,
+            Resource::Logs => Load::Logs,
             _ => Load::Crates,
         }
     }
@@ -475,12 +501,18 @@ impl VehicleModel {
                 m.boxed = Load::of(resource).code();
             }
             m
-        } else if long_haul {
+        } else if long_haul && !matches!(resource, Resource::Logs | Resource::NuclearFuel | Resource::Concrete) {
             Self::new(VehicleClass::Mid, BodyType::Semi)
         } else {
             // [r13-catalogue] The good's lorry body (`crate::catalogue`).
+            // [r17-goods] Logs come in from out of town on log lorries, a
+            // nuclear plant's fuel on the flask carrier, ready-mix in a
+            // mixer: never in a semi's box.
             let mut m = Self::new(VehicleClass::Mid, resource.row().truck);
             m.livery = seller.map(Livery::for_business).unwrap_or(Livery::None);
+            if m.body == BodyType::Flatbed {
+                m.boxed = Load::of(resource).code();
+            }
             m
         };
         m.wear = rng.random_range(0..2);

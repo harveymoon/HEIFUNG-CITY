@@ -168,7 +168,7 @@ fn site_lorries_wear_the_load() {
     assert_eq!(m.body, crate::vehicle::BodyType::Flatbed);
     assert_eq!(crate::vehicle::Load::from_code(m.boxed), Some(crate::vehicle::Load::Timber));
     assert_eq!(crate::vehicle::chassis_of(m.boxed), None, "a flatbed is not a container rig");
-    let m = crate::vehicle::VehicleModel::for_cargo(Resource::Cement, None, true, false, &mut rng);
+    let m = crate::vehicle::VehicleModel::for_cargo(Resource::Concrete, None, true, false, &mut rng);
     assert_eq!(m.body, crate::vehicle::BodyType::Mixer);
     let m = crate::vehicle::VehicleModel::for_cargo(Resource::Aggregate, None, true, false, &mut rng);
     assert_eq!(m.body, crate::vehicle::BodyType::Tipper);

@@ -168,6 +168,7 @@ impl World {
         // [K34] The scrap yards cut up, the box owners' round.
         crate::prof!("daily_containers", self.daily_containers());
         self.industry_daily();
+        self.goods_daily();
         self.daily_places();
         // [social] ties fade, friends help, groups form and make things
         crate::prof!("daily_social", self.daily_social());
@@ -219,6 +220,8 @@ impl World {
         crate::prof!("trades_hourly", self.trades_hourly());
         // [r14-builders] merchants restock, builders fill their yards
         crate::prof!("builders_hourly", self.builders_hourly());
+        // [r17-goods] hospitals' medicine, nuclear fuel convoys
+        self.goods_hourly();
         crate::prof!("record_hour", self.record_hour());
         // [toll-inspect] each booth's hour on its chart
         self.hourly_tolls();

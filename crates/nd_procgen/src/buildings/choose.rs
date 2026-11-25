@@ -221,6 +221,19 @@ pub fn industry_styles(kind: nd_sim::BusinessKind, tier: Tier) -> Option<&'stati
         // [r14-builders] the building trade
         B::Contractor => &[(Style::BuildersYard, 1.0)],
         B::BuildersMerchant => &[(Style::BuildersMerchant, 1.0)],
+        // [r17-goods] the new chains
+        B::Brewery => &[(Style::Brewery, 1.0)],
+        B::Distillery => &[(Style::Distillery, 1.0)],
+        B::Bottler => &[(Style::BottlingPlant, 1.0)],
+        B::DrugMaker => &[(Style::DrugPlant, 1.0)],
+        B::Quarry => &[(Style::StripMine, 1.0)],
+        B::CementWorks => &[(Style::CementWorks, 1.0)],
+        B::BatchingPlant => &[(Style::BatchingPlant, 1.0)],
+        B::SawMill => &[(Style::SawMill, 1.0)],
+        B::TextileMill => &[(Style::TextileMill, 1.0)],
+        // Sweatshop floors in the old workshops and flatted factories.
+        B::GarmentWorkshop => &[(Style::FlattedFactory, 0.5), (Style::Workshops, 0.3), (Style::BrickWorkshop, 0.2)],
+        B::FashionWholesaler => &[(Style::FashionWholesale, 1.0)],
         // A dock's operator: normally drawn by its port kind (`extras.port`);
         // this is the fallback when the port is not passed.
         B::Marina => match tier {
@@ -246,6 +259,7 @@ pub fn business_look_wins(kind: nd_sim::BusinessKind) -> bool {
     matches!(
         kind,
         B::Mechanic | B::CarDealer | B::TrashCompany | B::BikeShop | B::CowFarm | B::ChickenFarm | B::Slaughterhouse | B::StripMine | B::Marina | B::FishingPort | B::FishGutting | B::FishStickFactory | B::FishMarket | B::SeafoodRestaurant | B::GolfRange | B::ArtStudio | B::Gallery | B::Smelter | B::Feedlot | B::ChemicalWorks | B::BeachResort | B::PierRestaurant | B::BeachBar | B::BoatRental | B::ScrapYard | B::FreightForwarder | B::Contractor | B::BuildersMerchant
+            | B::Brewery | B::Distillery | B::Bottler | B::DrugMaker | B::Quarry | B::CementWorks | B::BatchingPlant | B::SawMill | B::TextileMill | B::GarmentWorkshop | B::FashionWholesaler
     ) || kind.is_eat_or_go_out()
 }
 

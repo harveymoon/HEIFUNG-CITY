@@ -221,7 +221,7 @@ impl World {
         }
         let kind = forced.unwrap_or_else(|| industry::pick(&weights, roll));
         let roll = self.rng.random::<f32>();
-        industry::pick_business(&industry::business_weights(kind, &site), roll).filter(|k| !(small && *k == BusinessKind::StripMine))
+        industry::pick_business(&industry::business_weights(kind, &site), roll).filter(|k| !(small && matches!(*k, BusinessKind::StripMine | BusinessKind::Quarry)))
     }
 
     // ── land value ──────────────────────────────────────────────────────────

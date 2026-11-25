@@ -23,6 +23,8 @@ mod commercial;
 mod construction;
 /// [r14-builders] The builder's yard and the builders' merchant.
 mod builders;
+// [r17-goods] the new chains' looks
+mod goods;
 mod dense;
 /// [r4-style] The Hong Kong detail pass (docs/STYLE_REFERENCE.md).
 pub mod hk;

@@ -50,7 +50,7 @@ trucks, builders).
 | `Groceries` | groceries | consumer | pallets | Grocery, FishMarket |
 | `Parts` | parts | manufactured | pallets | Fab |
 | `Electronics` | electronics | manufactured | pallets | Assembly |
-| `Goods` | goods | consumer | pallets | GadgetShop, Bookshop, BuildersMerchant |
+| `Goods` | goods | consumer | pallets | GadgetShop, Bookshop, BuildersMerchant, Pharmacy, ClothesShop, FashionWholesaler |
 | `Crude` | crude oil | petrochemical | kL | OilWell |
 | `Fuel` | fuel | petrochemical | kL | Refinery |
 | `Plastics` | plastics | petrochemical | t | Refinery, ChemicalWorks |
@@ -60,19 +60,27 @@ trucks, builders).
 | `Fillets` | fish fillets | seafood | crates | FishGutting |
 | `Art` | art | culture | pieces | ArtStudio |
 | `Metal` | metal | minerals | t | Smelter, ScrapYard |
-| `Cement` | cement | building material | t | - |
+| `Cement` | cement | building material | t | CementWorks |
 | `Aggregate` | sand and gravel | building material | t | StripMine |
 | `Bricks` | bricks and blocks | building material | t | - |
 | `Glass` | glass | building material | t | - |
 | `Steel` | structural steel | building material | t | Smelter, ScrapYard |
 | `Rebar` | rebar | building material | t | Smelter, ScrapYard |
-| `Timber` | timber | building material | t | - |
+| `Timber` | timber | building material | t | SawMill |
 | `Roofing` | roofing | building material | pallets | - |
 | `Insulation` | insulation | building material | pallets | Refinery, ChemicalWorks |
 | `Pipe` | pipe and plumbing | building material | pallets | Refinery, ChemicalWorks |
 | `Wiring` | wiring and electrical | building material | crates | Fab |
 | `Fixtures` | fixtures and fittings | building material | crates | Fab |
 | `Paint` | paint | building material | crates | Refinery, ChemicalWorks |
+| `Drinks` | drinks | drinks | crates | Brewery, Distillery, Bottler |
+| `Medicine` | medicine | pharmaceutical | crates | DrugMaker |
+| `Limestone` | limestone | minerals | t | Quarry |
+| `Concrete` | ready-mix concrete | building material | t | BatchingPlant |
+| `Logs` | logs | forestry | t | - |
+| `Cloth` | cloth | textiles | pallets | TextileMill |
+| `Clothing` | clothing | textiles | crates | GarmentWorkshop |
+| `NuclearFuel` | nuclear fuel | nuclear | pieces | - |
 
 | Kind | API key | Grows on | Uses | Makes |
 |---|---|---|---|---|
@@ -83,10 +91,10 @@ trucks, builders).
 | `Mill` | `mill` | industrial | Grain | Flour |
 | `Fab` | `parts_fab` | industrial | - | Parts |
 | `Assembly` | `assembly_plant` | industrial | Parts | Electronics |
-| `Grocery` | `grocery` | commercial | Produce, Flour, Meat, Dairy | Groceries |
+| `Grocery` | `grocery` | commercial | Produce, Flour, Meat, Dairy, Drinks | Groceries |
 | `Bakery` | `bakery` | commercial | Flour | BakedGoods |
 | `GadgetShop` | `gadget_shop` | commercial | Electronics | Goods |
-| `Venue` | `venue` | leisure | Groceries | - |
+| `Venue` | `venue` | leisure | Drinks | - |
 | `Office` | `office` | commercial, civic | - | - |
 | `Parking` | `parking` | - (its own system) | - | - |
 | `OilWell` | `oil_well` | industrial | - | Crude |
@@ -112,7 +120,7 @@ trucks, builders).
 | `FishGutting` | `fish_gutting_shed` | industrial | Fish | Fillets |
 | `FishStickFactory` | `fishstick_factory` | industrial | Fillets | Meat |
 | `FishMarket` | `fish_market` | - (its own system) | Fish | Groceries |
-| `SeafoodRestaurant` | `seafood_restaurant` | - (its own system) | Fillets | - |
+| `SeafoodRestaurant` | `seafood_restaurant` | - (its own system) | Fillets, Drinks | - |
 | `GolfRange` | `golf_driving_range` | - (its own system) | - | - |
 | `ArtStudio` | `artists_studios` | - (its own system) | - | Art |
 | `Gallery` | `gallery` | - (its own system) | Art | - |
@@ -120,33 +128,46 @@ trucks, builders).
 | `Feedlot` | `factory_farm` | industrial | Grain | Livestock |
 | `ChemicalWorks` | `chemical_works` | industrial | Crude | Plastics |
 | `BeachResort` | `beach_resort` | - (its own system) | Groceries | - |
-| `PierRestaurant` | `pier_restaurant` | - (its own system) | Groceries | - |
-| `BeachBar` | `beach_bar` | - (its own system) | Groceries | - |
+| `PierRestaurant` | `pier_restaurant` | - (its own system) | Groceries, Drinks | - |
+| `BeachBar` | `beach_bar` | - (its own system) | Drinks | - |
 | `BoatRental` | `boat_rental` | - (its own system) | Fuel | - |
 | `Cafe` | `cafe` | - (its own system) | Flour, Dairy | BakedGoods |
 | `Bookshop` | `bookshop` | - (its own system) | Plastics | Goods |
 | `ScrapYard` | `scrap_yard` | - (its own system) | - | Metal |
-| `Diner` | `diner` | commercial | Meat, Dairy, Flour, Produce | BakedGoods |
-| `NoodleBar` | `noodle_bar` | commercial, leisure | Flour, Meat, Produce | BakedGoods |
-| `PizzaPlace` | `pizza_place` | commercial | Flour, Dairy, Meat, Produce | BakedGoods |
+| `Diner` | `diner` | commercial | Meat, Dairy, Flour, Produce, Drinks | BakedGoods |
+| `NoodleBar` | `noodle_bar` | commercial, leisure | Flour, Meat, Produce, Drinks | BakedGoods |
+| `PizzaPlace` | `pizza_place` | commercial | Flour, Dairy, Meat, Produce, Drinks | BakedGoods |
 | `FastFood` | `fastfood_drivethrough` | commercial | Meat, Flour, Produce | BakedGoods |
-| `FoodHall` | `food_hall` | commercial | Groceries, Meat, Produce | BakedGoods |
+| `FoodHall` | `food_hall` | commercial | Groceries, Meat, Produce, Drinks | BakedGoods |
 | `StreetFood` | `streetfood_stalls` | leisure | Meat, Produce, Flour | BakedGoods |
-| `FineDining` | `finedining_restaurant` | leisure | Meat, Produce, Dairy | - |
+| `FineDining` | `finedining_restaurant` | leisure | Meat, Produce, Dairy, Drinks | - |
 | `BubbleTea` | `bubbletea_bar` | commercial | Dairy, Produce | BakedGoods |
-| `Bar` | `bar` | leisure | Groceries | - |
-| `KaraokeBox` | `karaoke_box` | leisure | Groceries | - |
+| `Bar` | `bar` | leisure | Drinks | - |
+| `KaraokeBox` | `karaoke_box` | leisure | Drinks | - |
 | `Cinema` | `cinema` | leisure | Groceries | - |
 | `Theatre` | `theatre` | leisure | Groceries | - |
-| `ConcertHall` | `livemusic_hall` | leisure | Groceries | - |
+| `ConcertHall` | `livemusic_hall` | leisure | Drinks | - |
 | `BowlingAlley` | `bowling_alley` | leisure | Groceries | - |
 | `Arcade` | `arcade` | leisure | Electronics | - |
 | `Gym` | `gym` | commercial | - | - |
-| `ComedyClub` | `comedy_club` | leisure | Groceries | - |
+| `ComedyClub` | `comedy_club` | leisure | Drinks | - |
 | `FreightForwarder` | `freight_forwarder` | - (its own system) | Fuel | - |
 | `Contractor` | `building_contractor` | - (its own system) | - | - |
 | `BuildersMerchant` | `builders_merchant` | - (its own system) | Plastics | Goods |
 | `FoodTruck` | `food_truck` | - (its own system) | Meat, Produce, Flour, Dairy | BakedGoods |
+| `Brewery` | `brewery` | industrial | Grain | Drinks |
+| `Distillery` | `distillery` | industrial | Grain, Produce | Drinks |
+| `Bottler` | `bottling_plant` | industrial | Produce, Plastics | Drinks |
+| `DrugMaker` | `drug_maker` | industrial | Plastics | Medicine |
+| `Pharmacy` | `pharmacy` | commercial | Medicine | Goods |
+| `Quarry` | `limestone_quarry` | industrial | - | Limestone |
+| `CementWorks` | `cement_works` | industrial | Limestone, Fuel | Cement |
+| `BatchingPlant` | `concrete_batching_plant` | industrial | Cement, Aggregate | Concrete |
+| `SawMill` | `saw_mill` | industrial | Logs | Timber |
+| `TextileMill` | `textile_mill` | industrial | Produce, Plastics | Cloth |
+| `GarmentWorkshop` | `garment_workshop` | industrial | Cloth | Clothing |
+| `ClothesShop` | `clothes_shop` | commercial | Clothing | Goods |
+| `FashionWholesaler` | `fashion_wholesaler` | - (its own system) | Clothing | Goods |
 <!-- doc-guard: catalogue lists end -->
 
 ## Inventory: fact, where it was, where it is now
@@ -407,3 +428,62 @@ stage are `World::site_lines_to_order(bid)`. A builder that buys a stage itself 
 to `site_received` and the stage gating works unchanged. A hardware store would stock materials like any
 retailer (`Business::add`) and be found by `best_seller` once a material lists it as a maker (a recipe
 output, or a `local_from`-style rule).
+
+## The new goods and chains (round 17, r17-goods)
+
+Harvey 2026-11-22 answering the goods review. Eight goods and thirteen kinds, appended (saves keep
+their keys; old saves load). Every number below is a row of `catalogue.rs`.
+
+| Chain | Goods | Kinds (grows on) | Lorries |
+|---|---|---|---|
+| Drinks | `Drinks` | `Brewery` (grain), `Distillery` (grain, produce), `Bottler` (produce, plastics): farming sub-zones, and the `Brewery` pressure | drinks lorry (`BodyType::DrinksTruck`, roller-shutter bays), `Livery::Drinks` |
+| Medicine | `Medicine` | `DrugMaker` (plastics; tech sub-zones and its pressure), `Pharmacy` (commercial: neighbourhood and retail menus; sells it on as goods) | box van, `Livery::Medical`; hospitals buy it too (below) |
+| Cement and concrete | `Limestone`, `Cement` (now made), `Concrete` (ready-mix) | `Quarry` (a pit, the strip mine's look), `CementWorks` (limestone, fuel), `BatchingPlant` (cement, sand and gravel): mining sub-zones and their pressures | tipper (limestone), cement tanker (`BodyType::CementTanker`) to the batching plants, mixer (ready-mix) to the sites |
+| Timber | `Logs`, `Timber` (now made) | `SawMill` (logs; manufacturing sub-zones and its pressure) | log lorry (flatbed, `Load::Logs`) from out of town, or log trains (flat racks); boards on flatbeds |
+| Textiles | `Cloth`, `Clothing` | `TextileMill` (produce as cotton, plastics as synthetics), `GarmentWorkshop` (cloth), `ClothesShop` (commercial retail menu), `FashionWholesaler` (the fashion district) | curtain-sider (cloth), box van (clothing), `Livery::Fashion` |
+| Nuclear fuel | `NuclearFuel` | none: the city brings it in for its nuclear plants | the flask carrier (`BodyType::FlaskCarrier`) between two escorts (`Livery::Escort`) |
+
+What changed for the old kinds:
+
+- **Bars stop buying groceries:** the bar, the nightclub (`Venue`), karaoke, the beach bar, the
+  live-music hall and the comedy club pour `Drinks` (same value an hour as the groceries were); the
+  restaurants (diner, noodle bar, pizza, food hall, fine dining, pier and seafood restaurants) and
+  the grocers buy a little too. Until a brewery opens the drinks are imported.
+- **Building sites order ready-mix concrete** (`Concrete`) where they ordered cement: the same
+  quantities at the same price, so bills are worth what they were. A batching plant in town sells
+  it (the builder's cheapest source, `World::buy_site_line`), else it comes from out of town in a
+  mixer. `catalogue::local_source(r)` is the good a buyer takes from a maker: `local_from`, else `r`
+  itself when a recipe makes it (timber from the saw mills, ready-mix from the batching plants,
+  cement from the works). The builders' merchant stocks `catalogue::merchant_stock()`: every site
+  material but ready-mix (it still keeps bagged cement).
+- Site imports now count in the town's imports (`TaxRates::note_import`), so the pressures see them.
+
+**Pressures** (`pressure::import_pressure`): `Brewery`, `DrugMaker`, `Quarry`, `CementWorks`,
+`BatchingPlant`, `SawMill`, `TextileMill`, `GarmentWorkshop` each want one more business per
+business's worth of its good imported a day (`Signals::imports`, read from `TaxRates::imported`); they
+place it on industrial land near the buyers (the sites, for batching plants and saw mills).
+`FashionDistrict` opens fashion wholesalers next to the garment workshops and each other (within
+450 m): one and a half per workshop, plus one per 50 clothes a day.
+
+**Hospitals' medicine** (`crate::goods`, `world/goods.rs`): each hospital uses 0.08 a bed and 0.5 a
+patient a day, keeps three days, and at 07:00 orders back up from the cheapest drug maker in town (its
+lorry brings it) or imports it; the city pays (`Flow::ServiceUpkeep`). A hospital that has run out
+keeps its patients half as long again. `report services` has `medicine` (today, yesterday, on the
+shelves, on the way).
+
+**Nuclear fuel:** a nuclear plant built now makes nothing until its first core is in. Each hour a
+plant whose core runs out within two days (or is empty) sends for a convoy: an escort, the flask
+carrier, an escort, from the city edge to its gate; the city pays 4,000 a load (`Flow::PlantUpkeep`). A
+core lasts 20 days. With no road in, the fuel is handed over at the gate. Plants from older saves are
+given a fresh core. `report power` plants carry `fuel` {fuelled, days_left, convoy_on_the_way, loads}.
+Other plants are not fuelled (Harvey: "otherwise i dont care about fueling powerplants").
+
+**Looks** (`nd_procgen/src/buildings/goods.rs`): brewery (copper kettles behind glass, fermenters,
+silos, kegs), distillery (bonded warehouses, pagoda kiln, pot stills), bottling plant (lit line
+window), pharmaceutical plant (white, a green cross), cement works (preheater tower, sloping rotary
+kiln with a hot end, silos, limestone heap), batching plant (silos over a mixer house, conveyor,
+aggregate bays), saw mill (open saw shed, log yard, board packs, sawdust), textile mill (brick
+under a lit sawtooth roof), fashion wholesaler (shop units with racks, mannequins and stalls out on
+the pavement). The quarry draws as a strip mine; garment workshops as flatted factories, workshops
+and brick workshops; pharmacies and clothes shops as the land use's shops with their sign.
+The lorries are in `nd_procgen/src/vehicles_goods.rs`.

@@ -644,6 +644,10 @@ fn power_is_rationed_rich_first_and_plants_fix_it() {
     let plant = w.build_power(big, PowerPlantKind::Nuclear).expect("nuclear plant built");
     assert!(w.buildings[plant].plant == Some(PowerPlantKind::Nuclear) && w.buildings[plant].jobs == PowerPlantKind::Nuclear.jobs_at(w.plant_scale(&w.buildings[plant])));
     assert!(w.economy.treasury < 200_000.0);
+    // [r17-goods] It makes nothing until its fuel convoy is in.
+    assert!(!w.plant_fuelled(&w.buildings[plant]));
+    w.goods.nuclear.get_mut(&big).expect("on the fuel book").until = u64::MAX;
+    w.allocate_power();
     let p = &w.economy.power;
     assert_eq!(p.plants, 1);
     assert!(p.served >= 0.999 && p.unpowered_buildings == 0, "{p:?}");

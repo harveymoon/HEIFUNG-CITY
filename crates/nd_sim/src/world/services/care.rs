@@ -137,6 +137,8 @@ impl World {
                 self.leave_building(p);
                 let entrance = self.building_entrance(h).unwrap_or(Vec2::ZERO);
                 let hours = self.srng().random_range(STAY_HOURS.0..=STAY_HOURS.1);
+                // [r17-goods] A hospital out of medicine keeps them longer.
+                let hours = if self.hospital_short(h) { (hours as f32 * crate::goods::SHORT_STAY_FACTOR) as u64 } else { hours };
                 let until = tick + hours * 60;
                 let hname = self.buildings[h].name.clone();
                 self.buildings[h].visitors += 1;

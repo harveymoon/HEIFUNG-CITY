@@ -57,6 +57,16 @@ pub enum GoodCategory {
     /// [r14-materials] What buildings are built of: cement, sand and
     /// gravel, brick, glass, steel, timber and the fit-out.
     BuildingMaterial,
+    /// [r17-goods] Drinks: beer, spirits, soft drinks.
+    Drinks,
+    /// [r17-goods] Medicines.
+    Pharmaceutical,
+    /// [r17-goods] Logs off the forests.
+    Forestry,
+    /// [r17-goods] Cloth and clothes.
+    Textiles,
+    /// [r17-goods] Nuclear fuel.
+    Nuclear,
 }
 
 impl GoodCategory {
@@ -71,6 +81,11 @@ impl GoodCategory {
             GoodCategory::Consumer => "consumer",
             GoodCategory::Culture => "culture",
             GoodCategory::BuildingMaterial => "building material",
+            GoodCategory::Drinks => "drinks",
+            GoodCategory::Pharmaceutical => "pharmaceutical",
+            GoodCategory::Forestry => "forestry",
+            GoodCategory::Textiles => "textiles",
+            GoodCategory::Nuclear => "nuclear",
         }
     }
 }
@@ -437,10 +452,10 @@ pub const GOODS: [GoodRow; Resource::COUNT] = [
         unit: Unit::Tonne,
         base_price: 6.0,
         ships: BoxKind::Bulk,
-        truck: BodyType::Mixer,
+        truck: BodyType::CementTanker,
         export_keep_hours: 24.0,
         road_wear: 2.0,
-        note: "Imported for now (no cement works in town). Ships as powder in bulk boxes; reaches a site as ready-mixed concrete in a mixer lorry. Used by every building site (`site_bill`): foundations, frames, slabs.",
+        note: "[r17-goods] Burnt from limestone at a cement works in town, else imported. Powder in bulk boxes or a cement tanker, to the batching plants (which mix it into ready-mix concrete for the sites) and bagged at the builders' merchant.",
         local_from: None,
         ..GOOD_BASE
     },
@@ -524,7 +539,7 @@ pub const GOODS: [GoodRow; Resource::COUNT] = [
         truck: BodyType::Flatbed,
         export_keep_hours: 24.0,
         road_wear: 1.4,
-        note: "Imported for now (forestry and a sawmill would make it). Floors and roofs of brick rows, the frames of houses and shacks.",
+        note: "[r17-goods] Sawn from logs at the saw mills in town (boards sold straight to the builders and the merchants), else imported. Floors and roofs of brick rows, the frames of houses and shacks.",
         local_from: None,
         ..GOOD_BASE
     },
@@ -610,6 +625,102 @@ pub const GOODS: [GoodRow; Resource::COUNT] = [
         road_wear: 1.0,
         note: "Tins of paint and finishes from the refinery's or chemical works' plastics, else imported. The fit-out.",
         local_from: Some(R::Plastics),
+        ..GOOD_BASE
+    },
+    // -- [r17-goods] new goods and chains (Harvey 2026-11-22) --
+    GoodRow {
+        resource: R::Drinks,
+        label: "drinks",
+        category: GoodCategory::Drinks,
+        unit: Unit::Crate,
+        base_price: 5.0,
+        ships: BoxKind::Dry,
+        truck: BodyType::DrinksTruck,
+        road_wear: 1.2,
+        note: "Beer, spirits and soft drinks, imported until a brewery, distillery or bottling plant opens (`PressureKind::Brewery`). Kegs and crates on a side-loading drinks lorry. The bars and clubs pour them; restaurants and grocers stock them.",
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Medicine,
+        label: "medicine",
+        category: GoodCategory::Pharmaceutical,
+        unit: Unit::Crate,
+        base_price: 30.0,
+        ships: BoxKind::Reefer,
+        truck: BodyType::BoxVan,
+        by_air: true,
+        note: "Also bought by the hospitals for their wards (`World::hospital_supplies`): from a drug maker in town, else imported at the city's cost.",
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Limestone,
+        label: "limestone",
+        category: GoodCategory::Minerals,
+        unit: Unit::Tonne,
+        base_price: 3.0,
+        ships: BoxKind::OpenTop,
+        truck: BodyType::Tipper,
+        road_wear: 2.5,
+        note: "Quarried in town or imported, for the cement works' kilns.",
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Concrete,
+        label: "ready-mix concrete",
+        category: GoodCategory::BuildingMaterial,
+        unit: Unit::Tonne,
+        base_price: 6.0,
+        ships: BoxKind::Bulk,
+        truck: BodyType::Mixer,
+        export_keep_hours: 6.0,
+        road_wear: 2.0,
+        note: "Mixed at a batching plant from cement and sand and gravel, and driven to the sites in mixer lorries; from a batching plant out of town until one opens (`PressureKind::BatchingPlant`). Every building site's foundations, frames and slabs (`site_bill`).",
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Logs,
+        label: "logs",
+        category: GoodCategory::Forestry,
+        unit: Unit::Tonne,
+        base_price: 3.5,
+        ships: BoxKind::FlatRack,
+        truck: BodyType::Flatbed,
+        road_wear: 1.8,
+        note: "Felled in the forests out of town: always imported, by log train (flat wagons) where a freight yard is, else by log lorry. Sawn into timber at the saw mills.",
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Cloth,
+        label: "cloth",
+        category: GoodCategory::Textiles,
+        unit: Unit::Pallet,
+        base_price: 8.0,
+        ships: BoxKind::Dry,
+        truck: BodyType::Curtainsider,
+        note: "Bolts of cotton and synthetic cloth from the textile mills, else imported.",
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Clothing,
+        label: "clothing",
+        category: GoodCategory::Textiles,
+        unit: Unit::Crate,
+        base_price: 18.0,
+        ships: BoxKind::Dry,
+        truck: BodyType::BoxVan,
+        note: "Sewn in the garment workshops, else imported; sold by the clothes shops and the fashion district's wholesalers.",
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::NuclearFuel,
+        label: "nuclear fuel",
+        category: GoodCategory::Nuclear,
+        unit: Unit::Piece,
+        base_price: 4000.0,
+        ships: BoxKind::Dry,
+        truck: BodyType::FlaskCarrier,
+        road_wear: 2.5,
+        note: "Fuel assemblies for a nuclear plant, never sold in town: brought in from out of town in a shielded flask by an escorted convoy when a plant is built and when it needs refuelling (`World::nuclear_fuel_hourly`), paid by the city.",
         ..GOOD_BASE
     },
 ];
@@ -912,7 +1023,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
     BusinessRow {
         kind: K::Grocery,
         label: "grocery",
-        inputs: &[(R::Produce, 1.0), (R::Flour, 0.4), (R::Meat, 0.3), (R::Dairy, 0.4)],
+        inputs: &[(R::Produce, 1.0), (R::Flour, 0.4), (R::Meat, 0.3), (R::Dairy, 0.4), (R::Drinks, 0.3)],
         outputs: &[(R::Groceries, 4.0)],
         hours: Hours::new(7, 22),
         customers_per_job: Some(3),
@@ -969,7 +1080,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
     BusinessRow {
         kind: K::Venue,
         label: "venue",
-        inputs: &[(R::Groceries, 0.3)],
+        inputs: &[(R::Drinks, 0.36)],
         hours: Hours::new(18, 3),
         customers_per_job: Some(8),
         stock_hours: 36.0,
@@ -1319,7 +1430,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
     BusinessRow {
         kind: K::SeafoodRestaurant,
         label: "seafood restaurant",
-        inputs: &[(R::Fillets, 0.3)],
+        inputs: &[(R::Fillets, 0.3), (R::Drinks, 0.1)],
         hours: Hours::new(11, 23),
         customers_per_job: Some(6),
         max_floors: Some(2),
@@ -1449,7 +1560,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
     BusinessRow {
         kind: K::PierRestaurant,
         label: "pier restaurant",
-        inputs: &[(R::Groceries, 0.35)],
+        inputs: &[(R::Groceries, 0.35), (R::Drinks, 0.15)],
         hours: Hours::new(12, 24),
         customers_per_job: Some(6),
         max_floors: Some(2),
@@ -1467,7 +1578,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
     BusinessRow {
         kind: K::BeachBar,
         label: "beach bar",
-        inputs: &[(R::Groceries, 0.2)],
+        inputs: &[(R::Drinks, 0.24)],
         hours: Hours::new(10, 2),
         customers_per_job: Some(10),
         max_floors: Some(1),
@@ -1559,7 +1670,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
     BusinessRow {
         kind: K::Diner,
         label: "diner",
-        inputs: &[(R::Meat, 0.3), (R::Dairy, 0.3), (R::Flour, 0.4), (R::Produce, 0.4)],
+        inputs: &[(R::Meat, 0.3), (R::Dairy, 0.3), (R::Flour, 0.4), (R::Produce, 0.4), (R::Drinks, 0.08)],
         outputs: &[(R::BakedGoods, 2.5)],
         hours: Hours::new(6, 23),
         customers_per_job: Some(4),
@@ -1581,7 +1692,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
     BusinessRow {
         kind: K::NoodleBar,
         label: "noodle bar",
-        inputs: &[(R::Flour, 0.5), (R::Meat, 0.25), (R::Produce, 0.4)],
+        inputs: &[(R::Flour, 0.5), (R::Meat, 0.25), (R::Produce, 0.4), (R::Drinks, 0.08)],
         outputs: &[(R::BakedGoods, 2.6)],
         hours: Hours::new(11, 2),
         customers_per_job: Some(5),
@@ -1604,7 +1715,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
     BusinessRow {
         kind: K::PizzaPlace,
         label: "pizza place",
-        inputs: &[(R::Flour, 0.6), (R::Dairy, 0.4), (R::Meat, 0.15), (R::Produce, 0.2)],
+        inputs: &[(R::Flour, 0.6), (R::Dairy, 0.4), (R::Meat, 0.15), (R::Produce, 0.2), (R::Drinks, 0.08)],
         outputs: &[(R::BakedGoods, 2.6)],
         hours: Hours::new(11, 23),
         customers_per_job: Some(4),
@@ -1648,7 +1759,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
     BusinessRow {
         kind: K::FoodHall,
         label: "food hall",
-        inputs: &[(R::Groceries, 0.3), (R::Meat, 0.2), (R::Produce, 0.4)],
+        inputs: &[(R::Groceries, 0.3), (R::Meat, 0.2), (R::Produce, 0.4), (R::Drinks, 0.08)],
         outputs: &[(R::BakedGoods, 2.4)],
         hours: Hours::new(10, 22),
         customers_per_job: Some(8),
@@ -1691,7 +1802,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
     BusinessRow {
         kind: K::FineDining,
         label: "fine-dining restaurant",
-        inputs: &[(R::Meat, 0.3), (R::Produce, 0.3), (R::Dairy, 0.2)],
+        inputs: &[(R::Meat, 0.3), (R::Produce, 0.3), (R::Dairy, 0.2), (R::Drinks, 0.15)],
         hours: Hours::new(18, 24),
         customers_per_job: Some(3),
         max_floors: Some(2),
@@ -1733,7 +1844,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
     BusinessRow {
         kind: K::Bar,
         label: "bar",
-        inputs: &[(R::Groceries, 0.3)],
+        inputs: &[(R::Drinks, 0.36)],
         hours: Hours::new(16, 2),
         customers_per_job: Some(8),
         max_floors: Some(3),
@@ -1742,7 +1853,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         loudness: 0.6,
         trash: 1.3,
         sign: Some(b"BAR"),
-        about: Some("A drink after work and into the night: drinks bought from the grocers, regulars at the bar, some noise."),
+        about: Some("A drink after work and into the night: beer and spirits from the breweries and distilleries, regulars at the bar, some noise."),
         specialty: Specialty::Leisure,
         shopfront: true,
         leisure: LeisureGroup::NightOut,
@@ -1752,7 +1863,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
     BusinessRow {
         kind: K::KaraokeBox,
         label: "karaoke box",
-        inputs: &[(R::Groceries, 0.3)],
+        inputs: &[(R::Drinks, 0.36)],
         hours: Hours::new(19, 5),
         customers_per_job: Some(6),
         max_floors: Some(4),
@@ -1812,7 +1923,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
     BusinessRow {
         kind: K::ConcertHall,
         label: "live-music hall",
-        inputs: &[(R::Groceries, 0.12)],
+        inputs: &[(R::Drinks, 0.14)],
         hours: Hours::new(19, 1),
         customers_per_job: Some(25),
         max_floors: Some(5),
@@ -1892,7 +2003,7 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
     BusinessRow {
         kind: K::ComedyClub,
         label: "comedy club",
-        inputs: &[(R::Groceries, 0.12)],
+        inputs: &[(R::Drinks, 0.14)],
         hours: Hours::new(19, 1),
         customers_per_job: Some(12),
         max_floors: Some(3),
@@ -1979,6 +2090,233 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         sign: Some(b"EATS"),
         about: Some("A food truck run by a household: buys its ingredients from the town's grocers and farms each morning, drives out to where the crowds are (parks and beaches on warm days, offices at lunch, the stadium on game nights, the bars late), parks at the kerb, opens the hatch and sells meals to whoever queues."),
         specialty: Specialty::Food,
+        ..BASE
+    },
+
+    // ── [r17-goods] new goods and chains (Harvey 2026-11-22) ──
+    // Drinks. A brewer's hand turns a tonne of grain (1) into three crates of beer (15).
+    BusinessRow {
+        kind: K::Brewery,
+        label: "brewery",
+        inputs: &[(R::Grain, 1.0)],
+        outputs: &[(R::Drinks, 3.0)],
+        hours: Hours::new(6, 22),
+        max_floors: Some(3),
+        food: true,
+        start_capital: 3.0,
+        about: Some("A brewery: grain in from the farms, beer out to the bars, restaurants and grocers in drinks lorries."),
+        livery: Livery::Drinks,
+        min_area: 600.0,
+        specialty: Specialty::Food,
+        tax: TaxLine::Fixed(TaxCategory::Manufacturing),
+        jetty: Some(JettyKind::Cargo),
+        ..BASE
+    },
+    BusinessRow {
+        kind: K::Distillery,
+        label: "distillery",
+        inputs: &[(R::Grain, 0.8), (R::Produce, 0.4)],
+        outputs: &[(R::Drinks, 2.6)],
+        hours: Hours::new(6, 22),
+        max_floors: Some(3),
+        food: true,
+        start_capital: 3.0,
+        about: Some("A distillery: grain and fruit through the pot stills, spirits aged in a bonded warehouse and sent to the bars."),
+        livery: Livery::Drinks,
+        min_area: 600.0,
+        specialty: Specialty::Food,
+        tax: TaxLine::Fixed(TaxCategory::Manufacturing),
+        jetty: Some(JettyKind::Cargo),
+        ..BASE
+    },
+    BusinessRow {
+        kind: K::Bottler,
+        label: "bottling plant",
+        inputs: &[(R::Produce, 1.0), (R::Plastics, 0.1)],
+        outputs: &[(R::Drinks, 3.0)],
+        hours: Hours::new(6, 22),
+        max_floors: Some(2),
+        food: true,
+        start_capital: 3.0,
+        about: Some("A bottling plant: fruit and syrup into soft drinks and bottled water, by the crate to the shops and bars."),
+        livery: Livery::Drinks,
+        min_area: 600.0,
+        specialty: Specialty::Food,
+        tax: TaxLine::Fixed(TaxCategory::Manufacturing),
+        ..BASE
+    },
+    // Medicine: four tenths of plastics (6.4) make half a crate of medicine (15).
+    BusinessRow {
+        kind: K::DrugMaker,
+        label: "drug maker",
+        inputs: &[(R::Plastics, 0.4)],
+        outputs: &[(R::Medicine, 0.5)],
+        hours: Hours::new(6, 22),
+        max_floors: Some(4),
+        start_capital: 3.0,
+        about: Some("A pharmaceutical plant: chemicals in, medicines out to the pharmacies and the hospitals' wards."),
+        livery: Livery::Medical,
+        min_area: 500.0,
+        specialty: Specialty::Industry,
+        tax: TaxLine::Fixed(TaxCategory::Tech),
+        ..BASE
+    },
+    // A chemist: a fifth of a crate of medicine (6) an hour sold with the sundries as goods (21).
+    BusinessRow {
+        kind: K::Pharmacy,
+        label: "pharmacy",
+        inputs: &[(R::Medicine, 0.2)],
+        outputs: &[(R::Goods, 0.35)],
+        hours: Hours::new(8, 21),
+        customers_per_job: Some(3),
+        max_floors: Some(3),
+        stock_hours: 36.0,
+        walk_in: Some(R::Goods),
+        sign: Some(b"PHARMACY"),
+        about: Some("A pharmacy: prescriptions and remedies over the counter, stocked from the drug makers."),
+        livery: Livery::Medical,
+        chain: true,
+        specialty: Specialty::Logistics,
+        shopfront: true,
+        tax: TaxLine::Fixed(TaxCategory::GadgetShop),
+        ..BASE
+    },
+    // Cement and concrete.
+    BusinessRow {
+        kind: K::Quarry,
+        label: "limestone quarry",
+        outputs: &[(R::Limestone, 4.0)],
+        hours: Hours::new(6, 22),
+        max_floors: Some(1),
+        start_capital: 3.0,
+        fouls_air: true,
+        about: Some("A limestone quarry: blasting and dust, the rock out by tipper to the cement works{dirt}."),
+        livery: Livery::Construction,
+        min_area: 2500.0,
+        specialty: Specialty::Industry,
+        rooted: true,
+        tax: TaxLine::Fixed(TaxCategory::Manufacturing),
+        ..BASE
+    },
+    // One and a half of limestone (4.5) and a little fuel (0.6) make 1.2 of cement (7.2).
+    BusinessRow {
+        kind: K::CementWorks,
+        label: "cement works",
+        inputs: &[(R::Limestone, 1.5), (R::Fuel, 0.05)],
+        outputs: &[(R::Cement, 1.2)],
+        hours: Hours::new(6, 22),
+        max_floors: Some(2),
+        start_capital: 5.0,
+        fouls_air: true,
+        about: Some("A cement works: limestone burnt in a long rotary kiln under a preheater tower, the powder out in cement tankers to the batching plants{dirt}."),
+        livery: Livery::Construction,
+        min_area: 1500.0,
+        specialty: Specialty::Industry,
+        tax: TaxLine::Fixed(TaxCategory::Manufacturing),
+        jetty: Some(JettyKind::Cargo),
+        ..BASE
+    },
+    // Four tenths of cement (2.4) and a tonne of sand and gravel (4) make 1.6 of ready-mix (9.6).
+    BusinessRow {
+        kind: K::BatchingPlant,
+        label: "concrete batching plant",
+        inputs: &[(R::Cement, 0.4), (R::Aggregate, 1.0)],
+        outputs: &[(R::Concrete, 1.6)],
+        hours: Hours::new(6, 20),
+        max_floors: Some(1),
+        stock_hours: 36.0,
+        start_capital: 3.0,
+        about: Some("A concrete batching plant: cement silos and aggregate bins over a mixer; ready-mix out to the building sites in mixer lorries."),
+        livery: Livery::Construction,
+        min_area: 700.0,
+        specialty: Specialty::Industry,
+        tax: TaxLine::Fixed(TaxCategory::Manufacturing),
+        ..BASE
+    },
+    // Timber: one and a half of logs (5.25) saw into 1.2 of boards (9.6).
+    BusinessRow {
+        kind: K::SawMill,
+        label: "saw mill",
+        inputs: &[(R::Logs, 1.5)],
+        outputs: &[(R::Timber, 1.2)],
+        hours: Hours::new(6, 20),
+        max_floors: Some(2),
+        start_capital: 3.0,
+        about: Some("A saw mill: logs in by log train and log lorry onto the log yard, sawn into boards sold straight to the builders and the builders' merchants; sawdust and the whine of the saws."),
+        livery: Livery::Construction,
+        min_area: 1200.0,
+        specialty: Specialty::Industry,
+        tax: TaxLine::Fixed(TaxCategory::Manufacturing),
+        jetty: Some(JettyKind::Cargo),
+        ..BASE
+    },
+    // Textiles and clothing.
+    BusinessRow {
+        kind: K::TextileMill,
+        label: "textile mill",
+        inputs: &[(R::Produce, 0.6), (R::Plastics, 0.15)],
+        outputs: &[(R::Cloth, 1.2)],
+        hours: Hours::new(6, 22),
+        max_floors: Some(4),
+        start_capital: 2.0,
+        about: Some("A textile mill: cotton and synthetic yarn spun and woven into cloth for the garment workshops."),
+        livery: Livery::Fashion,
+        min_area: 600.0,
+        specialty: Specialty::Industry,
+        tax: TaxLine::Fixed(TaxCategory::Manufacturing),
+        ..BASE
+    },
+    BusinessRow {
+        kind: K::GarmentWorkshop,
+        label: "garment workshop",
+        inputs: &[(R::Cloth, 0.8)],
+        outputs: &[(R::Clothing, 0.8)],
+        hours: Hours::new(7, 21),
+        max_floors: Some(5),
+        about: Some("A garment workshop: rows of sewing machines on cheap floors, cutting and stitching cloth into clothes for the wholesalers and shops."),
+        livery: Livery::Fashion,
+        specialty: Specialty::Industry,
+        tax: TaxLine::Fixed(TaxCategory::Manufacturing),
+        ..BASE
+    },
+    // A clothes seller's job adds about what a gadget seller's does: 0.4 of clothing (7.2) out as 0.35 of goods (21).
+    BusinessRow {
+        kind: K::ClothesShop,
+        label: "clothes shop",
+        inputs: &[(R::Clothing, 0.4)],
+        outputs: &[(R::Goods, 0.35)],
+        hours: Hours::new(10, 21),
+        customers_per_job: Some(3),
+        max_floors: Some(3),
+        stock_hours: 36.0,
+        walk_in: Some(R::Goods),
+        student_trade: true,
+        sign: Some(b"FASHION"),
+        about: Some("A clothes shop: the season's clothes on rails, stocked from the garment workshops and wholesalers."),
+        livery: Livery::Fashion,
+        chain: true,
+        specialty: Specialty::Logistics,
+        shopfront: true,
+        tax: TaxLine::Fixed(TaxCategory::GadgetShop),
+        ..BASE
+    },
+    BusinessRow {
+        kind: K::FashionWholesaler,
+        label: "fashion wholesaler",
+        inputs: &[(R::Clothing, 0.6)],
+        outputs: &[(R::Goods, 0.45)],
+        hours: Hours::new(8, 18),
+        customers_per_job: Some(5),
+        max_floors: Some(3),
+        stock_hours: 36.0,
+        walk_in: Some(R::Goods),
+        // Opened by the fashion district's pressure, next to the others.
+        needs_site: true,
+        sign: Some(b"WHOLESALE"),
+        about: Some("A fashion wholesaler in the fashion district: racks and stalls out on the pavement, bolts and boxes stacked to the ceiling, bargains for the trade and anyone passing."),
+        livery: Livery::Fashion,
+        specialty: Specialty::Logistics,
+        tax: TaxLine::Fixed(TaxCategory::GadgetShop),
         ..BASE
     },
 ];
@@ -2163,11 +2501,11 @@ pub fn truck(k: TruckKind) -> &'static TruckRow {
 
 /// Industrial lots choose through `crate::industry` (ground, neighbours,
 /// the player's bias); this is the full menu.
-pub const INDUSTRIAL: &[BusinessKind] = &[K::VertFarm, K::GrainFarm, K::ProteinVat, K::Dairy, K::Mill, K::Fab, K::Assembly, K::OilWell, K::Refinery, K::ContainerYard, K::FleetLot, K::Fishery, K::FishPlant, K::TowYard, K::CowFarm, K::ChickenFarm, K::Slaughterhouse, K::StripMine, K::FishGutting, K::FishStickFactory, K::TrashCompany, K::Smelter, K::Feedlot, K::ChemicalWorks];
+pub const INDUSTRIAL: &[BusinessKind] = &[K::VertFarm, K::GrainFarm, K::ProteinVat, K::Dairy, K::Mill, K::Fab, K::Assembly, K::OilWell, K::Refinery, K::ContainerYard, K::FleetLot, K::Fishery, K::FishPlant, K::TowYard, K::CowFarm, K::ChickenFarm, K::Slaughterhouse, K::StripMine, K::FishGutting, K::FishStickFactory, K::TrashCompany, K::Smelter, K::Feedlot, K::ChemicalWorks, K::Brewery, K::Distillery, K::Bottler, K::DrugMaker, K::Quarry, K::CementWorks, K::BatchingPlant, K::SawMill, K::TextileMill, K::GarmentWorkshop];
 /// [r4-leisure-places] Every commercial sub-zone's menu but leisure's
 /// (`CommercialSub::menu`): neighbourhood, retail, offices. The grocer is
 /// listed twice: twice as likely.
-pub const COMMERCIAL: &[BusinessKind] = &[K::Grocery, K::Grocery, K::Bakery, K::GadgetShop, K::Office, K::Diner, K::NoodleBar, K::PizzaPlace, K::BubbleTea, K::FastFood, K::FoodHall, K::Gym];
+pub const COMMERCIAL: &[BusinessKind] = &[K::Grocery, K::Grocery, K::Bakery, K::GadgetShop, K::Office, K::Diner, K::NoodleBar, K::PizzaPlace, K::BubbleTea, K::FastFood, K::FoodHall, K::Gym, K::Pharmacy, K::ClothesShop];
 /// Leisure land: the nightclub and the rest of the nights out.
 pub const ENTERTAINMENT: &[BusinessKind] = &[K::Venue, K::Bar, K::KaraokeBox, K::Cinema, K::Theatre, K::ConcertHall, K::BowlingAlley, K::Arcade, K::ComedyClub, K::FineDining, K::StreetFood, K::NoodleBar];
 pub const CIVIC: &[BusinessKind] = &[K::Office];
@@ -2310,11 +2648,11 @@ pub const BUILD_MIXES: [BuildMix; BuildType::COUNT] = [
         build: BuildType::GlassTower,
         label: "glass tower (steel frame, curtain wall)",
         lines: &[
-            ml(R::Cement, FD, 4.0, 0.5),
+            ml(R::Concrete, FD, 4.0, 0.5),
             ml(R::Rebar, FD, 0.4, 0.08),
             ml(R::Aggregate, FD, 6.0, 0.6),
             ml(R::Steel, FR, 1.0, 0.35),
-            ml(R::Cement, FR, 2.0, 0.3),
+            ml(R::Concrete, FR, 2.0, 0.3),
             ml(R::Glass, EN, 2.0, 0.6),
             ml(R::Insulation, EN, 1.0, 0.15),
             ml(R::Wiring, FO, 1.0, 0.25),
@@ -2326,10 +2664,10 @@ pub const BUILD_MIXES: [BuildMix; BuildType::COUNT] = [
         build: BuildType::ConcreteTower,
         label: "concrete tower (concrete frame, block infill)",
         lines: &[
-            ml(R::Cement, FD, 4.0, 0.5),
+            ml(R::Concrete, FD, 4.0, 0.5),
             ml(R::Rebar, FD, 0.4, 0.08),
             ml(R::Aggregate, FD, 6.0, 0.6),
-            ml(R::Cement, FR, 3.0, 0.6),
+            ml(R::Concrete, FR, 3.0, 0.6),
             ml(R::Rebar, FR, 0.5, 0.15),
             ml(R::Aggregate, FR, 3.0, 0.8),
             ml(R::Bricks, EN, 3.0, 1.0),
@@ -2344,10 +2682,10 @@ pub const BUILD_MIXES: [BuildMix; BuildType::COUNT] = [
         build: BuildType::ConcreteBlock,
         label: "concrete block (frame, block walls, shopfront glass)",
         lines: &[
-            ml(R::Cement, FD, 3.0, 0.4),
+            ml(R::Concrete, FD, 3.0, 0.4),
             ml(R::Aggregate, FD, 5.0, 0.5),
             ml(R::Rebar, FD, 0.3, 0.05),
-            ml(R::Cement, FR, 2.0, 0.5),
+            ml(R::Concrete, FR, 2.0, 0.5),
             ml(R::Rebar, FR, 0.4, 0.12),
             ml(R::Bricks, EN, 3.0, 1.2),
             ml(R::Glass, EN, 1.0, 0.3),
@@ -2361,7 +2699,7 @@ pub const BUILD_MIXES: [BuildMix; BuildType::COUNT] = [
         build: BuildType::BrickRow,
         label: "brick row (brick walls, timber floors, tiled roof)",
         lines: &[
-            ml(R::Cement, FD, 2.0, 0.2),
+            ml(R::Concrete, FD, 2.0, 0.2),
             ml(R::Aggregate, FD, 3.0, 0.3),
             ml(R::Bricks, FR, 6.0, 3.0),
             ml(R::Timber, FR, 2.0, 0.8),
@@ -2378,7 +2716,7 @@ pub const BUILD_MIXES: [BuildMix; BuildType::COUNT] = [
         build: BuildType::TimberHouse,
         label: "timber frame (houses, eco terraces)",
         lines: &[
-            ml(R::Cement, FD, 1.5, 0.1),
+            ml(R::Concrete, FD, 1.5, 0.1),
             ml(R::Aggregate, FD, 2.0, 0.2),
             ml(R::Timber, FR, 4.0, 2.0),
             ml(R::Roofing, EN, 1.5, 0.2),
@@ -2405,7 +2743,7 @@ pub const BUILD_MIXES: [BuildMix; BuildType::COUNT] = [
         build: BuildType::SteelShed,
         label: "steel shed (portal frame, slab, cladding)",
         lines: &[
-            ml(R::Cement, FD, 4.0, 0.5),
+            ml(R::Concrete, FD, 4.0, 0.5),
             ml(R::Aggregate, FD, 6.0, 0.5),
             ml(R::Rebar, FD, 0.4, 0.05),
             ml(R::Steel, FR, 1.5, 0.5),
@@ -2419,7 +2757,7 @@ pub const BUILD_MIXES: [BuildMix; BuildType::COUNT] = [
         build: BuildType::HeavyPlant,
         label: "heavy plant (concrete, steel and process pipe)",
         lines: &[
-            ml(R::Cement, FD, 6.0, 0.6),
+            ml(R::Concrete, FD, 6.0, 0.6),
             ml(R::Rebar, FD, 0.8, 0.1),
             ml(R::Aggregate, FD, 8.0, 0.6),
             ml(R::Steel, FR, 2.5, 0.6),
@@ -2433,10 +2771,10 @@ pub const BUILD_MIXES: [BuildMix; BuildType::COUNT] = [
         build: BuildType::Infrastructure,
         label: "infrastructure (concrete decks, steel roofs)",
         lines: &[
-            ml(R::Cement, FD, 5.0, 0.6),
+            ml(R::Concrete, FD, 5.0, 0.6),
             ml(R::Rebar, FD, 0.6, 0.12),
             ml(R::Aggregate, FD, 8.0, 0.8),
-            ml(R::Cement, FR, 2.0, 0.6),
+            ml(R::Concrete, FR, 2.0, 0.6),
             ml(R::Steel, FR, 0.8, 0.2),
             ml(R::Roofing, EN, 1.5, 0.2),
             ml(R::Glass, EN, 0.5, 0.15),
@@ -2450,7 +2788,7 @@ pub const BUILD_MIXES: [BuildMix; BuildType::COUNT] = [
         lines: &[
             ml(R::Aggregate, FD, 4.0, 0.0),
             ml(R::Timber, FR, 1.0, 0.0),
-            ml(R::Cement, EN, 0.5, 0.0),
+            ml(R::Concrete, EN, 0.5, 0.0),
             ml(R::Fixtures, FO, 0.3, 0.0),
         ],
     },
@@ -2458,7 +2796,7 @@ pub const BUILD_MIXES: [BuildMix; BuildType::COUNT] = [
         build: BuildType::BoxStack,
         label: "container homes (boxes on pads, fitted out)",
         lines: &[
-            ml(R::Cement, FD, 1.5, 0.1),
+            ml(R::Concrete, FD, 1.5, 0.1),
             ml(R::Steel, FR, 0.2, 0.05),
             ml(R::Glass, EN, 0.3, 0.1),
             ml(R::Insulation, EN, 0.4, 0.1),
@@ -2614,6 +2952,21 @@ pub fn site_materials() -> Vec<Resource> {
     Resource::ALL.into_iter().filter(|r| good(*r).category == GoodCategory::BuildingMaterial).collect()
 }
 
+/// [r17-goods] What a builders' merchant stocks and a builder keeps in its
+/// yard: every site material but ready-mix concrete, which goes straight
+/// from a batching plant to the site in a mixer.
+pub fn merchant_stock() -> Vec<Resource> {
+    site_materials().into_iter().filter(|r| *r != R::Concrete).collect()
+}
+
+/// [r17-goods] The good a buyer of `r` in town takes from a maker: what it
+/// is made from (`local_from`), else `r` itself when some recipe makes it
+/// (a saw mill's timber, a batching plant's concrete, a cement works'
+/// cement).
+pub fn local_source(r: Resource) -> Option<Resource> {
+    good(r).local_from.or_else(|| BUSINESSES.iter().any(|b| b.outputs.iter().any(|(x, _)| *x == r)).then_some(r))
+}
+
 // ── lookups ────────────────────────────────────────────────────────────────
 
 /// The row index of a good. Exhaustive on purpose: a new `Resource`
@@ -2652,6 +3005,14 @@ pub const fn good_index(r: Resource) -> usize {
         R::Wiring => 29,
         R::Fixtures => 30,
         R::Paint => 31,
+        R::Drinks => 32,
+        R::Medicine => 33,
+        R::Limestone => 34,
+        R::Concrete => 35,
+        R::Logs => 36,
+        R::Cloth => 37,
+        R::Clothing => 38,
+        R::NuclearFuel => 39,
     }
 }
 
@@ -2730,6 +3091,19 @@ pub const fn business_index(k: BusinessKind) -> usize {
         K::Contractor => 68,
         K::BuildersMerchant => 69,
         K::FoodTruck => 70,
+        K::Brewery => 71,
+        K::Distillery => 72,
+        K::Bottler => 73,
+        K::DrugMaker => 74,
+        K::Pharmacy => 75,
+        K::Quarry => 76,
+        K::CementWorks => 77,
+        K::BatchingPlant => 78,
+        K::SawMill => 79,
+        K::TextileMill => 80,
+        K::GarmentWorkshop => 81,
+        K::ClothesShop => 82,
+        K::FashionWholesaler => 83,
     }
 }
 

@@ -109,14 +109,14 @@ impl IndustryKind {
     /// The businesses of this kind.
     pub fn businesses(self) -> &'static [BusinessKind] {
         match self {
-            IndustryKind::Farming => &[BusinessKind::VertFarm, BusinessKind::GrainFarm, BusinessKind::ProteinVat, BusinessKind::Dairy, BusinessKind::Mill, BusinessKind::CowFarm, BusinessKind::ChickenFarm, BusinessKind::Slaughterhouse],
+            IndustryKind::Farming => &[BusinessKind::VertFarm, BusinessKind::GrainFarm, BusinessKind::ProteinVat, BusinessKind::Dairy, BusinessKind::Mill, BusinessKind::CowFarm, BusinessKind::ChickenFarm, BusinessKind::Slaughterhouse, BusinessKind::Brewery, BusinessKind::Distillery, BusinessKind::Bottler],
             IndustryKind::OilExtraction => &[BusinessKind::OilWell],
             IndustryKind::Refinery => &[BusinessKind::Refinery, BusinessKind::ChemicalWorks],
-            IndustryKind::Manufacturing => &[BusinessKind::Fab],
+            IndustryKind::Manufacturing => &[BusinessKind::Fab, BusinessKind::SawMill, BusinessKind::TextileMill, BusinessKind::GarmentWorkshop],
             IndustryKind::Logistics => &[BusinessKind::ContainerYard, BusinessKind::FleetLot, BusinessKind::TowYard, BusinessKind::TrashCompany],
             IndustryKind::Fishing => &[BusinessKind::Fishery, BusinessKind::FishPlant, BusinessKind::FishGutting, BusinessKind::FishStickFactory],
-            IndustryKind::Tech => &[BusinessKind::Assembly],
-            IndustryKind::Mining => &[BusinessKind::StripMine],
+            IndustryKind::Tech => &[BusinessKind::Assembly, BusinessKind::DrugMaker],
+            IndustryKind::Mining => &[BusinessKind::StripMine, BusinessKind::Quarry, BusinessKind::CementWorks, BusinessKind::BatchingPlant],
             IndustryKind::Smelting => &[BusinessKind::Smelter],
             IndustryKind::FactoryFarming => &[BusinessKind::Feedlot],
         }
@@ -549,8 +549,19 @@ pub fn business_weights(kind: IndustryKind, site: &IndustrySite) -> Vec<(Busines
                 (BusinessKind::CowFarm, field * 0.12),
                 (BusinessKind::ChickenFarm, 0.1),
                 (BusinessKind::Slaughterhouse, if site.livestock_farms >= 2 * (site.slaughterhouses + 1) { 0.15 + 0.35 * farms } else { 0.0 }),
+                // [r17-goods] Drinks off the farms' grain and fruit.
+                (BusinessKind::Brewery, 0.25),
+                (BusinessKind::Distillery, 0.1),
+                (BusinessKind::Bottler, 0.15),
             ]
         }
+        // [r17-goods] The parts fabs still most of it; a saw mill, a textile
+        // mill and garment workshops now and then.
+        IndustryKind::Manufacturing => vec![(BusinessKind::Fab, 1.0), (BusinessKind::SawMill, 0.15), (BusinessKind::TextileMill, 0.15), (BusinessKind::GarmentWorkshop, 0.25)],
+        IndustryKind::Tech => vec![(BusinessKind::Assembly, 1.0), (BusinessKind::DrugMaker, 0.3)],
+        // [r17-goods] A quarry, a cement works and a batching plant where
+        // the rock is dug.
+        IndustryKind::Mining => vec![(BusinessKind::StripMine, 1.0), (BusinessKind::Quarry, 0.35), (BusinessKind::CementWorks, 0.2), (BusinessKind::BatchingPlant, 0.25)],
         IndustryKind::Logistics => {
             let fleet = if site.fleet_lot_near { 0.15 } else { 0.5 + 1.5 * site.depot + 0.8 * site.port.max(site.yard) };
             // [parking] A tow company now and then: towing pays wherever cars are.

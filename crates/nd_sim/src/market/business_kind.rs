@@ -179,6 +179,42 @@ pub enum BusinessKind {
     /// (`crate::food_trucks`): no building of its own; it drives out to
     /// where the crowds are. Never grown on a lot. Appended.
     FoodTruck,
+    // -- [r17-goods] new goods and chains (Harvey 2026-11-22). Appended so
+    // saved kinds keep their order. --
+    /// A brewery: grain in, beer (drinks) out; copper kettles, silos, kegs.
+    Brewery,
+    /// A distillery: grain and fruit in, spirits (drinks) out; pot stills
+    /// and a bonded warehouse.
+    Distillery,
+    /// A bottling plant: fruit and plastics in, soft drinks and bottled
+    /// water out.
+    Bottler,
+    /// A drug maker: chemicals (plastics) in, medicine out, for the
+    /// pharmacies and the hospitals.
+    DrugMaker,
+    /// A pharmacy: medicine in, sold over the counter (as goods).
+    Pharmacy,
+    /// A limestone quarry: a pit, limestone out for the cement works.
+    Quarry,
+    /// A cement works: limestone and fuel into the kiln, cement out by
+    /// tanker.
+    CementWorks,
+    /// A concrete batching plant: cement and sand and gravel in,
+    /// ready-mix concrete out to the sites in mixer lorries.
+    BatchingPlant,
+    /// A saw mill: logs in off the log trains and lorries, boards (timber)
+    /// out to the builders and the merchants.
+    SawMill,
+    /// A textile mill: produce (cotton) and plastics (synthetics) in,
+    /// cloth out.
+    TextileMill,
+    /// A garment workshop: cloth in, clothing out; the sewing floors.
+    GarmentWorkshop,
+    /// A clothes shop: clothing in, sold over the counter (as goods).
+    ClothesShop,
+    /// A fashion wholesaler in the fashion district: clothing sold off
+    /// racks and stalls out on the pavement.
+    FashionWholesaler,
 }
 
 /// What a business turns into what, per filled job per hour.
@@ -189,7 +225,7 @@ pub struct Recipe {
 }
 
 impl BusinessKind {
-    pub const COUNT: usize = 71;
+    pub const COUNT: usize = 84;
     /// Every kind, in `index` order.
     pub const ALL: [BusinessKind; Self::COUNT] = [
         BusinessKind::VertFarm,
@@ -263,6 +299,19 @@ impl BusinessKind {
         BusinessKind::Contractor,
         BusinessKind::BuildersMerchant,
         BusinessKind::FoodTruck,
+        BusinessKind::Brewery,
+        BusinessKind::Distillery,
+        BusinessKind::Bottler,
+        BusinessKind::DrugMaker,
+        BusinessKind::Pharmacy,
+        BusinessKind::Quarry,
+        BusinessKind::CementWorks,
+        BusinessKind::BatchingPlant,
+        BusinessKind::SawMill,
+        BusinessKind::TextileMill,
+        BusinessKind::GarmentWorkshop,
+        BusinessKind::ClothesShop,
+        BusinessKind::FashionWholesaler,
     ];
 
     pub fn index(self) -> usize {

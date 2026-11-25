@@ -248,7 +248,7 @@ fn stock_and_money_flow_through_the_places() {
     let (mut w, places) = open_places(&[K::Bar, K::Cinema, K::Diner]);
     let (bar, cinema, diner) = (places[0], places[1], places[2]);
     let sum0 = w.ledger_sum();
-    w.buildings[bar].business.as_mut().unwrap().add(Resource::Groceries, 20.0);
+    w.buildings[bar].business.as_mut().unwrap().add(Resource::Drinks, 20.0);
     w.buildings[cinema].business.as_mut().unwrap().add(Resource::Groceries, 20.0);
     w.buildings[diner].business.as_mut().unwrap().add(Resource::BakedGoods, 10.0);
     let people: Vec<CitizenId> = w.citizens.keys().take(3).collect();
@@ -263,11 +263,12 @@ fn stock_and_money_flow_through_the_places() {
     let rev = |w: &World, b: BuildingId| w.buildings[b].business.as_ref().unwrap().revenue_today;
     let (r_bar, r_cin) = (rev(&w, bar), rev(&w, cinema));
     let purse: f32 = people.iter().map(|c| w.citizens[*c].savings).sum();
-    let grocery = w.buildings[bar].business.as_ref().unwrap().stock_of(Resource::Groceries);
+    // [r17-goods] Bars pour drinks, not groceries.
+    let grocery = w.buildings[bar].business.as_ref().unwrap().stock_of(Resource::Drinks);
     w.venue_tabs();
     assert!(rev(&w, bar) > r_bar, "a round at the bar");
     assert!(rev(&w, cinema) > r_cin, "a ticket at the cinema");
-    assert!(w.buildings[bar].business.as_ref().unwrap().stock_of(Resource::Groceries) < grocery, "the drinks come out of its stock");
+    assert!(w.buildings[bar].business.as_ref().unwrap().stock_of(Resource::Drinks) < grocery, "the drinks come out of its stock");
     assert!(w.economy.market.leisure.bookings_today > 0.0, "the film's distributor took its share");
     assert!(people.iter().map(|c| w.citizens[*c].savings).sum::<f32>() < purse);
     // A hungry diner is fed from the kitchen on arrival.

@@ -790,7 +790,7 @@ fn material_pile(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f3
                 pallet(g, along(k as f32 * 1.35), [0.56, 0.25, 0.17], 2, false);
             }
         }
-        R::Cement => {
+        R::Cement | R::Concrete => {
             for k in 0..2 {
                 pallet(g, along(k as f32 * 1.35), [0.78, 0.76, 0.72], rng.random_range(1..3), rng.random_bool(0.5));
             }

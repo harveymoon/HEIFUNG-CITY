@@ -331,6 +331,10 @@ impl World {
             sites: self.buildings.values().filter(|b| b.construction.is_some() && b.demolition.is_none()).count() as f32,
             site_material_units: yday.material_units,
             merchant_units: yday.merchant_units,
+            // [r17-goods] Imports lately (`TaxRates::imported` halves each
+            // night, so it holds about two days' worth).
+            imports: Resource::ALL.iter().map(|r| self.economy.taxes.imported_of(*r) * 0.5).collect(),
+            clothing: self.daily_output(&[BusinessKind::GarmentWorkshop]),
         }
     }
 
@@ -714,6 +718,39 @@ impl World {
             PressureKind::BuildersMerchant => {
                 let homes = self.homes_of(|_| true);
                 Placement { uses: &[Commercial, Industrial], anchors: vec![self.centroid(&homes)], reach: f32::INFINITY, min_area: 900.0, value: -0.5, needs_street: true, near: "the homes" }
+            }
+            // [r17-goods] The new chains' works on industrial land near the
+            // businesses that buy from them; the fashion district's
+            // wholesalers close by the garment workshops and each other.
+            PressureKind::Brewery | PressureKind::DrugMaker | PressureKind::Quarry | PressureKind::CementWorks | PressureKind::BatchingPlant | PressureKind::SawMill | PressureKind::TextileMill | PressureKind::GarmentWorkshop => {
+                let bk = kind.business()?;
+                let (r, _) = crate::pressure::import_pressure(kind)?;
+                let users: Vec<BusinessKind> = crate::catalogue::users(r).collect();
+                let mut buyers = self.sites_of(&users);
+                if matches!(kind, PressureKind::BatchingPlant | PressureKind::SawMill) {
+                    buyers.extend(self.buildings.values().filter(|b| b.construction.is_some() && b.demolition.is_none()).filter_map(|b| self.lots.get(b.lot).map(|l| l.center)));
+                }
+                let near = match kind {
+                    PressureKind::Brewery => "the bars and restaurants",
+                    PressureKind::DrugMaker => "the pharmacies",
+                    PressureKind::Quarry => "the cement works",
+                    PressureKind::CementWorks => "the batching plants",
+                    PressureKind::BatchingPlant | PressureKind::SawMill => "the building sites",
+                    PressureKind::TextileMill => "the garment workshops",
+                    _ => "the clothes shops",
+                };
+                let uses: &'static [LandUse] = if kind == PressureKind::GarmentWorkshop { &[Industrial, Commercial] } else { &[Industrial] };
+                Placement { uses, anchors: vec![self.centroid(&buyers)], reach: f32::INFINITY, min_area: bk.row().min_area.max(400.0), value: -1.0, needs_street: true, near }
+            }
+            PressureKind::FashionDistrict => {
+                let mut anchors = self.sites_of(&[BusinessKind::FashionWholesaler]);
+                if anchors.is_empty() {
+                    anchors = self.sites_of(&[BusinessKind::GarmentWorkshop]);
+                }
+                if anchors.is_empty() {
+                    return None;
+                }
+                Placement { uses: &[Commercial, Industrial], anchors, reach: 450.0, min_area: 0.0, value: -0.5, needs_street: true, near: "the garment workshops and the other wholesalers" }
             }
             PressureKind::Marina => return None,
         };

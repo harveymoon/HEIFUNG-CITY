@@ -100,6 +100,10 @@ impl World {
             b.plant_scale = kind.sized_when_built().then_some(scale);
         });
         self.clear_for_light_works(id, kind.merges_with_neighbours());
+        // [r17-goods] A nuclear plant waits for its fuel convoy.
+        if kind == PowerPlantKind::Nuclear {
+            self.nuclear_plant_built(lot_id);
+        }
         self.refresh_power();
         Ok(id)
     }
@@ -319,7 +323,9 @@ impl World {
     fn plant_output_mw_with(&self, b: &Building, kind: PowerPlantKind, bonus: f32) -> f32 {
         let site = self.power_site(b.lot, kind).unwrap_or(0.0);
         // [dams] A hydro plant waiting for its wall makes nothing.
-        self.plant_capacity_mw_with(b, bonus) * self.plant_availability(b) * site * self.dam_share(b)
+        // [r17-goods] A nuclear plant without its fuel makes nothing.
+        let fuel = if self.plant_fuelled(b) { 1.0 } else { 0.0 };
+        self.plant_capacity_mw_with(b, bonus) * self.plant_availability(b) * site * self.dam_share(b) * fuel
     }
 
     /// [grid-weather] The wind and sun a plant at `p` would get: the map's

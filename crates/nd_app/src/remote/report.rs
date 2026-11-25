@@ -780,6 +780,12 @@ pub fn power_json(w: &World, with_hours: bool) -> Value {
                 if r.members.len() > 1 {
                     v["available_mw"] = json!(round(r.members.iter().filter_map(|m| w.buildings.get(*m)).map(|m| w.plant_output_mw(m)).sum::<f32>()));
                 }
+                // [r17-goods] A nuclear plant's fuel: days left in its core,
+                // a convoy on the way, loads brought in.
+                if let Some(f) = w.nuclear_fuel(b.lot).filter(|_| k == nd_sim::PowerPlantKind::Nuclear) {
+                    let left = f.until.saturating_sub(w.clock.tick) as f32 / 1440.0;
+                    v["fuel"] = json!({ "fuelled": f.fuelled(w.clock.tick), "days_left": round(left), "convoy_on_the_way": f.convoy.is_some(), "loads": f.loads });
+                }
                 if matches!(k, nd_sim::PowerPlantKind::Wind | nd_sim::PowerPlantKind::Solar) {
                     let s = w.plant_resource(b);
                     v["site"] = json!({ "wind_factor": round(s.wind), "sun_factor": round(s.sun) });
@@ -1030,6 +1036,7 @@ fn emergency(w: &World) -> Value {
         }
     };
     let per_kind = |f: &dyn Fn(usize) -> Value| json!({ "fire": f(0), "crime": f(1), "medical": f(2) });
+    let goods_day = |d: &nd_sim::goods::GoodsDay| json!({ "used": round(d.medicine_used), "bought_in_town": round(d.medicine_local), "imported": round(d.medicine_imported), "hospitals_out": d.hospitals_short, "nuclear_convoys_sent": d.convoys_sent, "nuclear_convoys_arrived": d.convoys_arrived });
     let tick = w.clock.tick;
     json!({
         "coverage_pct_of_homes": { "police": cov(0), "fire": cov(1), "health": cov(2), "school": cov(3) },
@@ -1038,6 +1045,8 @@ fn emergency(w: &World) -> Value {
         "avg_response_min": round(st.avg_response()), "avg_response_min_yesterday": round(st.avg_response_yesterday),
         "units": st.units, "units_busy": st.units_busy, "fires_burning": st.fires_burning, "burned_down_total": st.burned_down_total,
         "waiting_for_ambulance": st.waiting_for_ambulance, "in_hospital": st.in_hospital,
+        // [r17-goods] The hospitals' medicine: used, bought in town, imported, and how many ran out.
+        "medicine": { "today": goods_day(&w.goods.today), "yesterday": goods_day(&w.goods.yesterday), "on_shelves": round(w.goods.medicine.values().sum::<f32>()), "on_the_way": round(w.goods.medicine_inbound.values().sum::<f32>()) },
         "dispatch": { "dispatcher_on_duty": dispatcher.map(key_str), "minutes_to_dispatch": delay },
         "response": per_kind(&response),
         "queued": per_kind(&|k| json!(st.queued[k])), "queue_max_today": per_kind(&|k| json!(st.queue_max_today[k])),

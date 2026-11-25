@@ -67,10 +67,28 @@ pub enum Resource {
     Fixtures,
     /// Paint and finishes.
     Paint,
+    // -- [r17-goods] new goods and chains (Harvey 2026-11-22), appended --
+    /// Beer, spirits and soft drinks from the breweries, distilleries and
+    /// bottling plants, for the bars, restaurants and grocers.
+    Drinks,
+    /// Medicines from the drug makers, for pharmacies and hospitals.
+    Medicine,
+    /// Limestone from the quarries, burnt into cement.
+    Limestone,
+    /// Ready-mixed concrete from a batching plant, in a mixer lorry.
+    Concrete,
+    /// Logs from the forests out of town, by log train or log lorry.
+    Logs,
+    /// Cloth from the textile mills.
+    Cloth,
+    /// Clothes from the garment workshops.
+    Clothing,
+    /// Fuel for a nuclear plant, brought in by an escorted convoy.
+    NuclearFuel,
 }
 
 impl Resource {
-    pub const COUNT: usize = 32;
+    pub const COUNT: usize = 40;
     pub const ALL: [Resource; Self::COUNT] = [
         Resource::Produce,
         Resource::Grain,
@@ -104,6 +122,14 @@ impl Resource {
         Resource::Wiring,
         Resource::Fixtures,
         Resource::Paint,
+        Resource::Drinks,
+        Resource::Medicine,
+        Resource::Limestone,
+        Resource::Concrete,
+        Resource::Logs,
+        Resource::Cloth,
+        Resource::Clothing,
+        Resource::NuclearFuel,
     ];
 
     /// Its row in the catalogue.

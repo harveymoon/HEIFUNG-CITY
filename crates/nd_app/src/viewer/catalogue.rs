@@ -74,7 +74,9 @@ pub fn group(s: Style) -> &'static str {
         PoliceStation | FireStation | Hospital | School | DispatchCenter | Prison | TrashDepot | University | Landfill | Incinerator | RecyclingPlant | TransferStation => "City services",
         Landmark | Stadium | ArtMuseum | ScienceMuseum | HistoryMuseum | PleasurePier | GrandPark | Zoo | Observatory | Aquarium | BotanicalGarden | ConcertHall | AmusementPark | ConventionCentre | Cathedral | CasinoResort | LedgeHouse | PrairieHall | HillChapel | SkySlab | FanLibrary | CultureHouse => "Attractions",
         Farmstead | OilField | Refinery | ContainerYard | FishProcessing | TruckLot | Smelter | Feedlot | ChemicalWorks | CowFarm | ChickenFarm | Slaughterhouse | StripMine | FishGutting | FishStickFactory | TrashCompany | BuildersYard => "Industry trades",
-        Mechanic | CarDealer | BikeShop | FishMarket | SeafoodRestaurant | GolfRange | ArtStudio | Gallery | BuildersMerchant => "Shops and trades",
+        // [r17-goods] the new chains
+        Brewery | Distillery | BottlingPlant | DrugPlant | CementWorks | BatchingPlant | SawMill | TextileMill => "Industry trades",
+        Mechanic | CarDealer | BikeShop | FishMarket | SeafoodRestaurant | GolfRange | ArtStudio | Gallery | BuildersMerchant | FashionWholesale => "Shops and trades",
         Shacks | TrailerPark | Huts | Suburb | McMansion | Mansion | MegaHotel | Museum => "Homes and estates",
         // [megablocks] the corps' arcologies sit with the league towers
         Supertall | MegaBlock => "League towers",
@@ -260,6 +262,10 @@ pub fn lot_size(s: Style, tier: Tier) -> (f32, f32) {
         TwinTowers => (40.0, 36.0),
         // [r4-leisure-places] the halls and lots on a big plot
         FoodHallShed | StreetFoodLot | DriveThrough | Multiplex | Theatre | MusicHall | BowlingAlley => (48.0, 44.0),
+        // [r17-goods] works yards on a big plot; a cement works with its kiln on a bigger one
+        Brewery | Distillery | BottlingPlant | DrugPlant | BatchingPlant | SawMill | TextileMill => (60.0, 52.0),
+        CementWorks => (80.0, 70.0),
+        FashionWholesale => (30.0, 20.0),
         Stadium | Arena | GrandPark | Zoo | AmusementPark | BotanicalGarden | ConventionCentre | MegaMall | ShippingPort | PowerCoal | PowerNuclear | PowerSolar | PowerWind | PowerHydro | PowerTidal | PowerGeothermal | FreightYard | CentralStation | StripMine | OilField | Refinery | Farmstead | CowFarm | Feedlot | Prison | University | CasinoResort | SkySlab | CultureHouse | Megastructure | MegaBlock => (130.0, 110.0),
         Hospital | School | MarketHall | Mall | MegaHotel | Mansion | ArtMuseum | ScienceMuseum | HistoryMuseum | ConcertHall | Cathedral | LedgeHouse | PrairieHall | HillChapel | FanLibrary | Aquarium | Observatory | PleasurePier | Station | ContainerYard | TruckLot | Smelter | ChemicalWorks | ChickenFarm | Slaughterhouse | TankFarm | Depot | Junkyard | Factory | FabPlant | BusDepot | TrashDepot | Incinerator | RecyclingPlant | TransferStation | TrashCompany | MarinaLarge | FishingPortLarge | FerryTerminal | GolfRange | BeachResort | Beach | TrailerPark | Suburb | Supertall | CarDealer | StripMall | Casino | Cinema | DomeCampus | Courthouse | Ministry | CivicTower | FoundryWorks | GasWorks | LoftEstate | SawtoothFactory | CulDeSac | GardenManor | StoneManor => (75.0, 65.0),
         _ => match tier {

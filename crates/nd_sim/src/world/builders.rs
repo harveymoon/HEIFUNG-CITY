@@ -260,6 +260,11 @@ impl World {
         if let Some(&(lead, _)) = imports.first() {
             let cost: f32 = imports.iter().map(|(r, n)| n * r.base_price() * IMPORT_MARKUP).sum();
             let total: f32 = imports.iter().map(|(_, n)| n).sum();
+            // [r17-goods] Counted with the town's imports, so the new chains'
+            // pressures (a batching plant, a saw mill) see the sites' wants.
+            for &(r, n) in &imports {
+                self.economy.taxes.note_import(r, n);
+            }
             self.economy.materials_today += cost;
             self.pay_for_materials(buyer, yard, Account::Outside, cost);
             if let Some(c) = self.buildings[bid].construction.as_mut() {
@@ -294,7 +299,7 @@ impl World {
                 return want - got;
             }
         }
-        let src = r.row().local_from;
+        let src = crate::catalogue::local_source(r);
         // [K34] Steel cut from old boxes at a scrap yard goes in first.
         if src == Some(Resource::Metal) {
             if let Some(sy) = self.scrap_steel_for(at, want) {
@@ -476,7 +481,7 @@ impl World {
             return;
         }
         self.refresh_seller_index();
-        let materials = crate::catalogue::site_materials();
+        let materials = crate::catalogue::merchant_stock();
         let morning = self.clock.hour() == 7;
         for (id, kind) in ids {
             match kind {
@@ -517,7 +522,7 @@ impl World {
                 continue;
             }
             // From a maker of what it is made from (`local_from`), else imported.
-            let src = r.row().local_from;
+            let src = crate::catalogue::local_source(r);
             if let Some((seller, price, s)) = src.and_then(|s| self.maker_of(s, at, want, id).map(|(m, p)| (m, p, s))) {
                 let got = self.buildings[seller].business.as_mut().expect("maker_of picks a business").take(s, want);
                 if got > 0.0 {

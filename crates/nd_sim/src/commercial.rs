@@ -121,8 +121,8 @@ impl CommercialSub {
     pub fn menu(self) -> &'static [BusinessKind] {
         use BusinessKind as K;
         match self {
-            CommercialSub::Neighbourhood => &[K::Grocery, K::Grocery, K::Bakery, K::GadgetShop, K::Diner, K::NoodleBar, K::PizzaPlace, K::BubbleTea],
-            CommercialSub::Retail => &[K::GadgetShop, K::Grocery, K::FastFood, K::FoodHall, K::PizzaPlace, K::Gym],
+            CommercialSub::Neighbourhood => &[K::Grocery, K::Grocery, K::Bakery, K::GadgetShop, K::Diner, K::NoodleBar, K::PizzaPlace, K::BubbleTea, K::Pharmacy],
+            CommercialSub::Retail => &[K::GadgetShop, K::Grocery, K::FastFood, K::FoodHall, K::PizzaPlace, K::Gym, K::Pharmacy, K::ClothesShop],
             CommercialSub::Offices => &[K::Office],
             CommercialSub::Leisure => BusinessKind::candidates(LandUse::Entertainment),
         }
@@ -134,8 +134,8 @@ impl CommercialSub {
     pub fn auto_menu(self) -> &'static [BusinessKind] {
         use BusinessKind as K;
         match self {
-            CommercialSub::Neighbourhood => &[K::Grocery, K::Grocery, K::Bakery, K::GadgetShop, K::Diner, K::NoodleBar, K::PizzaPlace, K::BubbleTea, K::Office],
-            CommercialSub::Retail => &[K::GadgetShop, K::Grocery, K::FastFood, K::FoodHall, K::PizzaPlace, K::Gym, K::Office],
+            CommercialSub::Neighbourhood => &[K::Grocery, K::Grocery, K::Bakery, K::GadgetShop, K::Diner, K::NoodleBar, K::PizzaPlace, K::BubbleTea, K::Pharmacy, K::Office],
+            CommercialSub::Retail => &[K::GadgetShop, K::Grocery, K::FastFood, K::FoodHall, K::PizzaPlace, K::Gym, K::Pharmacy, K::ClothesShop, K::Office],
             _ => self.menu(),
         }
     }

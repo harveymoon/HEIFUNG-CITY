@@ -909,7 +909,7 @@ impl World {
             // [r14-builders] The builders' merchant sells its trade stock
             // over the counter too: to sites and to anyone restocking.
             if bz.kind == BusinessKind::BuildersMerchant {
-                for r in crate::catalogue::site_materials() {
+                for r in crate::catalogue::merchant_stock() {
                     let v = self.seller_index.entry(r).or_default();
                     if !v.iter().any(|(b, _)| *b == id) {
                         v.push((id, lot.center));
@@ -1159,7 +1159,7 @@ impl World {
     /// [r2-traffic] A way for a lorry from out of town to building site
     /// `to`: from the farthest of the city's ways in on the site's own
     /// street network.
-    fn site_route_from_edge(&self, to: BuildingId) -> Option<(Vec<crate::traffic::LaneId>, f32, f32)> {
+    pub(super) fn site_route_from_edge(&self, to: BuildingId) -> Option<(Vec<crate::traffic::LaneId>, f32, f32)> {
         let (to_seg, to_pt) = self.truck_stop(to)?;
         let s = self.roads.try_segment(to_seg).filter(|s| s.alive && s.is_street())?;
         let net = self.drive_component(s.a)?;
@@ -1273,6 +1273,10 @@ impl World {
         }
         // [airport] Exports for the holds at an airport's cargo terminal.
         if self.airport_receive(&cargo) {
+            return;
+        }
+        // [r17-goods] Medicine for a hospital, fuel for a nuclear plant.
+        if self.goods_receive(&cargo) {
             return;
         }
         let Some(b) = self.buildings.get_mut(cargo.to) else { return };

@@ -28,7 +28,7 @@
 //! Everything here is pure: the World gathers the [`Signals`] and the
 //! [`Supply`], [`assess`] reads them.
 
-use crate::market::BusinessKind;
+use crate::market::{BusinessKind, Resource};
 use serde::{Deserialize, Serialize};
 
 /// A gap of this many businesses opens one more.
@@ -102,6 +102,8 @@ pub const BATHERS_PER_BAR: f32 = 160.0;
 /// [waterfront] Visitors, and wealthy households near the water, per boat rental.
 pub const TOURISTS_PER_RENTAL: f32 = 90.0;
 pub const RICH_PER_RENTAL: f32 = 300.0;
+/// [r17-goods] Clothing a day one fashion wholesaler sells on.
+pub const CLOTHING_PER_WHOLESALER: f32 = 50.0;
 /// A pressure never asks for more than this many of a kind at once.
 pub const MAX_WANTED: f32 = 8.0;
 
@@ -142,10 +144,47 @@ pub enum PressureKind {
     /// [r14-builders] Building materials bought for sites with no builders'
     /// merchant to stock them, and the town's DIY trade. Appended.
     BuildersMerchant,
+    // -- [r17-goods] the new chains: each opens where the town imports what
+    // it would make (`Signals::imports`). Appended. --
+    /// Drinks imported: a brewery.
+    Brewery,
+    /// Medicine imported (pharmacies and hospitals): a drug maker.
+    DrugMaker,
+    /// Limestone imported for the cement works: a quarry.
+    Quarry,
+    /// Cement imported for the batching plants: a cement works.
+    CementWorks,
+    /// Ready-mix brought in for the sites from out of town: a batching plant.
+    BatchingPlant,
+    /// Timber imported: a saw mill.
+    SawMill,
+    /// Cloth imported for the garment workshops: a textile mill.
+    TextileMill,
+    /// Clothing imported for the shops: garment workshops.
+    GarmentWorkshop,
+    /// Garment workshops and the clothes they sew: the fashion district's
+    /// wholesalers, next to each other.
+    FashionDistrict,
+}
+
+/// [r17-goods] What a pressure of the new chains reads: the good the town
+/// imports that the business would make, and a business's worth a day.
+pub const fn import_pressure(kind: PressureKind) -> Option<(Resource, f32)> {
+    Some(match kind {
+        PressureKind::Brewery => (Resource::Drinks, 260.0),
+        PressureKind::DrugMaker => (Resource::Medicine, 45.0),
+        PressureKind::Quarry => (Resource::Limestone, 250.0),
+        PressureKind::CementWorks => (Resource::Cement, 90.0),
+        PressureKind::BatchingPlant => (Resource::Concrete, 130.0),
+        PressureKind::SawMill => (Resource::Timber, 90.0),
+        PressureKind::TextileMill => (Resource::Cloth, 90.0),
+        PressureKind::GarmentWorkshop => (Resource::Clothing, 60.0),
+        _ => return None,
+    })
 }
 
 impl PressureKind {
-    pub const ALL: [PressureKind; 23] = [
+    pub const ALL: [PressureKind; 32] = [
         PressureKind::TowCompany,
         PressureKind::Mechanic,
         PressureKind::CarDealer,
@@ -169,6 +208,15 @@ impl PressureKind {
         PressureKind::ContainerStorage,
         PressureKind::Contractor,
         PressureKind::BuildersMerchant,
+        PressureKind::Brewery,
+        PressureKind::DrugMaker,
+        PressureKind::Quarry,
+        PressureKind::CementWorks,
+        PressureKind::BatchingPlant,
+        PressureKind::SawMill,
+        PressureKind::TextileMill,
+        PressureKind::GarmentWorkshop,
+        PressureKind::FashionDistrict,
     ];
 
     pub fn index(self) -> usize {
@@ -201,6 +249,15 @@ impl PressureKind {
             PressureKind::ContainerStorage => BusinessKind::ContainerYard,
             PressureKind::Contractor => BusinessKind::Contractor,
             PressureKind::BuildersMerchant => BusinessKind::BuildersMerchant,
+            PressureKind::Brewery => BusinessKind::Brewery,
+            PressureKind::DrugMaker => BusinessKind::DrugMaker,
+            PressureKind::Quarry => BusinessKind::Quarry,
+            PressureKind::CementWorks => BusinessKind::CementWorks,
+            PressureKind::BatchingPlant => BusinessKind::BatchingPlant,
+            PressureKind::SawMill => BusinessKind::SawMill,
+            PressureKind::TextileMill => BusinessKind::TextileMill,
+            PressureKind::GarmentWorkshop => BusinessKind::GarmentWorkshop,
+            PressureKind::FashionDistrict => BusinessKind::FashionWholesaler,
         })
     }
 
@@ -242,6 +299,15 @@ impl PressureKind {
             PressureKind::ContainerStorage => "container storage yard",
             PressureKind::Contractor => "building contractor",
             PressureKind::BuildersMerchant => "builders' merchant",
+            PressureKind::Brewery => "brewery",
+            PressureKind::DrugMaker => "drug maker",
+            PressureKind::Quarry => "limestone quarry",
+            PressureKind::CementWorks => "cement works",
+            PressureKind::BatchingPlant => "concrete batching plant",
+            PressureKind::SawMill => "saw mill",
+            PressureKind::TextileMill => "textile mill",
+            PressureKind::GarmentWorkshop => "garment workshop",
+            PressureKind::FashionDistrict => "fashion wholesaler",
         }
     }
 
@@ -271,6 +337,15 @@ impl PressureKind {
             PressureKind::ContainerStorage => "container_storage",
             PressureKind::Contractor => "contractor",
             PressureKind::BuildersMerchant => "builders_merchant",
+            PressureKind::Brewery => "brewery",
+            PressureKind::DrugMaker => "drug_maker",
+            PressureKind::Quarry => "quarry",
+            PressureKind::CementWorks => "cement_works",
+            PressureKind::BatchingPlant => "batching_plant",
+            PressureKind::SawMill => "saw_mill",
+            PressureKind::TextileMill => "textile_mill",
+            PressureKind::GarmentWorkshop => "garment_workshop",
+            PressureKind::FashionDistrict => "fashion_district",
         }
     }
 
@@ -378,6 +453,20 @@ pub struct Signals {
     pub site_material_units: f32,
     #[serde(default)]
     pub merchant_units: f32,
+    /// [r17-goods] Goods imported a day, by resource (`Resource::ALL`
+    /// order; a flow): what the new chains would make in town.
+    #[serde(default)]
+    pub imports: Vec<f32>,
+    /// [r17-goods] Clothing sewn a day by the garment workshops.
+    #[serde(default)]
+    pub clothing: f32,
+}
+
+impl Signals {
+    /// [r17-goods] A day's imports of `r`.
+    pub fn imports_of(&self, r: Resource) -> f32 {
+        self.imports.get(crate::catalogue::good_index(r)).copied().unwrap_or(0.0)
+    }
 }
 
 impl Signals {
@@ -406,6 +495,12 @@ impl Signals {
         mix(&mut self.local_contracts, today.local_contracts);
         mix(&mut self.site_material_units, today.site_material_units);
         mix(&mut self.merchant_units, today.merchant_units);
+        mix(&mut self.clothing, today.clothing);
+        self.imports.resize(Resource::COUNT, 0.0);
+        for (i, x) in self.imports.iter_mut().enumerate() {
+            let new = today.imports.get(i).copied().unwrap_or(0.0);
+            *x += (new - *x) * if new < *x { SMOOTHING_DOWN } else { SMOOTHING };
+        }
         self.sites = today.sites;
         self.cars = today.cars;
         self.tow_backlog = today.tow_backlog;
@@ -640,12 +735,27 @@ pub fn assess(s: &Signals, supply: &Supply) -> Vec<Pressure> {
             }
             // [r14-builders] The sites' materials (a merchant's worth a day
             // each `UNITS_PER_MERCHANT`) and the town's DIY trade.
+            // [r17-goods] Read below, from the imports.
+            PressureKind::Brewery | PressureKind::DrugMaker | PressureKind::Quarry | PressureKind::CementWorks | PressureKind::BatchingPlant | PressureKind::SawMill | PressureKind::TextileMill | PressureKind::GarmentWorkshop => (0.0, String::new()),
+            // [r17-goods] Wholesalers round the garment workshops: a street
+            // of them for every two workshops.
+            PressureKind::FashionDistrict => {
+                let shops = supply.open[BusinessKind::GarmentWorkshop.index()] as f32;
+                (shops * 1.5 + s.clothing / CLOTHING_PER_WHOLESALER, format!("{} garment workshops sewing {} clothes a day; {ht}", shops, s.clothing.round()))
+            }
             PressureKind::BuildersMerchant => {
                 let wanted = s.site_material_units / crate::builders::UNITS_PER_MERCHANT + s.people / crate::builders::PEOPLE_PER_MERCHANT;
                 (wanted, format!("{} units of building materials a day for the sites ({} of them over a merchant's counter), {} residents doing up their homes; {ht}", s.site_material_units.round(), s.merchant_units.round(), s.people.round()))
             }
         };
         let mut p = Pressure::new(kind, wanted, supply, why);
+        // [r17-goods] The new chains: what the town imports, against what
+        // the businesses standing would make (they are counted in by `have`).
+        if let Some((r, per)) = import_pressure(kind) {
+            let imported = s.imports_of(r);
+            let have = kind.business().map_or(0, |b| supply.have(b)) as f32;
+            p = Pressure::new(kind, have + imported / per, supply, format!("{} {} a day imported; {ht}", imported.round(), r.label()));
+        }
         if kind == PressureKind::ContainerStorage {
             // [r11-box-stock] The container yards in town are counted in the
             // cause already (they keep what they have room for): the
