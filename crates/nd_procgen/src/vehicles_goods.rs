@@ -32,18 +32,15 @@ pub(super) fn drinks_truck(b: &mut B, col: [f32; 3]) {
         let x = x0 + (k as f32 + 0.5) * bw;
         b.bx((x0 + k as f32 * bw, (y0 + top) * 0.5, 0.0), (0.12, top - y0, hw * 2.02), mul(body, 0.8));
         // The stock inside: kegs (silver) low, crates (coloured) above.
-        b.bx((x, y0 + 0.45, 0.0), (bw - 0.25, 0.75, hw * 1.7), [0.7, 0.72, 0.74]);
-        b.bx((x, y0 + 1.25, 0.0), (bw - 0.25, 0.8, hw * 1.7), if k % 2 == 0 { [0.15, 0.35, 0.12] } else { [0.75, 0.55, 0.12] });
+        b.bx((x, y0 + 0.85, 0.0), (bw - 0.25, 1.55, hw * 1.7), [[0.7, 0.72, 0.74], [0.15, 0.35, 0.12], [0.75, 0.55, 0.12], [0.6, 0.12, 0.08]][k % 4]);
         // Shutters: bays 0 and 2 down on the left, 1 and 3 on the right.
         for s in [-1.0f32, 1.0] {
             let down = (k % 2 == 0) == (s < 0.0);
             if down {
                 b.bx((x, (y0 + top) * 0.5, s * (hw - 0.03)), (bw - 0.14, top - y0 - 0.15, 0.06), mul(body, 0.95));
                 if b.detail {
-                    for i in 1..6 {
-                        let y = y0 + (top - y0) * i as f32 / 6.0;
-                        b.bx((x, y, s * (hw - 0.0)), (bw - 0.2, 0.03, 0.02), mul(body, 0.7));
-                    }
+                    // The shutter's handle rail.
+                    b.bx((x, y0 + 0.35, s * hw), (bw - 0.2, 0.06, 0.03), mul(body, 0.6));
                 }
             } else {
                 // Rolled up under the roof.
@@ -73,7 +70,7 @@ pub(super) fn cement_tanker(b: &mut B, col: [f32; 3]) {
     // The blower and its pipe behind the cab.
     b.bx((cr - 0.35, 1.45, 0.0), (0.5, 0.7, hw * 1.2), [0.3, 0.3, 0.32]);
     let (a, z) = (Vec3::new(cr - 0.7, 2.05, 0.0), Vec3::new(rx + 0.3, 2.05, 0.0));
-    b.body.tube_capped(a, z, 0.95, 12, true, true, c4(tank));
+    b.body.tube_capped(a, z, 0.95, 10, true, true, c4(tank));
     if b.detail {
         // Discharge cones under the tank and the hatches on top.
         for t in [0.3f32, 0.7] {
@@ -115,19 +112,16 @@ pub(super) fn flask_carrier(b: &mut B, col: [f32; 3]) {
     }
     let r = 0.95;
     let (a, z) = (Vec3::new(c1, deck + 0.25 + r, 0.0), Vec3::new(c0, deck + 0.25 + r, 0.0));
-    b.body.tube_capped(a, z, r, 14, true, true, c4([0.55, 0.57, 0.6]));
+    b.body.tube_capped(a, z, r, 12, true, true, c4([0.55, 0.57, 0.6]));
     let yellow = [1.0, 0.78, 0.05];
     for t in [0.12f32, 0.5, 0.88] {
         let p = a.lerp(z, t);
-        b.body.tube_capped(p - Vec3::X * 0.12, p + Vec3::X * 0.12, r + 0.04, 14, false, false, c4(yellow));
+        b.body.tube_capped(p - Vec3::X * 0.12, p + Vec3::X * 0.12, r + 0.04, 12, false, false, c4(yellow));
     }
     if b.detail {
-        for k in 1..8 {
-            let p = a.lerp(z, k as f32 / 8.0);
-            if (k as f32 / 8.0 - 0.5).abs() < 0.08 {
-                continue;
-            }
-            b.body.tube_capped(p - Vec3::X * 0.03, p + Vec3::X * 0.03, r + 0.08, 14, false, false, c4([0.42, 0.44, 0.47]));
+        for t in [0.3f32, 0.7] {
+            let p = a.lerp(z, t);
+            b.body.tube_capped(p - Vec3::X * 0.03, p + Vec3::X * 0.03, r + 0.08, 12, false, false, c4([0.42, 0.44, 0.47]));
         }
         // Straps over the cask.
         for x in [mid - 0.9, mid + 0.9] {
@@ -156,19 +150,18 @@ pub(super) fn escort_marks(b: &mut B, roof: f32, hw: f32) {
 pub(super) fn logs_on_deck(b: &mut B, d0: f32, d1: f32, deck: f32, hw: f32) {
     let bark = [0.32, 0.22, 0.14];
     let end = [0.78, 0.62, 0.42];
-    let rows: [(f32, f32, usize); 3] = [(0.32, 0.0, 4), (0.86, 0.15, 3), (1.38, 0.3, 2)];
+    let rows: [(f32, f32, usize); 3] = [(0.32, 0.0, 3), (0.86, 0.25, 2), (1.38, 0.5, 1)];
     for (y, off, n) in rows {
         for k in 0..n {
-            let z = -hw * 0.72 + off + k as f32 * (hw * 1.44 - 2.0 * off) / (n.max(2) - 1) as f32;
-            let r = 0.27 + 0.03 * ((k + n) % 3) as f32;
-            b.body.tube_capped(Vec3::new(d1 - 0.1, deck + y, z), Vec3::new(d0 + 0.15, deck + y, z), r, 7, false, false, c4(bark));
-            // The sawn ends.
-            b.body.tube_capped(Vec3::new(d0 + 0.15, deck + y, z), Vec3::new(d0 + 0.1, deck + y, z), r * 0.92, 7, false, true, c4(end));
-            b.body.tube_capped(Vec3::new(d1 - 0.05, deck + y, z), Vec3::new(d1 - 0.1, deck + y, z), r * 0.92, 7, false, true, c4(end));
+            let z = if n == 1 { 0.0 } else { -hw * 0.66 + off + k as f32 * (hw * 1.32 - 2.0 * off) / (n - 1) as f32 };
+            let r = 0.36 + 0.03 * ((k + n) % 3) as f32;
+            // Bark along the log, the pale sawn end at the back.
+            b.body.tube_capped(Vec3::new(d1 - 0.1, deck + y, z), Vec3::new(d0 + 0.15, deck + y, z), r, 6, false, false, c4(bark));
+            b.body.tube_capped(Vec3::new(d0 + 0.15, deck + y, z), Vec3::new(d0 + 0.1, deck + y, z), r * 0.95, 6, false, true, c4(end));
         }
     }
     // Stanchions up both sides.
-    let n = 4;
+    let n = 3;
     for i in 0..n {
         let x = d0 + 0.3 + (d1 - d0 - 0.6) * i as f32 / (n - 1) as f32;
         for s in [-1.0f32, 1.0] {

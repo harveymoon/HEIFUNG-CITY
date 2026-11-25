@@ -1037,16 +1037,16 @@ fn emergency(w: &World) -> Value {
     };
     let per_kind = |f: &dyn Fn(usize) -> Value| json!({ "fire": f(0), "crime": f(1), "medical": f(2) });
     let goods_day = |d: &nd_sim::goods::GoodsDay| json!({ "used": round(d.medicine_used), "bought_in_town": round(d.medicine_local), "imported": round(d.medicine_imported), "hospitals_out": d.hospitals_short, "nuclear_convoys_sent": d.convoys_sent, "nuclear_convoys_arrived": d.convoys_arrived });
+    // [r17-goods] The hospitals' medicine: used, bought in town, imported, and how many ran out.
+    let medicine = json!({ "today": goods_day(&w.goods.today), "yesterday": goods_day(&w.goods.yesterday), "on_shelves": round(w.goods.medicine.values().sum::<f32>()), "on_the_way": round(w.goods.medicine_inbound.values().sum::<f32>()) });
     let tick = w.clock.tick;
-    json!({
+    let mut v = json!({
         "coverage_pct_of_homes": { "police": cov(0), "fire": cov(1), "health": cov(2), "school": cov(3) },
         "incidents_today": { "fire": st.incidents_today[0], "crime": st.incidents_today[1], "medical": st.incidents_today[2] },
         "resolved_today": st.resolved_today.iter().sum::<u32>(), "unanswered_today": st.unanswered_today, "arrests_today": st.arrests_today,
         "avg_response_min": round(st.avg_response()), "avg_response_min_yesterday": round(st.avg_response_yesterday),
         "units": st.units, "units_busy": st.units_busy, "fires_burning": st.fires_burning, "burned_down_total": st.burned_down_total,
         "waiting_for_ambulance": st.waiting_for_ambulance, "in_hospital": st.in_hospital,
-        // [r17-goods] The hospitals' medicine: used, bought in town, imported, and how many ran out.
-        "medicine": { "today": goods_day(&w.goods.today), "yesterday": goods_day(&w.goods.yesterday), "on_shelves": round(w.goods.medicine.values().sum::<f32>()), "on_the_way": round(w.goods.medicine_inbound.values().sum::<f32>()) },
         "dispatch": { "dispatcher_on_duty": dispatcher.map(key_str), "minutes_to_dispatch": delay },
         "response": per_kind(&response),
         "queued": per_kind(&|k| json!(st.queued[k])), "queue_max_today": per_kind(&|k| json!(st.queue_max_today[k])),
@@ -1061,7 +1061,9 @@ fn emergency(w: &World) -> Value {
         "out_of_town_calls_today": st.out_of_town_calls_today, "out_of_town_fees_today": round(st.out_of_town_fees_today),
         "hospital_bills_paid_today": round(st.bills_paid_today), "hospital_bills_covered_by_city_today": round(st.bills_covered_today),
         "stations": stations, "active_incidents": active, "recent": recent,
-    })
+    });
+    v["medicine"] = medicine;
+    v
 }
 
 /// One alert per emergency service whose every unit was busy for

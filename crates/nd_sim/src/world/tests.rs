@@ -469,7 +469,9 @@ fn trains_call_at_stations_and_yards_bring_freight() {
     let home_lot = lot_near(&w, Vec2::new(240.0, 40.0), LandUse::Residential);
     w.build_on(home_lot);
     let shop_lot = lot_near(&w, Vec2::new(815.0, 40.0), LandUse::Commercial);
-    w.build_on(shop_lot);
+    // [r17-goods] A grocer (open 7-22): the market's pick could now be a
+    // clothes shop that opens at ten, after the rider gets there.
+    w.build_on_as(shop_lot, Some(BusinessKind::Grocery));
     let home = w.lots[home_lot].building.unwrap();
     let shop = w.lots[shop_lot].building.unwrap();
     w.finish_construction(home);
@@ -1230,7 +1232,9 @@ fn bulldozing_the_branch_takes_the_trains_off_and_strands_riders_sanely() {
 fn imports_stranded_at_a_disconnected_yard_go_by_truck_and_sites_never_wait() {
     let (mut w, branch, _, _, yard) = rail_city();
     let shop_lot = lot_near(&w, Vec2::new(815.0, 40.0), LandUse::Commercial);
-    w.build_on(shop_lot);
+    // [r17-goods] A grocer (open 7-22): the market's pick could now be a
+    // clothes shop that opens at ten, after the rider gets there.
+    w.build_on_as(shop_lot, Some(BusinessKind::Grocery));
     let shop = w.lots[shop_lot].building.unwrap();
     w.finish_construction(shop);
     // A site's parts never queue for a train.
@@ -1268,7 +1272,9 @@ fn imports_stranded_at_a_disconnected_yard_go_by_truck_and_sites_never_wait() {
     // A working yard whose trains stopped coming is drained too.
     let (mut w, _, _, _, yard) = rail_city();
     let shop_lot = lot_near(&w, Vec2::new(815.0, 40.0), LandUse::Commercial);
-    w.build_on(shop_lot);
+    // [r17-goods] A grocer (open 7-22): the market's pick could now be a
+    // clothes shop that opens at ten, after the rider gets there.
+    w.build_on_as(shop_lot, Some(BusinessKind::Grocery));
     let shop = w.lots[shop_lot].building.unwrap();
     w.finish_construction(shop);
     while w.clock.tick % 60 != 59 {
@@ -1291,7 +1297,9 @@ fn freight_trains_carry_what_fits_and_extra_trains_take_the_rest() {
     use crate::rail::{TrainKind, MAX_WAGONS, WAGON_CAPACITY};
     let (mut w, _, _, _, yard) = rail_city();
     let shop_lot = lot_near(&w, Vec2::new(815.0, 40.0), LandUse::Commercial);
-    w.build_on(shop_lot);
+    // [r17-goods] A grocer (open 7-22): the market's pick could now be a
+    // clothes shop that opens at ten, after the rider gets there.
+    w.build_on_as(shop_lot, Some(BusinessKind::Grocery));
     let shop = w.lots[shop_lot].building.unwrap();
     w.finish_construction(shop);
     let full = MAX_WAGONS as f32 * WAGON_CAPACITY;

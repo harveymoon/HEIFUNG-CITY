@@ -312,7 +312,7 @@ pub fn batching_plant(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for (k, col) in [[0.72, 0.62, 0.42], [0.55, 0.53, 0.5], [0.66, 0.6, 0.5]].iter().enumerate() {
         let p = Vec2::new(area.u0 + 5.0 + k as f32 * 7.0, area.v1 - 5.0);
         heap(g, c, p, 3.0, 2.4, *col);
-        if c.inside_local(p + Vec2::new(3.3, 0.0)) && distance_to_boundary(p + Vec2::new(3.3, 0.0), &c.lot_poly) > 0.5 {
+        if c.inside_local(p + Vec2::new(3.3, 0.0)) && distance_to_boundary(p + Vec2::new(3.3, 0.0), &c.lot_poly) > 3.3 {
             f.bx(g, Concrete, p.x + 3.3, 1.0, p.y, Vec3::new(0.6, 2.0, 6.0), grey);
         }
     }
@@ -457,7 +457,7 @@ pub fn fashion_wholesale(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         front.decal(g, f, Glow, t, 3.3, 0.08, uw - 0.8, 0.45, mul(sc, 1.6));
         // Out on the pavement (beyond the lot line, a step at most): a rack
         // of clothes on a rail, a mannequin, a stall under an awning.
-        let d = 0.9;
+        let d = 0.55;
         front.bx(g, f, Metal, t, 1.6, d, Vec3::new(uw * 0.55, 0.05, 0.05), [0.6, 0.6, 0.62]);
         for s in [-1.0f32, 1.0] {
             front.bx(g, f, Metal, t + s * uw * 0.27, 0.8, d, Vec3::new(0.05, 1.6, 0.05), [0.6, 0.6, 0.62]);
@@ -470,19 +470,19 @@ pub fn fashion_wholesale(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
         if k % 2 == 0 {
             // A mannequin by the door.
-            let p = front.at(t + uw * 0.38, 0.5);
+            let p = front.at(t + uw * 0.38, 0.4);
             let w = f.to_world(p.x, p.y);
             g.part(Matte).cylinder(w, 0.18, 0.12, 0.0, 1.2, 6, rgba([0.85, 0.82, 0.78]));
             g.part(Tarp).cylinder(w, 0.28, 0.2, 0.7, 1.45, 6, rgba(loud[k as usize % loud.len()]));
             g.part(Matte).cylinder(w, 0.1, 0.1, 1.45, 1.7, 6, rgba([0.85, 0.82, 0.78]));
         } else {
             // A stall's awning over boxes of shirts and scarves.
-            front.bx(g, f, Tarp, t + uw * 0.1, 2.3, 0.3, Vec3::new(uw * 0.8, 0.08, 1.4), mul(pick(rng, &pal.awning_colors), 0.95));
+            front.bx(g, f, Tarp, t + uw * 0.1, 2.3, 0.2, Vec3::new(uw * 0.8, 0.08, 1.1), mul(pick(rng, &pal.awning_colors), 0.95));
             front.bx(g, f, Wood, t + uw * 0.1, 0.45, 0.4, Vec3::new(uw * 0.6, 0.9, 0.7), pal.wood);
             front.bx(g, f, Tarp, t + uw * 0.1, 0.95, 0.4, Vec3::new(uw * 0.55, 0.12, 0.6), loud[(k as usize + 3) % loud.len()]);
         }
     }
     // A string of bunting lights along the frontage.
     let (a, b) = (front.at(-r.w() * 0.5 + 0.3, 0.2), front.at(r.w() * 0.5 - 0.3, 0.2));
-    string_lights(g, f, f.at(a.x, 3.7, a.y), f.at(b.x, 3.7, b.y), units * 3, pick(rng, &pal.sign_colors));
+    string_lights(g, f, Vec3::new(a.x, 3.7, a.y), Vec3::new(b.x, 3.7, b.y), units * 3, pick(rng, &pal.sign_colors));
 }

@@ -1636,9 +1636,8 @@ fn livery_marks(b: &mut B, accent: [f32; 3], sign: [f32; 3]) {
     }
     let len = if m.body == BodyType::Semi { nd_sim::vehicle::semi_length(m.boxed) } else { body_length(m.body) };
     match m.body {
-        BodyType::DeliveryVan | BodyType::BoxVan | BodyType::PanelTruck | BodyType::GarbageTruck | BodyType::Curtainsider | BodyType::CementTanker => {
+        BodyType::DeliveryVan | BodyType::BoxVan | BodyType::PanelTruck | BodyType::GarbageTruck | BodyType::Curtainsider => {
             let (hw, x, y, w, h) = match m.body {
-                BodyType::CementTanker => (0.97, -0.6, 2.05, 3.6, 1.0),
                 BodyType::DeliveryVan => (1.0, -0.6, 1.6, 2.6, 0.9),
                 BodyType::BoxVan => (1.05, -1.2, 1.9, 3.4, 1.4),
                 BodyType::PanelTruck => (1.2, -1.0, 2.2, 4.4, 1.6),
