@@ -47,7 +47,8 @@ pub const NIGHT_MARK: f32 = 1.75;
 /// [`NIGHT_MARK`]), leaving window lights and anything marked already.
 pub fn mark_glow(g: &mut Geometry, from: usize, mark: f32) {
     for c in g.part(Glow).colors.iter_mut().skip(from) {
-        if c[3] < NEON_MARK - 0.01 {
+        // [r17-logos] An ad frame's mark (below zero) stays.
+        if c[3] >= 0.0 && c[3] < NEON_MARK - 0.01 {
             c[3] = mark;
         }
     }

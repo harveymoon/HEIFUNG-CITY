@@ -15,8 +15,10 @@ const TO_LET: [f32; 3] = [0.62, 0.60, 0.55];
 const SIGN_Y: f32 = 3.3;
 
 /// Signs over the shopfronts in `units` (the others are upper floors).
-pub fn draw(g: &mut Geometry, c: &Ctx, units: &[nd_sim::buildings::Unit], seed: u64) {
-    let shops: Vec<&nd_sim::buildings::Unit> = units.iter().filter(|u| u.shopfront).collect();
+/// [r17-logos] `marks` (by unit, may be empty): the business's mark and
+/// trading name, drawn on its sign as its logo and wordmark.
+pub fn draw(g: &mut Geometry, c: &Ctx, units: &[nd_sim::buildings::Unit], marks: &[Option<(crate::logo::Mark, String)>], seed: u64) {
+    let shops: Vec<(usize, &nd_sim::buildings::Unit)> = units.iter().enumerate().filter(|(_, u)| u.shopfront).collect();
     if shops.is_empty() {
         return;
     }
@@ -31,7 +33,7 @@ pub fn draw(g: &mut Geometry, c: &Ctx, units: &[nd_sim::buildings::Unit], seed: 
     let seg = front.len / n;
     let w = (seg * 0.78).min(8.0);
     let signs = &c.palette.sign_colors;
-    for (i, u) in shops.iter().enumerate() {
+    for (i, (ui, u)) in shops.iter().enumerate() {
         let t = -front.len * 0.5 + seg * (i as f32 + 0.5);
         // On the facade; narrower by a corner that leaves the lot (a
         // slanted side line), none if even that does not fit.
@@ -44,6 +46,11 @@ pub fn draw(g: &mut Geometry, c: &Ctx, units: &[nd_sim::buildings::Unit], seed: 
         let k = (nd_sim::hash::mix2(seed, i as u64 + 1) % signs.len().max(1) as u64) as usize;
         let col = signs.get(k).copied().unwrap_or([1.0, 0.3, 0.8]);
         front.bx(g, f, Matte, t, SIGN_Y, 0.0, Vec3::new(w, 0.8, 0.16), BOARD);
+        // [r17-logos] The business's own mark and name.
+        if let Some((mark, name)) = marks.get(*ui).and_then(|m| m.as_ref()) {
+            branded_sign(g, c, &front, t, w, mark, name);
+            continue;
+        }
         // [r4-leisure-places] A place to eat or go out spells out its trade.
         match u.sign.and_then(nd_sim::leisure::sign_word) {
             Some(word) => {
@@ -53,6 +60,38 @@ pub fn draw(g: &mut Geometry, c: &Ctx, units: &[nd_sim::buildings::Unit], seed: 
             None => front.decal(g, f, Glow, t, SIGN_Y, 0.1, w * 0.9, 0.42, mul(col, 2.2)),
         }
     }
+}
+
+/// [r17-logos] A shop sign with the business's logo at its left end and
+/// its name beside it in the brand's type, lit in the brand colour. Seen
+/// from afar it is a strip of the brand colour along the board's foot (in
+/// the base mesh); the logo and the letters are close detail (`Lod::Near`).
+fn branded_sign(g: &mut Geometry, c: &Ctx, front: &Face, t: f32, w: f32, mark: &crate::logo::Mark, name: &str) {
+    use crate::logo::{self, Ink, Paint, Place, Tess};
+    let f = &c.frame;
+    let paint = Paint::lit(mark, 2.0);
+    front.decal(g, f, Glow, t, SIGN_Y - 0.33, 0.09, w * 0.94, 0.06, paint.brand);
+    let out = f.dir3(front.out).normalize_or_zero();
+    let read = (-out).cross(Vec3::Y).normalize_or_zero();
+    let side = 0.62;
+    let lx = t - w * 0.5 + 0.12 + side * 0.5;
+    let room = w - side - 0.4;
+    let ty = logo::type_of(mark);
+    let name = name.to_uppercase();
+    let nh = (room / logo::text_w(&name, 1.0, ty)).min(0.42);
+    g.lod(crate::surface::Lod::Near, |g| {
+        let t3 = logo::tessellate(mark);
+        let place = Place { centre: f.at2(front.at(lx, 0.1), SIGN_Y), right: read * (side * 0.5), up: Vec3::Y * (side * 0.5), normal: out, lift: 0.004 };
+        logo::emit(g.part(Glow), &t3, &place, &paint, 1.0);
+        if nh >= 0.12 {
+            let x0 = lx + side * 0.5 + 0.14;
+            let (p, _) = logo::text_prims(&name, 0.0, -nh * 0.5, nh, ty, Ink::Brand);
+            let mut tt = Tess::default();
+            tt.add(&p);
+            let place = Place { centre: f.at2(front.at(x0, 0.1), SIGN_Y), right: read, up: Vec3::Y, normal: out, lift: 0.004 };
+            logo::emit(g.part(Glow), &tt, &place, &paint, 1.0);
+        }
+    });
 }
 
 #[cfg(test)]

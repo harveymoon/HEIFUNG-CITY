@@ -1359,9 +1359,11 @@ otherwise): `kind` (`mega_corp` or `university`), `corp` / `campus` id, `role` (
 holding, staff housing; main building, dorm, administration, theatre, sports centre, frat house,
 campus plaza), `rent_discount` for staff housing, and `brand`: `name`, `colour` (hex),
 `colour_index`, `shape` (circle, ring, hexagon, diamond, triangle, square, chevron, shield),
-`monogram` and `logo`: the 11x11 pixel mark as text rows (`#` shape, `x` letter cut into the
-shape, `o` letter on empty ground, `.` empty), the same mark the renderer lights on roofs,
-banners, the HQ crown and the fleet's trucks. `ownership` and `inspect.building.land` show the
+`monogram`, `logo`: the old 11x11 pixel mark as text rows (`#` shape, `x` letter cut into the
+shape, `o` letter on empty ground, `.` empty), and [r17-logos] `mark`: the family of the vector
+logo the renderer draws on roofs, banners, the HQ crown, shop signs, billboards and the fleet's
+trucks (outline, badge, orbit, burst, stripes, chevrons, rings, blades, letter, dots, waves,
+cube, split, arcs; `nd_procgen::logo`). `ownership` and `inspect.building.land` show the
 owner's kind as `mega_corp` (with the business it grew out of) or `university`.
 
 `corps {action?}` (also `corp`, `megacorp`):

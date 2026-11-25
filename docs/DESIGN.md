@@ -1359,8 +1359,28 @@ Citizens are rendered from their simulated positions every frame.
   takings and staff in one building) becomes a mega-corp, in a town of 600 people or more, one
   per 3,000 people, four at most. It gets a coined fictional name (two syllables nobody trades
   under and a sector word), a brand colour (12, a free one first) and a logo: a shape (circle,
-  ring, hexagon, diamond, triangle, square, chevron) with its initial cut into it, an 11x11
-  pixel mark (`Brand::logo_bitmap`) the renderer, the trucks and the UI all draw the same.
+  ring, hexagon, diamond, triangle, square, chevron) and its initial. [r17-logos] The renderer,
+  the trucks and the UI all draw one vector mark made from those three (`nd_procgen::logo`:
+  `Mark::corp`, `design`): one of fourteen families (a neon outline round the initial, a solid
+  badge with it cut out, an orbit, a starburst, a striped sun, chevrons, linked rings, a
+  pinwheel, a big letterform, a dot grid, waves, an isometric cube, a split disc, broadcast
+  arcs) with its counts, angles and proportions from the seed and an accent colour, drawn as
+  flat smooth meshes of light (the old 11x11 pixel mark `Brand::logo_bitmap` is kept for the
+  API's `logo` rows). Chains and local businesses get a mark the same way from their trading
+  name (`Mark::local`; the branch number dropped, so every branch matches) on their shop signs
+  (logo and wordmark in the stroke font `nd_procgen::logo_font`). *Ads*: billboards and LED
+  screens (`parts::led_screen`, `billboard`) show ads for real companies in town
+  (`nd_procgen::ads::ads_for`: often the building's own business, then mega-corps, chains and
+  other businesses by the seed): each ad a frame with the logo and name (and slogan line), a
+  wide screen a second slogan frame; up to four frames are drawn into the Glow mesh marked with
+  a negative vertex alpha (`ads::ad_alpha`: frame, frames, phase), tagged `uv.x = -4 - code` by
+  `render/lights.rs tag_windows`, and the window-lights shader shows one at a time, 5 s each on
+  a real-time clock (`clock.z`, quarter-second steps), screens out of step by their phase. No
+  mesh is rebuilt and no draw call added; previews draw the first frame only. *Signs*: a style's sign boards
+  (`parts::sign_board`) spell the building's business (its mark and trading name, `Ctx::own`)
+  or a trade word in neon (`sign_word`: NOODLES, PHARMACY, OPEN 24H, ...; works words in
+  industry), and hanging signs (`vertical_sign`) stack a word a letter a cell; both were rows
+  of lit blocks. Shop signs over let units (`shopfronts`) carry the tenant's logo and name.
   *Its day*: it skims 40% of each holding's profit (a till keeps 500) into its purse, pays
   the player's levy and [r15-money] its bank (0.03% interest a day on its debt and 0.5% of the debt
   paid back, out of its cash; unpaid interest is added to the debt); with no HQ it buys the dearest, most pressed commercial plots downtown it

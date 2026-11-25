@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 
 /// A brand as data.
 pub fn brand_json(b: &Brand) -> Value {
-    json!({ "name": b.name, "colour": b.hex(), "colour_index": b.colour, "shape": b.shape.key(), "monogram": b.monogram.to_string(), "logo": b.logo_rows() })
+    json!({ "name": b.name, "colour": b.hex(), "colour_index": b.colour, "shape": b.shape.key(), "monogram": b.monogram.to_string(), "logo": b.logo_rows(), "mark": format!("{:?}", nd_procgen::logo::family(&nd_procgen::logo::Mark::of_brand(b))).to_lowercase() })
 }
 
 fn corp_json(w: &World, c: &MegaCorp) -> Value {

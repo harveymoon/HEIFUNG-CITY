@@ -278,7 +278,7 @@ fn finished(ctx: &Ctx, style: Style, rng: &mut nd_sim::SimRng, extras: &Extras) 
     // [tenants] A sign over each shop on the ground floor ([malls] a mall
     // style hangs its own).
     if !extras.units.is_empty() && !style.is_mall() && style != Style::MegaBlock {
-        shopfronts::draw(&mut g, ctx, extras.units, ctx.seed);
+        shopfronts::draw(&mut g, ctx, extras.units, extras.shop_marks, ctx.seed);
     }
     // [r11-lot-memory] Old signs painted over, a door bricked up.
     if !extras.ghost_signs.is_empty() && !style.is_mall() && style != Style::MegaBlock {

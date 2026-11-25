@@ -214,24 +214,59 @@ pub fn awning(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f32
     }
 }
 
-/// Sign: dark backing with blocks of glowing lettering.
+/// Sign: dark backing with glowing lettering. [r17-logos] Real letters
+/// in the stroke font (`crate::logo_font`): the business's own logo and
+/// trading name when the building has one (`Ctx::own`), else a trade word
+/// in neon (`sign_word`); they were blocks of light standing for letters.
 pub fn sign_board(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f32, y: f32, w: f32, h: f32) {
     let f = &c.frame;
     let sc = pick(rng, &c.palette.sign_colors);
     let k = 1.0 - 0.6 * c.wear * rng.random::<f32>();
     face.bx(g, f, Matte, t, y, 0.16, Vec3::new(w + 0.2, h + 0.2, 0.12), DARK);
     let letters = ((w / (h * 0.8)).floor() as i32).clamp(2, 12);
-    let lw = w / letters as f32;
+    // The old letter blocks' draws, so the stream after is as before.
+    let mut dead = 0;
     for i in 0..letters {
         if coin(rng, 0.15 + 0.5 * c.wear) && i % 3 == 1 {
-            continue; // dead letters
+            dead += 1;
         }
-        let lt = t - w * 0.5 + (i as f32 + 0.5) * lw;
-        face.decal(g, f, Glow, lt, y, 0.23, lw * 0.7, h * 0.7, mul(sc, k));
+    }
+    let salt = nd_sim::hash::mix(c.seed, (t.to_bits() as u64) << 32 | y.to_bits() as u64);
+    let centre = f.at2(face.at(t, 0.23), y);
+    let out = f.dir3(face.out).normalize_or_zero();
+    let read = (-out).cross(Vec3::Y).normalize_or_zero();
+    match c.own {
+        Some(ad) => {
+            let paint = crate::logo::Paint::lit(&ad.mark, 2.0 * k);
+            crate::logo::sign_line(g.part(Glow), centre, read, out, w, h, Some(&ad.mark), &ad.name.to_uppercase(), &paint, crate::logo::Ink::Brand);
+        }
+        None => {
+            let word = sign_word(c, salt, w / h.max(0.1));
+            let mut paint = crate::logo::Paint::lit(&crate::logo::Mark::local(word), 1.0);
+            paint.light = mul(sc, k * 1.15);
+            // A worn sign has a dead letter or two (a gap in the word).
+            let shown: String = word.chars().enumerate().map(|(i, ch)| if dead > 0 && i % 3 == 1 && nd_sim::hash::unit(nd_sim::hash::mix(salt, i as u64)) < c.wear { ' ' } else { ch }).collect();
+            crate::logo::sign_line(g.part(Glow), centre, read, out, w, h, None, &shown, &paint, crate::logo::Ink::Light);
+        }
     }
 }
 
-/// Tall narrow sign hung off the facade.
+/// [r17-logos] A trade word for a sign with no business behind it, short
+/// enough for a board `aspect` times as wide as it is tall.
+pub fn sign_word(c: &Ctx, salt: u64, aspect: f32) -> &'static str {
+    const SHOP: &[&str] = &["NOODLES", "RAMEN", "PHARMACY", "HOTEL", "KARAOKE", "BAR", "CAFE", "OPEN 24H", "LIQUOR", "PAWN", "TATTOO", "NAILS", "DINER", "MARKET", "ARCADE", "CYBER", "REPAIRS", "DUMPLINGS", "MAHJONG", "TAXI", "HOSTEL", "LOANS", "CHROME", "TEA", "SUSHI", "LOUNGE", "MOTEL", "PHONES", "BOBA", "CLINIC"];
+    const WORKS: &[&str] = &["DEPOT", "PARTS", "TOOLS", "FREIGHT", "STEEL", "WELDING", "SCRAP", "DIESEL", "STORAGE", "MOTORS", "CARGO", "FUEL"];
+    let set = if c.land_use == nd_sim::LandUse::Industrial { WORKS } else { SHOP };
+    // Letters that fit: a letter is about 0.93 of its height wide.
+    let max_len = ((aspect * 0.9) / 0.93).floor().max(3.0) as usize;
+    let fits: Vec<&&str> = set.iter().filter(|w| w.len() <= max_len).collect();
+    let pool: Vec<&&str> = if fits.is_empty() { set.iter().filter(|w| w.len() <= 4).collect() } else { fits };
+    pool[(nd_sim::hash::mix(salt, 0x516) % pool.len() as u64) as usize]
+}
+
+/// Tall narrow sign hung off the facade. [r17-logos] Its word stacked a
+/// letter a cell, in neon (the business's name or a trade word); it was a
+/// column of lit squares.
 pub fn vertical_sign(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f32, y0: f32, h: f32) {
     let f = &c.frame;
     let sc = pick(rng, &c.palette.sign_colors);
@@ -241,37 +276,80 @@ pub fn vertical_sign(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face,
         face.bx(g, f, Matte, t, y0 + h * (0.25 + 0.5 * k as f32), 0.35, Vec3::new(0.08, 0.08, 0.7), CHARCOAL);
     }
     let cells = (h / (w * 0.9)).floor().max(1.0) as i32;
-    for i in 0..cells {
-        if coin(rng, c.wear * 0.4) {
+    let mut dead = Vec::with_capacity(cells as usize);
+    for _ in 0..cells {
+        dead.push(coin(rng, c.wear * 0.4));
+    }
+    let salt = nd_sim::hash::mix(c.seed ^ 0x7E57, (t.to_bits() as u64) << 32 | y0.to_bits() as u64);
+    // The business's first word, or a trade word, as long as there are cells.
+    let own: Option<String> = c.own.map(|a| {
+        let up = a.name.to_uppercase();
+        up.split(' ').find(|w| w.len() >= 3).unwrap_or(&up).to_string()
+    });
+    let word: String = own.filter(|w| w.chars().count() as i32 <= cells).unwrap_or_else(|| {
+        let pool = ["HOTEL", "BAR", "RAMEN", "KARAOKE", "NOODLES", "OPEN", "CAFE", "TAXI", "LIQUOR", "PAWN", "TATTOO", "SUSHI", "MOTEL", "CYBER", "NEON", "DINER", "TEA", "BOBA"];
+        let fit: Vec<&str> = pool.iter().copied().filter(|p| p.len() as i32 <= cells).collect();
+        if fit.is_empty() {
+            "OPEN"[..cells.clamp(1, 4) as usize].to_string()
+        } else {
+            fit[(nd_sim::hash::mix(salt, 3) % fit.len() as u64) as usize].to_string()
+        }
+    });
+    let n = word.chars().count().max(1) as f32;
+    let cell = h / n;
+    let lh = (cell * 0.72).min(w * 0.7 * crate::logo_font::GLYPH_H / crate::logo_font::GLYPH_W);
+    let out = f.dir3(face.out).normalize_or_zero();
+    let read = (-out).cross(Vec3::Y).normalize_or_zero();
+    let colour = match c.own {
+        Some(a) => crate::logo::Paint::lit(&a.mark, 1.9).brand,
+        None => mul(sc, 0.9),
+    };
+    let ty = crate::logo::Type { slant: 0.0, weight: 0.15, underline: false };
+    let mut tess = crate::logo::Tess::default();
+    for (i, ch) in word.chars().enumerate() {
+        if dead.get(i).copied().unwrap_or(false) {
             continue;
         }
-        let y = y0 + (i as f32 + 0.5) * (h / cells as f32);
-        face.decal(g, f, Glow, t, y, 0.96, w * 0.7, (h / cells as f32) * 0.7, mul(sc, 0.9));
+        let cy = h * 0.5 - (i as f32 + 0.5) * cell;
+        let s = ch.to_string();
+        let lw = crate::logo::text_w(&s, lh, ty);
+        let (p, _) = crate::logo::text_prims(&s, -lw * 0.5, cy - lh * 0.5, lh, ty, crate::logo::Ink::Light);
+        tess.add(&p);
     }
+    let paint = crate::logo::Paint { light: colour, ..crate::logo::Paint::lit(&crate::logo::Mark::local(&word), 1.0) };
+    let place = crate::logo::Place { centre: f.at2(face.at(t, 0.96), y0 + h * 0.5), right: read, up: Vec3::Y, normal: out, lift: 0.004 };
+    crate::logo::emit(g.part(Glow), &tess, &place, &paint, 1.0);
 }
 
-/// A framed LED billboard: a grid of brightly lit cells in two colours plus a
-/// dim frame. Dead pixels appear with wear.
+/// A framed LED billboard showing ads for real companies in town
+/// ([r17-logos] `crate::ads`): each ad a frame with the company's logo and
+/// name (and a slogan frame on a wide screen), cycled by the window-lights
+/// shader. It was a 5 x 3 grid of cells in two random LED colours. A
+/// screen on a ruin is dead.
 pub fn led_screen(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f32, y: f32, w: f32, h: f32) {
     let f = &c.frame;
     face.bx(g, f, Matte, t, y, 0.18, Vec3::new(w + 0.4, h + 0.4, 0.36), DARK);
-    let a = pick(rng, &c.palette.led_colors);
-    let b = pick(rng, &c.palette.led_colors);
-    let cols = 5;
-    let rows = 3;
-    let cw = w / cols as f32;
-    let ch = h / rows as f32;
-    for i in 0..cols {
-        for j in 0..rows {
-            if coin(rng, c.wear * 0.5) {
-                continue;
-            }
-            let tt = ((i as f32 / cols as f32 + j as f32 / rows as f32) * 0.5 + rng.random_range(-0.2..0.2)).clamp(0.0, 1.0);
-            let col = mix(a, b, tt);
-            let k = rng.random_range(0.6..1.1);
-            face.decal(g, f, Glow, t - w * 0.5 + (i as f32 + 0.5) * cw, y - h * 0.5 + (j as f32 + 0.5) * ch, 0.37, cw * 0.96, ch * 0.96, mul(col, k));
+    // The old cells' draws, kept so the rest of the building comes out of
+    // its random stream as before.
+    let _ = pick(rng, &c.palette.led_colors);
+    let _ = pick(rng, &c.palette.led_colors);
+    for _ in 0..15 {
+        if coin(rng, c.wear * 0.5) {
+            continue;
         }
+        let _ = rng.random_range(-0.2f32..0.2);
+        let _ = rng.random_range(0.6f32..1.1);
     }
+    let mid = face.at(t, 0.0);
+    let salt = nd_sim::hash::mix(nd_sim::hash::mix(c.seed, mid.x.to_bits() as u64), (mid.y.to_bits() as u64) << 32 | y.to_bits() as u64);
+    if c.wear > 0.6 && nd_sim::hash::unit(nd_sim::hash::mix(salt, 0xDEAD)) < (c.wear - 0.6) * 1.2 {
+        return;
+    }
+    let ads = c.ads.map(|s| (s.0)(salt)).filter(|v| !v.is_empty()).unwrap_or_else(|| crate::ads::fallback_ads(nd_sim::hash::mix(c.seed, salt)));
+    let centre = f.at2(face.at(t, 0.37), y);
+    let out = f.dir3(face.out);
+    let read = (-out).cross(Vec3::Y).normalize_or_zero();
+    crate::ads::draw_screen(g.part(Glow), centre, read, out, w * 0.97, h * 0.97, &ads, c.dynamic_lights, (salt % 16) as u8);
 }
 
 /// Roof billboard on steel legs.

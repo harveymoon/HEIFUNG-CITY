@@ -2,6 +2,12 @@
 //! be unit-tested and rendered by any engine.
 
 pub mod buildings;
+/// [r17-logos] Company logos: a vector mark per company from its brand seed.
+pub mod logo;
+/// [r17-logos] The stroke font of wordmarks and ads.
+pub mod logo_font;
+/// [r17-logos] Billboard and LED-screen ads for the companies in town.
+pub mod ads;
 /// [climate] Each climate's ground, plants, water, snow and weather looks.
 pub mod climate;
 /// Colour helpers (`rgba`, `mul`, `mix`, `at`, `pick`).
