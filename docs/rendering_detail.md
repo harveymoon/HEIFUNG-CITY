@@ -104,6 +104,37 @@ prop from the library. Don't add a private fade or a private bike.
 | Street look | `render/street_look.rs` | real lamp lights (nearest the view, 320 m reach), ground light pools, wet roads | lights: own pool by count, not a detail band | |
 | Worn paths | `render/foot_wear.rs` | worn-ground masks on soft ground and paving | none (a texture) | a sheet per tile |
 
+## People: the near figure [r17-people]
+
+People have their own two levels, not a `DetailBand`: the far figure
+(`nd_procgen::people`, 150-180 triangles, boxes, one mesh per quantised
+`PersonKey`) everywhere, and within a few dozen metres of the camera the
+near figure (`nd_procgen::people_near`, ~900-1,300 triangles on foot, ~1,700-1,950
+riding): a lofted torso by build, round limbs on a skeleton, hands and
+shoes, a head with a face (eyes, brows, nose, mouth, ears), hair with
+volume by style, clothes by cut (short sleeves, hood, work jacket band,
+suit shirt and tie, flared skirt, long coat) and extras from a hash of the
+seed (shoulder bag, backpack, tote, briefcase, lit phone; an umbrella or
+the hood up in rain or snow; an older stoop). Same skin, hair, colours and
+emissive palette cells as the far figure, so the night trim lights the same
+places.
+
+- `render/near_people.rs` lends a pooled near entity (at most `NEAR_CAP`)
+  to each far figure close enough, copying its place, turn and visibility
+  after the lift; the far one gets a `VisibilityRange` starting where the
+  near one's ends, so Bevy dithers the swap (orbit 30-42 m, walk / drive /
+  follow 44-58 m; lent 3 m before the band, kept 10 m past it).
+- The walk is in the near material's vertex shader: each vertex's limb and
+  joints are in UV1 (`rig_aux`), each figure's stride phase and swing in its
+  `MeshTag` (`walk_tag`), advanced by the distance it moved. Riders pedal
+  (a two-bone reach to the pedal). `pose_vertex` is the same motion in Rust
+  for the tests.
+- The near material has its own prepass vertex shader posing the limbs the same way: without depth and motion vectors TAA ghosted the background through the figures.
+- In a tight crowd only one umbrella in 0.8 m stays up (by seed rank, with hysteresis): `spread_umbrellas`.
+- Off with `ND_NEAR_PEOPLE=0`, `ND_PLAIN_PEOPLE=1`, and in the stand-in views
+  (heat, focus, ghost); the selected and spotlit keep their far figure.
+- `status.render.people.near`: drawn, triangles, lent, meshes cached, built.
+
 ## Measuring
 
 `status.render` carries `detail_triangles` / `detail_in_range` (building

@@ -111,6 +111,7 @@ pub(super) fn sync_tourists(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut q: Query<(&mut Transform, &mut Visibility, &mut Mesh3d), With<TouristTag>>,
+    (mut near, camera): (ResMut<near_people::NearPeople>, Query<&GlobalTransform, With<Camera3d>>),
 ) {
     let _t = crate::frame_stats::span("sync_tourists");
     let w = &sim.world;
@@ -129,6 +130,10 @@ pub(super) fn sync_tourists(
     }
     let f = sim.frac();
     state.figures.begin_frame();
+    // [r17-people] Visitors close to the camera get a near figure too.
+    let near_on = near_people::NearPeople::wanted(people::plain());
+    let eye = camera.iter().next().map_or(Vec3::ZERO, |t| t.translation());
+    let rain = near_on && super::climate::precip_now(w).is_some_and(|(_, i)| i > 0.3);
     for (id, t) in w.tourism.tourists.iter() {
         let Some(&e) = state.tourists.get(&id) else {
             let e = commands.spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(look_mat.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, Grounded, TouristTag)).id();
@@ -150,6 +155,10 @@ pub(super) fn sync_tourists(
         tf.translation = Vec3::new(pos.x, 0.16, pos.y);
         tf.rotation = Quat::from_rotation_y(-lerp_angle(t.prev_heading, t.heading, f));
         tf.scale = Vec3::splat(look.stature(t.age));
+        if near_on && SVec2::new(pos.x - eye.x, pos.y - eye.z).length() < near_people::CANDIDATE_REACH {
+            let extras = nd_procgen::people_near::near_extras(&key, t.seed, t.age, rain);
+            near.candidates.push(near_people::NearCandidate { src: e, rank: nd_procgen::hash::hash2(t.seed, 0x756D_6272) as u32, key: nd_procgen::people_near::NearKey { base: key, extras }, stature: tf.scale.x });
+        }
         let wanted: Handle<Mesh> = state.figures.get_or_build(key, |k: &PersonKey| meshes.add(shared_mesh(&person_mesh(k), false))).unwrap_or_else(|| mats.citizen_mesh.clone());
         if mesh.0 != wanted {
             mesh.0 = wanted;
