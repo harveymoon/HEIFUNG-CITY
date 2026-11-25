@@ -56,9 +56,10 @@ pub(super) fn sync_drive_car(
         vr.ensure_materials(&mut materials);
         let m = model();
         let v = vr.variant(&mut meshes, &m, &assets.palette);
-        let finish = vr.finish_of(m.class);
-        let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, Visibility::Inherited, NotShadowCaster, SelfLifted, DriveCarTag)).id();
-        let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), pose, Visibility::Inherited, NotShadowCaster, NotShadowReceiver, SelfLifted, DriveCarTag)).id();
+        // [r17-cars] The player's car is always the near model.
+        let (body_mesh, lights_mesh) = v.near.as_ref().map_or((v.body.clone(), v.lights.clone()), |n| (n.body.clone(), n.lights.clone()));
+        let body = commands.spawn((Mesh3d(body_mesh), MeshMaterial3d(vr.paint()), pose, Visibility::Inherited, NotShadowCaster, SelfLifted, DriveCarTag)).id();
+        let lights = commands.spawn((Mesh3d(lights_mesh), MeshMaterial3d(mats.glow()), pose, Visibility::Inherited, NotShadowCaster, NotShadowReceiver, SelfLifted, DriveCarTag)).id();
         dr.ents = vec![body, lights];
         if let (Some(fx), Some(fx_mat)) = (v.fx, vr.fx.clone()) {
             dr.ents.push(commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat), pose, Visibility::Inherited, NotShadowCaster, NotShadowReceiver, SelfLifted, DriveCarTag)).id());

@@ -103,6 +103,7 @@ prop from the library. Don't add a private fade or a private bike.
 | Skid row | `nd_procgen::society`, `render/society.rs` | camps, RVs, trash | base (see todo) | merged per cell |
 | Street look | `render/street_look.rs` | real lamp lights (nearest the view, 320 m reach), ground light pools, wet roads | lights: own pool by count, not a detail band | |
 | Worn paths | `render/foot_wear.rs` | worn-ground masks on soft ground and paving | none (a texture) | a sheet per tile |
+| Vehicles [r17-cars] | `nd_procgen::vehicles` (far) and `vehicle_near.rs` (near); `render/vehicles.rs` `spawn_lod`, `render/car_paint.rs` | every moving, parked, waiting and towed vehicle | its own range: near model within `near_range` (90 m, dithered hand-over over the last 20 %), far model beyond | one mesh per variant and model, one paint material for all bodies: Bevy batches each variant |
 
 ## Measuring
 
@@ -110,8 +111,35 @@ prop from the library. Don't add a private fade or a private bike.
 detail generated and within its band now), `visible_meshes` and
 `visible_detail_meshes` (mesh entities the camera drew last frame, before
 Bevy's batching, and those under a band) and `yards` (household things
-placed). `yards` (remote) gives the household layer's reach, fade and eye
+placed), `vehicles` [r17-cars] (vehicle models drawn: the near detail
+step, far and near entities, their triangles and the distinct meshes
+among them). `yards` (remote) gives the household layer's reach, fade and eye
 limit.
 
 Before/after numbers for the unification are in the r13-detail report
 (todo.md, "Unify the close-up detail passes").
+
+## Vehicles [r17-cars]
+
+Every vehicle variant has two models built once and shared:
+
+- **far** (`vehicles.rs`): the side silhouette extruded across the width,
+  at most `TRI_BUDGET` (600) triangles; drawn beyond the hand-over;
+- **near** (`vehicle_near.rs`, `NearDetail` steps 1-4): cars lofted from
+  cross-sections (tumblehome, crowned roof and bonnet, rounded nose and tail,
+  arches with flares, crisp shoulder and window lines), turned tyres with
+  rims, spokes or hubcaps and brake discs, door and shut lines, handles,
+  mirrors, wipers, grilles, shaped lamp clusters, plates, exhausts; lorries,
+  vans and bikes get the wheels, mirrors, grilles and plates. The step is
+  `ND_CAR_DETAIL` (default `NEAR_STEP_DEFAULT` in `render/vehicles.rs`);
+  the hand-over distance `ND_CAR_NEAR_M` (default 90 m).
+
+The near model is a child of the far one's entity, so whatever hides,
+moves, lifts or removes a car takes both. The player's own car (drive mode)
+is always the near model. Both models carry per-vertex part tags for the
+**car paint** (`render/car_paint.rs`): paint finishes (solid, gloss,
+metallic flakes, pearl, matte wrap, worn), glass, chrome, tyres, trim,
+alloy; dirt low on the body by wear and class; a water film and beads in
+rain (and on melting snow); the street's neon reflected in glossy parts
+after dark (`ND_CAR_NEON` scales it). The heat, focus and ghost views swap
+the paint for a stand-in copy with the effects off (`swap.rs`).

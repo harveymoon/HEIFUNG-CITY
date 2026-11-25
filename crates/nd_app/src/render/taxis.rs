@@ -72,11 +72,10 @@ pub(super) fn sync_taxis(mut commands: Commands, sim: Res<Sim>, assets: Res<Game
             }
         }
         let v = vr.variant(&mut meshes, &model, &assets.palette);
-        let finish = vr.finish_of(model.class);
         let pose = Transform::from_translation(Vec3::new(p.x, 0.05, p.y)).with_rotation(Quat::from_rotation_y(-heading));
-        let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, ParkedCabTag, Grounded)).id();
+        let body = v.spawn_body(&mut commands, vr.paint(), (pose, NotShadowCaster, ParkedCabTag, Grounded));
         // The roof sign and lamps: a cab waiting for a fare shows its light.
-        let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), pose, NotShadowCaster, NotShadowReceiver, ParkedCabTag, Grounded)).id();
+        let lights = v.spawn_lights(&mut commands, mats.glow(), (pose, NotShadowCaster, NotShadowReceiver, ParkedCabTag, Grounded));
         tr.cabs.insert(id, (at, [body, lights]));
     }
     let gone: Vec<nd_sim::taxi::CabId> = tr.cabs.keys().copied().filter(|id| !seen.contains(id)).collect();

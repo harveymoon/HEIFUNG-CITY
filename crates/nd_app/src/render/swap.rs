@@ -20,6 +20,7 @@ use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use super::focus::{self, Focus};
+use super::car_paint::CarPaintMaterial;
 use super::{heat, lights::WindowMaterial, BotTag, CarTag, CitizenTag, Lighting, Materials, Overlays, ParkedTag, ShipTag, TrainTag};
 
 /// Which view the city is drawn in.
@@ -106,6 +107,10 @@ pub(super) struct SwapOriginal(pub(super) Handle<StandardMaterial>);
 #[derive(Component)]
 pub(super) struct SwapOriginalWindow(pub(super) Handle<WindowMaterial>);
 
+/// [r17-cars] The car paint an entity wears outside the stand-in views.
+#[derive(Component)]
+pub(super) struct SwapOriginalPaint(pub(super) Handle<CarPaintMaterial>);
+
 /// How a stand-in is derived from its original.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Key {
@@ -123,6 +128,9 @@ pub(super) struct SwapState {
     stand_ins: HashSet<AssetId<StandardMaterial>>,
     windows: HashMap<(AssetId<WindowMaterial>, View), Handle<WindowMaterial>>,
     window_stand_ins: HashSet<AssetId<WindowMaterial>>,
+    /// [r17-cars] Car paint stand-ins by original and derivation.
+    paints: HashMap<(AssetId<CarPaintMaterial>, Key), Handle<CarPaintMaterial>>,
+    paint_stand_ins: HashSet<AssetId<CarPaintMaterial>>,
 }
 
 /// What an entity is, for heat (how hot) and the focus views (what lights up).
@@ -146,6 +154,8 @@ pub(super) fn swap_materials(
     mut window_materials: ResMut<Assets<WindowMaterial>>,
     mut q: Query<(Entity, &mut MeshMaterial3d<StandardMaterial>, Option<&SwapOriginal>, HeatTags, FocusTags, GhostTags)>,
     mut windows: Query<(Entity, &mut MeshMaterial3d<WindowMaterial>, Option<&SwapOriginalWindow>)>,
+    mut paint_mats: ResMut<Assets<CarPaintMaterial>>,
+    mut paints: Query<(Entity, &mut MeshMaterial3d<CarPaintMaterial>, Option<&SwapOriginalPaint>, HeatTags, FocusTags, GhostTags, Has<super::vehicles::CarDetail>)>,
 ) {
     let want = View::wanted(&overlays, &lighting, tools.as_deref().and_then(Ghost::wanted));
     let changed = want != state.active;
@@ -205,6 +215,67 @@ pub(super) fn swap_materials(
         }
         if orig.is_none_or(|o| o.0 != original) {
             commands.entity(e).insert(SwapOriginal(original));
+        }
+    }
+    // [r17-cars] Vehicle bodies in the car paint: a stand-in is the paint
+    // with the stand-in of its base and the paint's effects off. A near
+    // model counts as its car.
+    for (e, mut mat, orig, mut heat_tags, mut focus_tags, ghost_tags, detail) in &mut paints {
+        if !changed && !mat.is_changed() {
+            continue;
+        }
+        if detail {
+            heat_tags.0 = true;
+            focus_tags.0 = true;
+        }
+        let showing_stand_in = state.paint_stand_ins.contains(&mat.0.id());
+        let original = if showing_stand_in {
+            match orig {
+                Some(o) => o.0.clone(),
+                None => continue,
+            }
+        } else {
+            mat.0.clone()
+        };
+        let id = original.id();
+        let base = paint_mats.get(id).map(|m| m.base.clone());
+        let key = match (want, base.as_ref()) {
+            (View::Normal, _) | (_, None) => None,
+            (View::Heat, Some(o)) => Some(Key::Heat(heat::class_of(o, heat::temperature(heat_tags)))),
+            (View::Focus(f), Some(o)) => focus::classify(f, focus_tags, heat_tags.1, false, o).map(Key::Focus),
+            (View::Ghost(g), Some(_)) => g.ghosts(ghost_tags).then_some(Key::Ghost),
+        };
+        let Some(key) = key else {
+            if showing_stand_in {
+                mat.0 = original;
+            }
+            if orig.is_some() {
+                commands.entity(e).remove::<SwapOriginalPaint>();
+            }
+            continue;
+        };
+        let handle = match state.paints.get(&(id, key)) {
+            Some(h) => h.clone(),
+            None => {
+                let Some(o) = paint_mats.get(id) else { continue };
+                let mut m = o.clone();
+                m.base = match key {
+                    Key::Heat(c) => heat::stand_in(&o.base, c),
+                    Key::Focus(c) => focus::stand_in(&o.base, c),
+                    Key::Ghost => ghost_of(&o.base),
+                };
+                m.extension.params.look.z = 1.0;
+                let h = paint_mats.add(m);
+                state.paint_stand_ins.insert(h.id());
+                state.paints.insert((id, key), h.clone());
+                h
+            }
+        };
+        if mat.0 != handle {
+            mat.0 = handle;
+        }
+        if orig.is_none_or(|o| o.0 != original) {
+            commands.entity(e).insert(SwapOriginalPaint(original));
         }
     }
     let window_k = match want {
@@ -296,7 +367,7 @@ mod tests {
     fn views_restore_the_originals() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins).add_plugins(AssetPlugin::default());
-        app.init_asset::<StandardMaterial>().init_asset::<WindowMaterial>().init_asset::<Image>();
+        app.init_asset::<StandardMaterial>().init_asset::<WindowMaterial>().init_asset::<CarPaintMaterial>().init_asset::<Image>();
         app.init_resource::<Lighting>().init_resource::<Overlays>().init_resource::<SwapState>();
         let (red, car_paint, overlay) = {
             let mut m = app.world_mut().resource_mut::<Assets<StandardMaterial>>();

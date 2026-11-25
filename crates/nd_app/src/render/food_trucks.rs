@@ -48,8 +48,8 @@ pub(super) fn sync_food_trucks(mut commands: Commands, sim: Res<Sim>, assets: Re
         let finish = vr.finish_of(model.class);
         let pose = Transform::from_translation(Vec3::new(p.x, 0.05, p.y)).with_rotation(Quat::from_rotation_y(-heading));
         let mut es = vec![
-            commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish.clone()), pose, NotShadowCaster, FoodTruckTag, Grounded)).id(),
-            commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), pose, NotShadowCaster, NotShadowReceiver, FoodTruckTag, Grounded)).id(),
+            v.spawn_body(&mut commands, vr.paint(), (pose, NotShadowCaster, FoodTruckTag, Grounded)),
+            v.spawn_lights(&mut commands, mats.glow(), (pose, NotShadowCaster, NotShadowReceiver, FoodTruckTag, Grounded)),
         ];
         if open {
             let k = kind as u8;

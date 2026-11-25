@@ -17,6 +17,126 @@ pub(super) struct VariantMeshes {
     pub(super) body: Handle<Mesh>,
     pub(super) lights: Handle<Mesh>,
     pub(super) fx: Option<Handle<Mesh>>,
+    /// [r17-cars] Triangles of the far body and lights.
+    pub(super) tris: (u32, u32),
+    /// [r17-cars] The near model (body, lights, their triangles), drawn
+    /// within [`near_range`] of the camera instead of the far one.
+    pub(super) near: Option<NearMeshes>,
+}
+
+#[derive(Clone)]
+pub(super) struct NearMeshes {
+    pub(super) body: Handle<Mesh>,
+    pub(super) lights: Handle<Mesh>,
+    pub(super) tris: (u32, u32),
+}
+
+// ── [r17-cars] level of detail ──────────────────────────────────────────────
+
+/// The near model's detail step: `ND_CAR_DETAIL` (0 = far model
+/// everywhere, 1..=4 the ladder), else the step the frame-cost
+/// measurements chose (todo.md, r17-cars).
+pub(super) fn near_step() -> nd_procgen::vehicles::NearDetail {
+    let d = std::env::var("ND_CAR_DETAIL").ok().and_then(|v| v.parse::<u8>().ok()).unwrap_or(NEAR_STEP_DEFAULT);
+    nd_procgen::vehicles::NearDetail(d.min(nd_procgen::vehicles::NearDetail::MAX))
+}
+
+/// The step in use unless `ND_CAR_DETAIL` says otherwise.
+pub(super) const NEAR_STEP_DEFAULT: u8 = 3;
+
+/// Distance (m) from the camera where the near model hands over to the far
+/// one: the two cross-fade (dithered) over the last fifth, so neither pops.
+/// `ND_CAR_NEAR_M` overrides it (dev).
+pub(super) fn near_range() -> std::ops::Range<f32> {
+    let m = std::env::var("ND_CAR_NEAR_M").ok().and_then(|v| v.parse::<f32>().ok()).map_or(90.0, |m| m.clamp(5.0, 1000.0));
+    (m * 0.8)..m
+}
+
+/// The far model's range: drawn from where the near one fades out.
+pub(super) fn far_visibility() -> VisibilityRange {
+    VisibilityRange { start_margin: near_range(), end_margin: f32::MAX..f32::MAX, use_aabb: false }
+}
+
+/// The near model's range: up to the hand-over.
+pub(super) fn near_visibility() -> VisibilityRange {
+    VisibilityRange { start_margin: 0.0..0.0, end_margin: near_range(), use_aabb: false }
+}
+
+/// A far vehicle model (its triangles), for the draw counts.
+#[derive(Component)]
+pub(crate) struct CarFar(pub u32);
+
+/// [r17-cars] The near model of a vehicle: a child of its far model's
+/// entity (it moves, hides and goes with it), shown near the camera.
+#[derive(Component)]
+pub(crate) struct CarDetail(pub u32);
+
+/// Spawn a vehicle part (body or lights) with `bundle`: the far mesh, and
+/// when there is a near one, the near mesh as its child, the two cross-
+/// faded by distance from the camera.
+pub(super) fn spawn_lod<M: Component + Clone>(commands: &mut Commands, far: (Handle<Mesh>, u32), near: Option<(Handle<Mesh>, u32)>, mat: M, lit: bool, bundle: impl Bundle) -> Entity {
+    let e = commands.spawn((Mesh3d(far.0), mat.clone(), CarFar(far.1), bundle)).id();
+    if let Some((mesh, tris)) = near {
+        commands.entity(e).insert(far_visibility());
+        let c = commands.spawn((Mesh3d(mesh), mat, Transform::IDENTITY, NotShadowCaster, near_visibility(), CarDetail(tris), ChildOf(e))).id();
+        if !lit {
+            commands.entity(c).insert(NotShadowReceiver);
+        }
+    }
+    e
+}
+
+impl VariantMeshes {
+    /// Spawn this variant's body in `paint` with `bundle`.
+    pub(super) fn spawn_body(&self, commands: &mut Commands, paint: Handle<super::car_paint::CarPaintMaterial>, bundle: impl Bundle) -> Entity {
+        spawn_lod(commands, (self.body.clone(), self.tris.0), self.near.as_ref().map(|n| (n.body.clone(), n.tris.0)), MeshMaterial3d(paint), true, bundle)
+    }
+
+    /// Spawn this variant's lamps in the glow with `bundle`.
+    pub(super) fn spawn_lights(&self, commands: &mut Commands, glow: Handle<StandardMaterial>, bundle: impl Bundle) -> Entity {
+        spawn_lod(commands, (self.lights.clone(), self.tris.1), self.near.as_ref().map(|n| (n.lights.clone(), n.tris.1)), MeshMaterial3d(glow), false, bundle)
+    }
+}
+
+/// [r17-cars] Vehicles drawn last frame, for `status.render.vehicles`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct VehicleDrawStats {
+    /// Body and lamp entities drawn, far and near models.
+    pub far: usize,
+    pub near: usize,
+    /// Their triangles.
+    pub far_triangles: usize,
+    pub near_triangles: usize,
+    /// Distinct meshes among them (what Bevy batches by: the vehicles'
+    /// share of the draw calls).
+    pub meshes: usize,
+    pub step: u8,
+}
+
+/// Count the vehicle models the camera drew last frame (every 10 frames).
+pub(super) fn vehicle_draw_stats(far: Query<(&CarFar, &ViewVisibility, &Mesh3d)>, near: Query<(&CarDetail, &ViewVisibility, &Mesh3d)>, mut stats: ResMut<RenderStats>, mut frame: Local<u32>) {
+    *frame += 1;
+    if *frame % 10 != 0 {
+        return;
+    }
+    let mut s = VehicleDrawStats { step: near_step().0, ..Default::default() };
+    let mut ids = std::collections::HashSet::new();
+    for (t, v, m) in &far {
+        if v.get() {
+            s.far += 1;
+            s.far_triangles += t.0 as usize;
+            ids.insert(m.0.id());
+        }
+    }
+    for (t, v, m) in &near {
+        if v.get() {
+            s.near += 1;
+            s.near_triangles += t.0 as usize;
+            ids.insert(m.0.id());
+        }
+    }
+    s.meshes = ids.len();
+    stats.vehicles = s;
 }
 
 /// Vehicle drawing state: the variant cache, the materials, and the
@@ -25,6 +145,8 @@ pub(super) struct VariantMeshes {
 #[derive(Resource, Default)]
 pub(super) struct VehicleRender {
     pub(super) variants: HashMap<nd_sim::VehicleModel, VariantMeshes>,
+    /// [r17-cars] The one paint every vehicle body wears (`car_paint`).
+    pub(super) paint: Option<Handle<super::car_paint::CarPaintMaterial>>,
     /// Paint finish by class: cheap (rough), mid, expensive (glossy).
     pub(super) finish: Vec<Handle<StandardMaterial>>,
     /// Additive, unlit: underglow and light trails; scaled by night.
@@ -49,6 +171,11 @@ pub(super) struct VehicleRender {
 impl VehicleRender {
     /// [fix/review-app] The paint for a car class, without indexing past
     /// the list (a new `VehicleClass` would have panicked here).
+    /// [r17-cars] The shared car paint.
+    pub(super) fn paint(&self) -> Handle<super::car_paint::CarPaintMaterial> {
+        self.paint.clone().unwrap_or_default()
+    }
+
     pub(super) fn finish_of(&self, class: nd_sim::vehicle::VehicleClass) -> Handle<StandardMaterial> {
         self.finish.get(class as usize).or(self.finish.first()).cloned().unwrap_or_default()
     }
@@ -83,7 +210,10 @@ impl VehicleRender {
             .entry(key)
             .or_insert_with(|| {
                 let v = nd_procgen::vehicles::vehicle_mesh_with(&key, pal);
-                VariantMeshes { body: meshes.add(shared_mesh(&v.body, true)), lights: meshes.add(shared_mesh(&v.lights, false)), fx: (!v.fx.is_empty()).then(|| meshes.add(shared_mesh(&v.fx, false))) }
+                let tris = |m: &MeshData| (m.indices.len() / 3) as u32;
+                // [r17-cars] And its near model.
+                let near = nd_procgen::vehicles::vehicle_mesh_near(&key, pal, near_step()).map(|n| NearMeshes { body: meshes.add(shared_mesh(&n.body, false)), lights: meshes.add(shared_mesh(&n.lights, false)), tris: (tris(&n.body), tris(&n.lights)) });
+                VariantMeshes { body: meshes.add(shared_mesh(&v.body, false)), lights: meshes.add(shared_mesh(&v.lights, false)), fx: (!v.fx.is_empty()).then(|| meshes.add(shared_mesh(&v.fx, false))), tris: (tris(&v.body), tris(&v.lights)), near }
             })
             .clone()
     }
@@ -207,7 +337,7 @@ pub(super) fn sync_cars(
             }
             let model = car_model(car);
             let v = vr.variant(&mut meshes, &model, &assets.palette);
-            let finish = vr.finish_of(model.class);
+            let paint = vr.paint();
             // [carlife] Spawned where the car is. Entities spawned through
             // `Commands` are not in this frame's query below, so a car
             // spawned at the identity transform was drawn for one frame at
@@ -218,8 +348,8 @@ pub(super) fn sync_cars(
                 None => car_pose(car, f, &sim.world),
             };
             let tunnel = sim.world.car_in_tunnel(car);
-            let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, CarTag, SelfLifted, InTunnel(tunnel))).id();
-            let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), pose, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted, InTunnel(tunnel))).id();
+            let body = v.spawn_body(&mut commands, paint, (pose, NotShadowCaster, CarTag, SelfLifted, InTunnel(tunnel)));
+            let lights = v.spawn_lights(&mut commands, mats.glow(), (pose, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted, InTunnel(tunnel)));
             state.cars.insert(id, [body, lights]);
             vr.models.insert(id, model);
             vr.truck_boxes.remove(&id);

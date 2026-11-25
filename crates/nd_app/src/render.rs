@@ -154,6 +154,8 @@ mod airlift;
 mod reset;
 mod citizens;
 mod vehicles;
+// [r17-cars] One paint material for every vehicle body.
+mod car_paint;
 /// [r5-drive] The player's car in Drive mode.
 mod drive_car;
 mod parked;
@@ -468,6 +470,9 @@ pub struct RenderStats {
     /// distance band (`VisibilityRange`: the close-up detail).
     pub visible_meshes: usize,
     pub visible_detail_meshes: usize,
+    /// [r17-cars] Vehicles drawn last frame: far and near models,
+    /// their triangles, and the distinct meshes among them (batches).
+    pub vehicles: vehicles::VehicleDrawStats,
 }
 
 /// [r10-chunk-hitch] What redrew building chunks and what it cost, counted
@@ -600,6 +605,10 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, animate_cranes.after(sync_buildings).in_set(SimSet::Sync));
         app.add_systems(Update, buildings::detail_stats.after(sync_buildings).in_set(SimSet::Sync));
         app.add_systems(Update, buildings::mesh_stats);
+        // [r17-cars] The car paint, its night and rain, and the vehicles' draw counts.
+        app.add_plugins(MaterialPlugin::<car_paint::CarPaintMaterial>::default());
+        app.add_systems(Startup, (car_paint::add_shader, car_paint::setup_car_paint));
+        app.add_systems(Update, (car_paint::sync_car_paint, vehicles::vehicle_draw_stats));
         app.add_systems(Update, games::sync_game_days.after(sync_buildings).in_set(SimSet::Sync));
         app.add_systems(Update, airlift::sync_airlifts.in_set(SimSet::Sync));
         app.add_plugins(heat::HeatPlugin);

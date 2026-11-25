@@ -27,7 +27,12 @@ use glam::{Vec2, Vec3};
 use nd_sim::vehicle::{BodyType, Livery, VehicleClass, VehicleModel, PAINTS};
 use rand::{Rng, SeedableRng};
 
-/// Most triangles any variant may have (body, lights and fx together).
+#[path = "vehicle_near.rs"]
+mod near;
+pub use near::{dirt_of, finish, kind, paint_finish, part_kind, NearDetail};
+
+/// Most triangles any far variant may have (body, lights and fx together).
+/// [r17-cars] The near model's budget is its step's ([`NearDetail::budget`]).
 pub const TRI_BUDGET: usize = 600;
 
 /// The meshes of one vehicle variant, in its own frame.
@@ -258,7 +263,24 @@ pub fn vehicle_mesh(model: &VehicleModel) -> VehicleMesh {
 pub fn vehicle_mesh_with(model: &VehicleModel, pal: &Palette) -> VehicleMesh {
     let m = variant_key(model);
     let paint = at(&pal.vehicle_paint, m.paint as usize);
-    build(&m, paint, true, pal)
+    build(&m, paint, true, pal, None)
+}
+
+/// [r17-cars] Whether a body has a near model (everything on wheels;
+/// robots and aircraft stay as they are).
+pub fn has_near(body: BodyType) -> bool {
+    body != BodyType::DeliveryBot && !body.flies()
+}
+
+/// [r17-cars] The near model of a variant at detail step `d` (`None` for a
+/// body without one, or step 0).
+pub fn vehicle_mesh_near(model: &VehicleModel, pal: &Palette, d: NearDetail) -> Option<VehicleMesh> {
+    let m = variant_key(model);
+    if !has_near(m.body) || d.0 == 0 {
+        return None;
+    }
+    let paint = at(&pal.vehicle_paint, m.paint as usize);
+    Some(build(&m, paint, true, pal, Some(d)))
 }
 
 // ── builder ─────────────────────────────────────────────────────────────────
@@ -273,6 +295,11 @@ struct B<'a> {
     fx: MeshData,
     rng: rand_chacha::ChaCha8Rng,
     detail: bool,
+    /// [r17-cars] The near model's detail step (`None`: the far model).
+    near: Option<NearDetail>,
+    /// [r17-cars] A near car's skin: side panels and stripes are laid on
+    /// it rather than as flat decals at `|z| = hw`.
+    loft: Option<near::Loft>,
 }
 
 impl B<'_> {
@@ -287,12 +314,20 @@ impl B<'_> {
 
     /// The same panel on both flanks at `|z| = hw`.
     fn sides(&mut self, x: f32, y: f32, hw: f32, w: f32, h: f32, col: [f32; 3]) {
+        if let Some(l) = &self.loft {
+            l.side_rect(&mut self.body, x - w * 0.5, x + w * 0.5, y - h * 0.5, y + h * 0.5, 0.005, col);
+            return;
+        }
         for s in [-1.0f32, 1.0] {
             self.body.decal(Vec3::new(x, y, s * (hw + 0.012)), Vec3::X, Vec3::Y, w, h, Vec3::Z * s, c4(col));
         }
     }
 
     fn lit_sides(&mut self, x: f32, y: f32, hw: f32, w: f32, h: f32, col: [f32; 3]) {
+        if let Some(l) = &self.loft {
+            l.side_rect(&mut self.lights, x - w * 0.5, x + w * 0.5, y - h * 0.5, y + h * 0.5, 0.009, col);
+            return;
+        }
         for s in [-1.0f32, 1.0] {
             self.lights.decal(Vec3::new(x, y, s * (hw + 0.02)), Vec3::X, Vec3::Y, w, h, Vec3::Z * s, c4(col));
         }
@@ -314,6 +349,18 @@ impl B<'_> {
         if !self.detail {
             // Parked at low detail: one dark block per axle.
             self.body.boxed(Vec3::new(x, r * 0.9, 0.0), Vec3::new(r * 1.8, r * 1.8, hw * 2.0), 0.0, c4(TYRE));
+            return;
+        }
+        if let Some(d) = self.near {
+            // [r17-cars] Turned tyres and rims.
+            let rim = match self.m.class {
+                VehicleClass::Cheap => near::Rim::Cap,
+                VehicleClass::Mid => near::Rim::Spokes(near::STEEL, 6),
+                VehicleClass::Expensive => near::Rim::Spokes(near::ALLOY, 8),
+            };
+            for s in [-1.0f32, 1.0] {
+                near::wheel(&mut self.body, d, x, r, s * hw, w, rim, None);
+            }
             return;
         }
         let sides = 8;
@@ -373,7 +420,7 @@ fn slope_quad(mesh: &mut MeshData, p0: (f32, f32), p1: (f32, f32), hw: f32, col:
     mesh.quad_facing([a, b, c, e], Vec3::new(out.x, out.y, 0.0), c4(col));
 }
 
-fn build(m: &VehicleModel, paint: [f32; 3], detail: bool, pal: &Palette) -> VehicleMesh {
+fn build(m: &VehicleModel, paint: [f32; 3], detail: bool, pal: &Palette, near: Option<NearDetail>) -> VehicleMesh {
     let seed = {
         let mut h = nd_sim::hash::Fnv::default();
         for v in [m.body as u64, m.class as u64, m.wear as u64, m.tuned as u64, livery_code(m.livery), m.paint as u64] {
@@ -381,7 +428,7 @@ fn build(m: &VehicleModel, paint: [f32; 3], detail: bool, pal: &Palette) -> Vehi
         }
         h.0
     };
-    let mut b = B { m, pal, body: MeshData::default(), lights: MeshData::default(), fx: MeshData::default(), rng: rand_chacha::ChaCha8Rng::seed_from_u64(seed), detail };
+    let mut b = B { m, pal, body: MeshData::default(), lights: MeshData::default(), fx: MeshData::default(), rng: rand_chacha::ChaCha8Rng::seed_from_u64(seed), detail, near, loft: None };
     // Body colour: livery first, else paint, dulled by wear.
     let livery = livery_colors(m.livery, m.paint, pal);
     let mut col = livery.map(|l| l.0).unwrap_or(paint);
@@ -391,7 +438,10 @@ fn build(m: &VehicleModel, paint: [f32; 3], detail: bool, pal: &Palette) -> Vehi
         col = mix(col, [0.3, 0.29, 0.27], 0.12);
     }
     match m.body {
-        BodyType::Hatchback | BodyType::Sedan | BodyType::Coupe | BodyType::Suv | BodyType::Pickup => car(&mut b, col),
+        BodyType::Hatchback | BodyType::Sedan | BodyType::Coupe | BodyType::Suv | BodyType::Pickup => match near {
+            Some(d) => near::car_near(&mut b, col, d),
+            None => car(&mut b, col),
+        },
         BodyType::CyberTruck => cyber_truck(&mut b, col),
         BodyType::DeliveryVan => delivery_van(&mut b, col),
         BodyType::BoxVan | BodyType::PanelTruck => box_truck(&mut b, col),
@@ -417,52 +467,94 @@ fn build(m: &VehicleModel, paint: [f32; 3], detail: bool, pal: &Palette) -> Vehi
             livery_marks(&mut b, accent, sign);
         }
     }
-    VehicleMesh { body: b.body, lights: b.lights, fx: b.fx }
+    // [r17-cars] Every part tagged for the paint shader.
+    let mut body = b.body;
+    near::tag_parts(&mut body, m, pal);
+    VehicleMesh { body, lights: b.lights, fx: b.fx }
 }
 
 // ── cars ────────────────────────────────────────────────────────────────────
 
+/// [r17-cars] A car's main dimensions, shared by the far and near models
+/// so the two line up (roof, belt, wheels).
+#[derive(Clone, Copy, Debug)]
+struct CarDims {
+    len: f32,
+    fx: f32,
+    rx: f32,
+    hw: f32,
+    /// Class: 0 cheap, 0.5 mid, 1 expensive.
+    k: f32,
+    tall: bool,
+    sill: f32,
+    belt: f32,
+    hood: f32,
+    roof: f32,
+    nose: f32,
+    cab_f: f32,
+    roof_f: f32,
+    cab_r: f32,
+    roof_r: f32,
+    rear_top: f32,
+    /// Wheel radius, tyre width, the tyres' outer faces, the axles.
+    r: f32,
+    ww: f32,
+    whw: f32,
+    ax_f: f32,
+    ax_r: f32,
+}
+
+impl CarDims {
+    fn of(m: &VehicleModel) -> CarDims {
+        let k = match m.class {
+            VehicleClass::Cheap => 0.0,
+            VehicleClass::Mid => 0.5,
+            VehicleClass::Expensive => 1.0,
+        };
+        let len = body_length(m.body);
+        let (fx, rx) = (len * 0.5, -len * 0.5);
+        let mut hw = match m.body {
+            BodyType::Hatchback => 0.84,
+            BodyType::Suv | BodyType::Pickup => 0.97,
+            BodyType::Coupe => 0.93,
+            _ => 0.89,
+        };
+        // Cheap: taller and boxier; expensive: lower and raked.
+        let tall = matches!(m.body, BodyType::Suv | BodyType::Pickup);
+        let sill = if tall { 0.42 } else { 0.28 - 0.04 * k };
+        let belt = if tall { 1.12 } else { 0.92 - 0.12 * k } + if m.body == BodyType::Coupe { -0.08 } else { 0.0 };
+        let hood = belt - 0.06 - 0.08 * k;
+        let roof = match m.body {
+            BodyType::Suv | BodyType::Pickup => 1.82,
+            BodyType::Coupe => 1.22,
+            _ => 1.5 - 0.12 * k,
+        };
+        let nose = 0.05 + 0.35 * k; // how far the hood line sweeps back
+        let (cab_f, roof_f) = match m.body {
+            BodyType::Pickup => (1.05, 0.35),
+            _ => (fx - 1.55 - 0.1 * k, fx - 2.45 - 0.35 * k + if m.body == BodyType::Hatchback { 0.45 } else { 0.0 }),
+        };
+        let (cab_r, roof_r) = match m.body {
+            BodyType::Hatchback => (rx + 0.08, rx + 0.28 + 0.1 * k),
+            BodyType::Sedan => (rx + 0.85 - 0.1 * k, rx + 1.35 + 0.05 * k),
+            BodyType::Coupe => (rx + 0.45, rx + 1.6),
+            BodyType::Suv => (rx + 0.06, rx + 0.18),
+            _ => (-0.75, -0.65), // pickup cab
+        };
+        let rear_top = if matches!(m.body, BodyType::Sedan | BodyType::Coupe) { belt - 0.02 } else { belt };
+        if m.wear >= 2 {
+            hw -= 0.02;
+        }
+        let r = if tall { 0.4 } else { 0.32 + 0.03 * k };
+        let (ww, whw) = if m.tuned { (0.34, hw + 0.08) } else { (0.24, hw + 0.01) };
+        let ax = len * 0.5 - 0.85 - if tall { 0.1 } else { 0.0 };
+        CarDims { len, fx, rx, hw, k, tall, sill, belt, hood, roof, nose, cab_f, roof_f, cab_r, roof_r, rear_top, r, ww, whw, ax_f: ax, ax_r: -ax + 0.05 }
+    }
+}
+
 fn car(b: &mut B, col: [f32; 3]) {
     let m = *b.m;
-    let k = match m.class {
-        VehicleClass::Cheap => 0.0,
-        VehicleClass::Mid => 0.5,
-        VehicleClass::Expensive => 1.0,
-    };
-    let len = body_length(m.body);
-    let (fx, rx) = (len * 0.5, -len * 0.5);
-    let mut hw = match m.body {
-        BodyType::Hatchback => 0.84,
-        BodyType::Suv | BodyType::Pickup => 0.97,
-        BodyType::Coupe => 0.93,
-        _ => 0.89,
-    };
-    // Cheap: taller and boxier; expensive: lower and raked.
-    let tall = matches!(m.body, BodyType::Suv | BodyType::Pickup);
-    let sill = if tall { 0.42 } else { 0.28 - 0.04 * k };
-    let belt = if tall { 1.12 } else { 0.92 - 0.12 * k } + if m.body == BodyType::Coupe { -0.08 } else { 0.0 };
-    let hood = belt - 0.06 - 0.08 * k;
-    let roof = match m.body {
-        BodyType::Suv | BodyType::Pickup => 1.82,
-        BodyType::Coupe => 1.22,
-        _ => 1.5 - 0.12 * k,
-    };
-    let nose = 0.05 + 0.35 * k; // how far the hood line sweeps back
-    let (cab_f, roof_f) = match m.body {
-        BodyType::Pickup => (1.05, 0.35),
-        _ => (fx - 1.55 - 0.1 * k, fx - 2.45 - 0.35 * k + if m.body == BodyType::Hatchback { 0.45 } else { 0.0 }),
-    };
-    let (cab_r, roof_r) = match m.body {
-        BodyType::Hatchback => (rx + 0.08, rx + 0.28 + 0.1 * k),
-        BodyType::Sedan => (rx + 0.85 - 0.1 * k, rx + 1.35 + 0.05 * k),
-        BodyType::Coupe => (rx + 0.45, rx + 1.6),
-        BodyType::Suv => (rx + 0.06, rx + 0.18),
-        _ => (-0.75, -0.65), // pickup cab
-    };
-    let rear_top = if matches!(m.body, BodyType::Sedan | BodyType::Coupe) { belt - 0.02 } else { belt };
-    if m.wear >= 2 {
-        hw -= 0.02;
-    }
+    let CarDims { len, fx, rx, hw, k, sill, belt, hood, roof, nose, cab_f, roof_f, cab_r, roof_r, rear_top, .. } = CarDims::of(&m);
     // Lower body.
     let lower = [(rx, sill), (fx, sill), (fx + 0.03 - 0.1 * k, sill + (hood - sill) * 0.5), (fx - nose, hood), (cab_f, belt), (rx + 0.1, rear_top), (rx - 0.02, sill + (belt - sill) * 0.55)];
     b.ext(&lower, hw, col);
@@ -485,11 +577,9 @@ fn car(b: &mut B, col: [f32; 3]) {
         b.bx(((rx + cab_r) * 0.5, belt + 0.02, 0.0), (cab_r - rx - 0.2, 0.04, hw * 2.0 - 0.2), TRIM);
     }
     // Wheels.
-    let r = if tall { 0.4 } else { 0.32 + 0.03 * k };
-    let (ww, whw) = if m.tuned { (0.34, hw + 0.08) } else { (0.24, hw + 0.01) };
-    let ax = len * 0.5 - 0.85 - if tall { 0.1 } else { 0.0 };
-    b.axle(ax, whw, r, ww);
-    b.axle(-ax + 0.05, whw, r, ww);
+    let CarDims { r, ww, whw, ax_f, ax_r, .. } = CarDims::of(&m);
+    b.axle(ax_f, whw, r, ww);
+    b.axle(ax_r, whw, r, ww);
     // Bumpers: black plastic on cheap cars, body colour otherwise.
     let bumper = if m.class == VehicleClass::Cheap { TRIM } else { mul(col, 0.9) };
     let by = sill + 0.12;
@@ -584,6 +674,10 @@ fn delivery_van(b: &mut B, col: [f32; 3]) {
     // Rear doors split line.
     b.lamp(rx - 0.005, 1.45, 0.0, 0.03, 1.8, -1.0, mul(col, 0.4));
     b.wear_marks(rx + 0.3, fx - 0.5, 0.5, 2.0, hw);
+    if b.near.is_some() {
+        near::cab_face(b, fx + 0.035, 0.66, 0.45, 0.16);
+        near::cab_mirrors(b, fx - 1.0, 1.75, hw, 0.26);
+    }
 }
 
 /// Box van (cab and a box) and panel truck (longer, ribbed, roller door).
@@ -624,6 +718,10 @@ fn box_truck(b: &mut B, col: [f32; 3]) {
     b.lamps(rx, 0.95, hw - 0.15, 0.25, 0.15, -1.0, TAIL);
     b.lamps(rx, top - 0.1, hw - 0.1, 0.08, 0.08, -1.0, AMBER);
     b.wear_marks(rx + 0.3, cr - 0.3, 1.0, top - 0.3, hw);
+    if b.near.is_some() {
+        near::cab_face(b, fx + 0.03, 0.82, 0.55, 0.26);
+        near::cab_mirrors(b, fx - 0.4, 1.85, hw - 0.05, 0.38);
+    }
 }
 
 
@@ -638,6 +736,10 @@ fn site_cab(b: &mut B, fx: f32, hw: f32, col: [f32; 3]) -> f32 {
     slope_quad(&mut b.body, (fx - 0.27, 1.5), (fx - 0.53, 2.33), hw - 0.12, GLASS);
     b.sides(fx - 0.95, 1.85, hw - 0.05, 0.7, 0.6, GLASS);
     b.lamps(fx + 0.02, 1.0, hw - 0.25, 0.3, 0.16, 1.0, HEAD);
+    if b.near.is_some() {
+        near::cab_face(b, fx + 0.03, 0.82, 0.55, 0.26);
+        near::cab_mirrors(b, fx - 0.4, 1.85, hw - 0.05, 0.38);
+    }
     cr
 }
 
@@ -966,6 +1068,10 @@ fn semi(b: &mut B, col: [f32; 3]) {
     b.axle(tr + 1.1, hw, r, 0.3);
     b.lamps(fx + 0.05, 1.0, hw - 0.3, 0.32, 0.16, 1.0, HEAD);
     b.lamps(fx + 0.02, 3.2, hw - 0.3, 0.1, 0.06, 1.0, AMBER);
+    if b.near.is_some() {
+        near::cab_face(b, fx + 0.05, 1.2, 0.75, 0.55);
+        near::cab_mirrors(b, fx - 0.1, 2.2, hw - 0.05, 0.45);
+    }
     match nd_sim::vehicle::chassis_of(m.boxed) {
         Some(forty) => skeletal_chassis(b, rx, if forty { CHASSIS_40_LEN } else { CHASSIS_20_LEN }, forty),
         None => curtain_trailer(b, rx, tr + 0.9, col),
@@ -1147,6 +1253,10 @@ fn garbage_truck(b: &mut B, col: [f32; 3]) {
     b.lamps(fx - 0.6, 2.85, 0.4, 0.2, 0.12, 1.0, AMBER);
     b.lamps(rx, 1.0, hw - 0.2, 0.25, 0.25, -1.0, TAIL);
     b.wear_marks(rx + 1.0, cr - 0.3, 1.0, 3.0, hw);
+    if b.near.is_some() {
+        near::cab_face(b, fx + 0.05, 1.15, 0.7, 0.4);
+        near::cab_mirrors(b, fx - 0.15, 2.0, hw - 0.05, 0.42);
+    }
 }
 
 // ── buses ───────────────────────────────────────────────────────────────────
@@ -1249,7 +1359,15 @@ fn bike(b: &mut B, col: [f32; 3]) {
     let r = if scooter { 0.22 } else { 0.32 };
     let wheel = |b: &mut B, x: f32| {
         // 14 sides: an 8-sided wheel reads as a nut close up. [round-wheels]
-        b.body.pipe(Vec2::new(x, 0.0), Vec2::Y, 0.12, r, r, 14, c4(TYRE));
+        // [r17-cars] Rounder near, with a rim on each side.
+        let sides = if b.near.is_some() { 22 } else { 14 };
+        b.body.pipe(Vec2::new(x, 0.0), Vec2::Y, 0.12, r, r, sides, c4(TYRE));
+        if b.near.is_some() {
+            for s in [-1.0f32, 1.0] {
+                let ring = MeshData::ngon(Vec2::new(x, r), r * 0.7, 16, 0.0, 0.0).into_iter().map(|p| Vec3::new(p.x, p.z, s * 0.062)).collect::<Vec<_>>();
+                b.body.cap(&ring, Vec3::Z * s, c4(near::ALLOY));
+            }
+        }
     };
     wheel(b, fx - r);
     wheel(b, rx + r);
@@ -1294,7 +1412,7 @@ fn akira(b: &mut B) {
     let (fx, rx) = (len * 0.5, -len * 0.5);
     let r = 0.36;
     for x in [fx - 0.45, rx + 0.42] {
-        b.body.pipe(Vec2::new(x, 0.0), Vec2::Y, 0.22, r, r, 10, c4(TYRE));
+        b.body.pipe(Vec2::new(x, 0.0), Vec2::Y, 0.22, r, r, if b.near.is_some() { 22 } else { 10 }, c4(TYRE));
         for s in [-1.0f32, 1.0] {
             b.body.decal(Vec3::new(x, r, s * 0.115), Vec3::X, Vec3::Y, 0.5, 0.5, Vec3::Z * s, c4(red));
         }
@@ -1761,7 +1879,7 @@ pub fn draw_parked(g: &mut Geometry, pal: &Palette, rng: &mut impl Rng, at: Vec2
     };
     let model = VehicleModel { class, body, wear, tuned: false, livery, paint: rng.random_range(0..PAINTS), boxed: 0 };
     let paint = if kind == Parked::Wreck { mix(color, pal.rust, 0.5) } else { color };
-    let v = build(&model, paint, false, pal);
+    let v = build(&model, paint, false, pal, None);
     let surface = if kind == Parked::Wreck { Surface::Rust } else { Surface::Metal };
     let (s, c) = yaw.sin_cos();
     let xf = |p: [f32; 3]| -> [f32; 3] { [at.x + p[0] * c - p[2] * s, y + p[1], at.y + p[0] * s + p[2] * c] };
@@ -1820,11 +1938,82 @@ mod tests {
         eprintln!("heaviest variant: {} triangles, {}", worst.0, worst.1);
     }
 
+    /// [r17-cars] Every near variant at every step is finite, under its
+    /// step's budget, on the ground, within the far model's length and
+    /// about its height (the sim's drawn lengths hold; no pop in size).
+    #[test]
+    fn near_variants_are_finite_under_budget_and_match_the_far_size() {
+        let pal = Palette::default();
+        for step in 1..=NearDetail::MAX {
+            let d = NearDetail(step);
+            let mut worst = (0, String::new());
+            for m in catalogue() {
+                let Some(v) = vehicle_mesh_near(&m, &pal, d) else {
+                    assert!(!has_near(m.body), "{m:?} has no near model");
+                    continue;
+                };
+                let t = v.triangles();
+                assert!(t <= d.budget(), "step {step}: {m:?} has {t} triangles, budget {}", d.budget());
+                if t > worst.0 {
+                    worst = (t, format!("{m:?}"));
+                }
+                for mesh in [&v.body, &v.lights, &v.fx] {
+                    assert!(mesh.positions.iter().flatten().all(|x| x.is_finite()), "{m:?} has a non-finite vertex");
+                    assert!(mesh.normals.iter().flatten().all(|x| x.is_finite()), "{m:?} has a non-finite normal");
+                    assert!(mesh.indices.iter().all(|&i| (i as usize) < mesh.positions.len()));
+                    assert_eq!(mesh.positions.len(), mesh.colors.len());
+                }
+                assert_eq!(v.body.uvs.len(), v.body.positions.len());
+                assert_eq!(v.body.aux.len(), v.body.positions.len());
+                let far = vehicle_mesh(&m);
+                let len = body_length(m.body);
+                let (lo, hi) = v.body.positions.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p[1]), hi.max(p[1])));
+                assert!(lo >= -0.01 && lo < 0.2, "{m:?} near floats or sinks: lowest point {lo}");
+                let far_hi = far.body.positions.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
+                assert!((hi - far_hi).abs() < 0.25, "{m:?}: near {hi:.2} m tall, far {far_hi:.2}");
+                let reach = v.body.positions.iter().map(|p| p[0].abs()).fold(0.0, f32::max);
+                if m.body != BodyType::Semi {
+                    assert!(reach <= len * 0.5 + 0.2, "{m:?} near reaches {reach} m, length {len}");
+                }
+            }
+            eprintln!("step {step}: heaviest near variant {} triangles, {}", worst.0, worst.1);
+        }
+    }
+
+    /// [r17-cars] Near cars are smooth: most of a saloon's skin shares
+    /// normals across cells (not the far model's flat panels), glass is
+    /// tagged as glass, and the paint carries its finish.
+    #[test]
+    fn near_cars_are_rounded_and_tagged() {
+        let pal = Palette::default();
+        let m = VehicleModel { body: BodyType::Sedan, class: VehicleClass::Mid, ..Default::default() };
+        let v = vehicle_mesh_near(&m, &pal, NearDetail(3)).unwrap();
+        // Distinct normal directions: a rounded body has many.
+        let mut dirs: Vec<[i32; 3]> = v.body.normals.iter().map(|n| [(n[0] * 20.0) as i32, (n[1] * 20.0) as i32, (n[2] * 20.0) as i32]).collect();
+        dirs.sort();
+        dirs.dedup();
+        let far = vehicle_mesh(&m);
+        let mut fd: Vec<[i32; 3]> = far.body.normals.iter().map(|n| [(n[0] * 20.0) as i32, (n[1] * 20.0) as i32, (n[2] * 20.0) as i32]).collect();
+        fd.sort();
+        fd.dedup();
+        assert!(dirs.len() > fd.len() * 3, "near {} normal directions, far {}", dirs.len(), fd.len());
+        let kinds: Vec<u8> = v.body.uvs.iter().map(|uv| uv[0].round() as u8).collect();
+        for k in [kind::PAINT, kind::GLASS, kind::TYRE, kind::TRIM] {
+            assert!(kinds.contains(&k), "kind {k} missing");
+        }
+        let fin = paint_finish(&m) as f32;
+        assert!(v.body.uvs.iter().zip(&kinds).filter(|(_, &k)| k == kind::PAINT).all(|(uv, _)| uv[1] >= fin && uv[1] < fin + 1.0));
+        // Far models are tagged too.
+        assert!(far.body.uvs.iter().any(|uv| uv[0].round() as u8 == kind::GLASS));
+    }
+
     #[test]
     fn triangle_counts_per_body() {
         for body in BodyType::ALL {
             let n = |class, tuned, livery| vehicle_mesh(&VehicleModel { body, class, tuned, livery, wear: 2, paint: 1, boxed: 0 }).triangles();
             eprintln!("{:16} cheap {:4} mid {:4} exp {:4} tuned {:4} livery {:4}", body.label(), n(VehicleClass::Cheap, false, Livery::None), n(VehicleClass::Mid, false, Livery::None), n(VehicleClass::Expensive, false, Livery::None), n(VehicleClass::Expensive, true, Livery::None), n(VehicleClass::Mid, false, Livery::Pizza));
+            let nn = |step: u8, class, tuned| vehicle_mesh_near(&VehicleModel { body, class, tuned, livery: Livery::None, wear: 2, paint: 1, boxed: 0 }, &Palette::default(), NearDetail(step)).map_or(0, |v| v.triangles());
+            eprintln!("{:16} near mid by step {:?} exp tuned by step {:?}", "", (1..=NearDetail::MAX).map(|s| nn(s, VehicleClass::Mid, false)).collect::<Vec<_>>(), (1..=NearDetail::MAX).map(|s| nn(s, VehicleClass::Expensive, true)).collect::<Vec<_>>());
         }
     }
 

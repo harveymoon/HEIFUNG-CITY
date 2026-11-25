@@ -83,6 +83,10 @@ pub(super) fn status(ctx: &Ctx) -> Value {
     // [r13-detail] Mesh entities drawn last frame, and those under a detail band.
     v["render"]["visible_meshes"] = json!(ctx.stats.visible_meshes);
     v["render"]["visible_detail_meshes"] = json!(ctx.stats.visible_detail_meshes);
+    // [r17-cars] Vehicle models drawn last frame (near detail step, far and
+    // near entities, their triangles, distinct meshes).
+    let vs = ctx.stats.vehicles;
+    v["render"]["vehicles"] = json!({ "step": vs.step, "far": vs.far, "near": vs.near, "far_triangles": vs.far_triangles, "near_triangles": vs.near_triangles, "triangles": vs.far_triangles + vs.near_triangles, "meshes": vs.meshes });
     // [r7-sim-thread] The sim thread.
     {
         let c = &sim.world;
